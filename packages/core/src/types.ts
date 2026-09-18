@@ -31,15 +31,20 @@ export type ModelRequest = {
   step?: number;
 };
 export type ModelChunk = {type: "text-delta" | "reasoning-delta"; text: string};
-export type ModelResponse =
-  | {
-      type: "final";
-      text: string;
-      output?: JsonValue;
-      validationError?: string;
-      chunks?: ModelChunk[];
-    }
-  | {type: "tool_calls"; calls: ToolCall[]; text?: string; chunks?: ModelChunk[]};
+export type ModelFinalResponse = {
+  type: "final";
+  text: string;
+  output?: JsonValue;
+  validationError?: string;
+  chunks?: ModelChunk[];
+};
+export type ModelToolCallsResponse = {
+  type: "tool_calls";
+  calls: ToolCall[];
+  text?: string;
+  chunks?: ModelChunk[];
+};
+export type ModelResponse = ModelFinalResponse | ModelToolCallsResponse;
 /** A local journaled call or an RPC to a model gateway are both operations. */
 export type Model = (request: ModelRequest) => Operation<ModelResponse>;
 export type RunContext<Context> = {
@@ -136,6 +141,8 @@ export type AgentEvent = {step: number} & (
 );
 export type AgentUpdate = AgentEvent & {sequence: number; id: string};
 export type UpdateHandler<Context> = (update: AgentUpdate, context: Context) => Operation<void>;
+export type SteeringSource = () => Future<string>;
+export type RunControls = {steering?: SteeringSource; interrupt?: Future<string>};
 export type RunOptions<Context> = {
   /** Completed prior messages. The SDK copies these and returns the new history. */
   messages?: readonly Message[];
@@ -145,7 +152,7 @@ export type RunOptions<Context> = {
   steeringSignal?: string;
   interruptSignal?: string;
   /** Application-supplied control futures, useful when embedding in another loop. */
-  controls?: {steering?(): Future<string>; interrupt?: Future<string>};
+  controls?: RunControls;
   tools?: Record<string, Tool<Context>>;
 } & (undefined extends Context ? {context?: Context} : {context: Context});
 export type AgentOptions<Context, Output = string> = {

@@ -8,7 +8,7 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {denial, ToolDenied, ToolError} from "./errors.js";
-import type {AgentRuntime, JsonValue, Tool, ToolContext, ToolDefinition} from "./types.js";
+import type {Agent, JsonValue, Tool, ToolContext, ToolDefinition, ToolInfo} from "./types.js";
 import {jsonSchema} from "./validation.js";
 
 /** Describe a tool; its generator composes directly with Restate operations. */
@@ -25,20 +25,25 @@ export function tool<Schema extends z.ZodType, Context = unknown>(
       const parsed = definition.input.safeParse(input);
       if (!parsed.success)
         throw new ToolError(`Invalid tool input: ${parsed.error.message}`, "invalid_input");
-      if (definition.describe)
-        yield* context.describe(
-          typeof definition.describe === "function"
-            ? definition.describe(structuredClone(parsed.data))
-            : definition.describe,
-        );
-      const reason = definition.before
-        ? denial(yield* definition.before(parsed.data, context))
-        : undefined;
-      if (reason !== undefined) throw new ToolDenied(reason);
-      const approval =
-        typeof definition.needsApproval === "function"
-          ? yield* definition.needsApproval(parsed.data, context)
-          : definition.needsApproval;
+      if (definition.describe) {
+        let info: ToolInfo;
+        if (typeof definition.describe === "function") {
+          info = definition.describe(structuredClone(parsed.data));
+        } else {
+          info = definition.describe;
+        }
+        yield* context.describe(info);
+      }
+      if (definition.before) {
+        const reason = denial(yield* definition.before(parsed.data, context));
+        if (reason !== undefined) throw new ToolDenied(reason);
+      }
+      let approval: boolean | undefined;
+      if (typeof definition.needsApproval === "function") {
+        approval = yield* definition.needsApproval(parsed.data, context);
+      } else {
+        approval = definition.needsApproval;
+      }
       if (approval && !(yield* context.approve(jsonSchema.parse(parsed.data))))
         throw new ToolDenied("Human approval denied");
       let result = yield* definition.execute(parsed.data, context);
@@ -120,9 +125,11 @@ export function handlerTool<S extends z.ZodType, C = unknown>(
   });
 }
 
+type HandoffAgent<C> = Pick<Agent<C>, "definition">;
+
 /** Transfer this task after the current batch settles, preserving its history. */
 export function handoff<C>(
-  target: {readonly definition: AgentRuntime<C>} | (() => {readonly definition: AgentRuntime<C>}),
+  target: HandoffAgent<C> | (() => HandoffAgent<C>),
   description = "Transfer this task to the specialist.",
 ): Tool<C> {
   return {

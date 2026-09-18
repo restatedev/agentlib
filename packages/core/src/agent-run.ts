@@ -3,7 +3,6 @@ import {
   InterruptedError,
   select,
   signal,
-  type Future,
   type Operation,
 } from "@restatedev/restate-sdk-gen";
 import {
@@ -14,29 +13,33 @@ import {
   RunInterrupted,
 } from "./errors.js";
 import {RunHistory} from "./run-history.js";
-import {RunTasks} from "./run-tasks.js";
+import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
 import {RunUpdates} from "./run-updates.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
+import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {jsonSchema, modelResponse} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
+  ModelFinalResponse,
   ModelResponse,
+  ModelToolCallsResponse,
   RunContext,
   RunOptions,
   RunResult,
+  SteeringSource,
 } from "./types.js";
 
-export type RunConfiguration = Readonly<{
-  maxSteps: number;
-  maxToolCalls: number;
-  maxToolDepth: number;
-  maxOutputTokens: number;
-  maxOutputChars: number;
-  outputSchema?: Record<string, unknown>;
-}>;
+export type RunConfiguration = ToolExecutionLimits &
+  Readonly<{
+    maxSteps: number;
+    maxOutputTokens: number;
+    outputSchema?: Record<string, unknown>;
+  }>;
+
+type SelectionResult = {tag: string; value: unknown};
 
 export function* runAgent<C, O>(
   input: string,
@@ -85,15 +88,17 @@ class AgentRun<C, O> {
   *run(): Operation<RunResult<O>> {
     const controls = this.options?.controls;
     const steeringSignal = this.options?.steeringSignal;
-    const steering = controls?.steering
-      ? () => controls.steering!()
-      : steeringSignal
-        ? () => signal<string>(steeringSignal)
-        : undefined;
+    let steering: SteeringSource | undefined;
+    if (controls?.steering) {
+      steering = () => controls.steering!();
+    } else if (steeringSignal) {
+      steering = () => signal<string>(steeringSignal);
+    }
     this.updates.startSteering(this.tasks, steering);
-    const interrupt =
-      controls?.interrupt ??
-      (this.options?.interruptSignal ? signal<string>(this.options.interruptSignal) : undefined);
+    let interrupt = controls?.interrupt;
+    if (!interrupt && this.options?.interruptSignal) {
+      interrupt = signal<string>(this.options.interruptSignal);
+    }
     try {
       return yield* this.tasks.supervise(this.drive(), interrupt);
     } finally {
@@ -103,10 +108,10 @@ class AgentRun<C, O> {
 
   private *drive(): Operation<RunResult<O>> {
     try {
-      const rejected = this.root.beforeRun
-        ? denial(yield* this.root.beforeRun(this.history.snapshot(), this.context))
-        : undefined;
-      if (rejected !== undefined) throw new GuardrailError(rejected);
+      if (this.root.beforeRun) {
+        const rejected = denial(yield* this.root.beforeRun(this.history.snapshot(), this.context));
+        if (rejected !== undefined) throw new GuardrailError(rejected);
+      }
       yield* this.history.compact();
       for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
         const action = yield* this.plan();
@@ -147,10 +152,12 @@ class AgentRun<C, O> {
     this.tools.collectResults();
     this.history.flush();
     yield* this.history.save();
-    const instructions =
-      typeof this.active.instructions === "function"
-        ? yield* this.active.instructions(this.context)
-        : this.active.instructions;
+    let instructions: string | undefined;
+    if (typeof this.active.instructions === "function") {
+      instructions = yield* this.active.instructions(this.context);
+    } else {
+      instructions = this.active.instructions;
+    }
     const request = {
       instructions,
       outputSchema: this.config.outputSchema,
@@ -159,10 +166,10 @@ class AgentRun<C, O> {
       messages: this.history.snapshot(),
       tools: this.catalog.visibleManifests(),
     };
-    const blocked = this.root.beforeStep
-      ? denial(yield* this.root.beforeStep(request, this.context))
-      : undefined;
-    if (blocked !== undefined) throw new GuardrailError(blocked);
+    if (this.root.beforeStep) {
+      const blocked = denial(yield* this.root.beforeStep(request, this.context));
+      if (blocked !== undefined) throw new GuardrailError(blocked);
+    }
     if (this.active !== this.root && this.active.beforeStep) {
       const blocked = denial(yield* this.active.beforeStep(request, this.context));
       if (blocked !== undefined) throw new GuardrailError(blocked);
@@ -187,9 +194,7 @@ class AgentRun<C, O> {
     return this.history.revision === atRequest ? action : undefined;
   }
 
-  private *complete(
-    action: Extract<ModelResponse, {type: "final"}>,
-  ): Operation<RunResult<O> | undefined> {
+  private *complete(action: ModelFinalResponse): Operation<RunResult<O> | undefined> {
     this.history.flush();
     if (this.tools.hasPending) {
       if (this.step < this.config.maxSteps) yield* this.waitFor({});
@@ -230,7 +235,7 @@ class AgentRun<C, O> {
     });
   }
 
-  private *executeTools(action: Extract<ModelResponse, {type: "tool_calls"}>): Operation<void> {
+  private *executeTools(action: ModelToolCallsResponse): Operation<void> {
     const foreground = yield* this.tools.startBatch(action, this.step, this.active, this.catalog);
     while (foreground.size) {
       const next = yield* this.waitFor(Object.fromEntries(foreground));
@@ -252,11 +257,9 @@ class AgentRun<C, O> {
     }
   }
 
-  private *waitFor(
-    branches: Record<string, Future<unknown>>,
-  ): Operation<{tag: string; value: unknown}> {
+  private *waitFor(branches: FutureBranches): Operation<SelectionResult> {
     while (true) {
-      const branchesToSelect: Record<string, Future<unknown>> = {
+      const branchesToSelect: FutureBranches = {
         ...(this.updates.steeringReady ? {steering: this.updates.steeringReady} : {}),
         ...this.tools.pendingTasks(),
         ...branches,

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import {TerminalError} from "@restatedev/restate-sdk";
 import type {
+  ChatCompletionAssistantMessageParam,
   ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
@@ -30,39 +31,33 @@ export function openAIModel(options: OpenAIModelOptions): Model {
   return journaledModel(
     async (request, {signal}) => {
       client ??= new OpenAI();
-      const completion = await client.chat.completions
-        .create(
-          {
-            ...parameters,
-            model,
-            ...(request.tools.length && /^gpt-5\.6(?:$|-)/.test(model)
-              ? {reasoning_effort: parameters.reasoning_effort ?? "none"}
-              : {}),
-            max_completion_tokens: parameters.max_completion_tokens ?? request.maxOutputTokens,
-            ...(request.outputSchema
-              ? {
-                  response_format: {
-                    type: "json_schema" as const,
-                    json_schema: {
-                      name: "agent_output",
-                      schema: request.outputSchema,
-                      strict: false,
-                    },
-                  },
-                }
-              : {}),
-            messages: render(request),
-            ...(request.tools.length
-              ? {
-                  tools: request.tools.map(({name, description, inputSchema}) => ({
-                    type: "function" as const,
-                    function: {name, description, parameters: inputSchema, strict: false},
-                  })),
-                }
-              : {}),
+      const payload: ChatCompletionCreateParamsNonStreaming = {
+        ...parameters,
+        model,
+        max_completion_tokens: parameters.max_completion_tokens ?? request.maxOutputTokens,
+        messages: render(request),
+      };
+      if (request.tools.length && /^gpt-5\.6(?:$|-)/.test(model)) {
+        payload.reasoning_effort = parameters.reasoning_effort ?? "none";
+      }
+      if (request.outputSchema) {
+        payload.response_format = {
+          type: "json_schema",
+          json_schema: {
+            name: "agent_output",
+            schema: request.outputSchema,
+            strict: false,
           },
-          {signal, maxRetries: 0},
-        )
+        };
+      }
+      if (request.tools.length) {
+        payload.tools = request.tools.map(({name, description, inputSchema}) => ({
+          type: "function",
+          function: {name, description, parameters: inputSchema, strict: false},
+        }));
+      }
+      const completion = await client.chat.completions
+        .create(payload, {signal, maxRetries: 0})
         .catch((error: unknown) => {
           // Restate owns retries, but invalid requests/credentials do not improve
           // on retry. Keep connection failures, rate limits and server errors retryable.
@@ -100,13 +95,14 @@ export function openAIModel(options: OpenAIModelOptions): Model {
       if (choice.finish_reason === "tool_calls" && calls.length === 0) {
         throw new ModelProtocolError("Model indicated tool calls but returned none");
       }
-      return calls.length > 0
-        ? {
-            type: "tool_calls",
-            calls,
-            ...(choice.message.content ? {text: choice.message.content} : {}),
-          }
-        : {type: "final", text: choice.message.content ?? ""};
+      if (calls.length > 0) {
+        return {
+          type: "tool_calls",
+          calls,
+          ...(choice.message.content ? {text: choice.message.content} : {}),
+        };
+      }
+      return {type: "final", text: choice.message.content ?? ""};
     },
     {name: `Ask model: ${model}`, ...(retry ? {retry} : {})},
   );
@@ -124,19 +120,18 @@ function render(request: ModelRequest): ChatCompletionMessageParam[] {
         content: JSON.stringify(message.result),
       });
     } else {
-      result.push({
+      const assistant: ChatCompletionAssistantMessageParam = {
         role: "assistant",
         content: message.content,
-        ...(message.calls
-          ? {
-              tool_calls: message.calls.map((call) => ({
-                id: call.id,
-                type: "function" as const,
-                function: {name: call.name, arguments: JSON.stringify(call.input)},
-              })),
-            }
-          : {}),
-      });
+      };
+      if (message.calls) {
+        assistant.tool_calls = message.calls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: {name: call.name, arguments: JSON.stringify(call.input)},
+        }));
+      }
+      result.push(assistant);
     }
   }
   return result;

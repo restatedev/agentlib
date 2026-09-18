@@ -37,14 +37,16 @@ function nestedSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(nestedSchema);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      (key === "$ref" || key === "$dynamicRef") &&
-      typeof child === "string" &&
-      child.startsWith("#")
-        ? `#/properties/input${child.slice(1)}`
-        : nestedSchema(child),
-    ]),
+    Object.entries(value).map(([key, child]) => {
+      if (
+        (key === "$ref" || key === "$dynamicRef") &&
+        typeof child === "string" &&
+        child.startsWith("#")
+      ) {
+        return [key, `#/properties/input${child.slice(1)}`];
+      }
+      return [key, nestedSchema(child)];
+    }),
   );
 }
 /** Snapshot annotated Restate handlers once per run, as in replit-final. */
@@ -78,7 +80,9 @@ export function* restateTools<C = unknown>(
       // Catalog ordering must not depend on the endpoint machine's locale.
       const left = `${a.service.name}/${a.handler.name}`;
       const right = `${b.service.name}/${b.handler.name}`;
-      return left < right ? -1 : left > right ? 1 : 0;
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
     });
   for (const {service, handler} of handlers) {
     const name = handler.metadata["restate.dev/agent"]?.trim();
@@ -110,14 +114,13 @@ export function* restateTools<C = unknown>(
     const schema = {type: "object", properties, required, additionalProperties: false};
     let valueSchema: z.ZodType;
     try {
-      valueSchema =
-        raw === true
-          ? z.json()
-          : raw === false
-            ? z.never()
-            : acceptsInput
-              ? z.fromJSONSchema(raw as Record<string, unknown>)
-              : z.never();
+      if (raw === true) {
+        valueSchema = z.json();
+      } else if (raw === false || !acceptsInput) {
+        valueSchema = z.never();
+      } else {
+        valueSchema = z.fromJSONSchema(raw as Record<string, unknown>);
+      }
     } catch {
       warnings.push(`Ignored unsupported input schema at ${service.name}/${handler.name}`);
       continue;

@@ -10,12 +10,14 @@ import {
   tool,
   type AgentUpdate,
   type ApprovalRequest,
+  type ToolContext,
 } from "@restate-agents/core";
-import {mcpTools} from "@restate-agents/core/mcp";
+import {mcpTools, type McpToolSet} from "@restate-agents/core/mcp";
 import {programTool} from "@restate-agents/core/program";
 import {exampleModel as model} from "./shared.js";
 
 type SessionContext = {sessionKey: string};
+type ActiveTurn = {invocationId: string};
 const lookupTicket = tool({
   description:
     "Look up a demo support ticket. This example does not connect to a ticketing system.",
@@ -23,7 +25,7 @@ const lookupTicket = tool({
   describe: ({ticket}) => ({name: "Look up ticket", details: {ticket}}),
   deferred: true,
   provider: "support",
-  *execute({ticket}, {context, info}: import("@restate-agents/core").ToolContext<SessionContext>) {
+  *execute({ticket}, {context, info}: ToolContext<SessionContext>) {
     return yield* restate.run(async () => ({ticket, status: "open", session: context.sessionKey}), {
       name: info.name,
     });
@@ -88,12 +90,7 @@ export const aiSession = restate.object({
         const approvals = new Map<string, ApprovalRequest>();
         const updates: AgentUpdate[] = [];
         restate.state().set("active", {invocationId});
-        let remote:
-          | {
-              tools: Record<string, import("@restate-agents/core").Tool<SessionContext>>;
-              close(): restate.Operation<void>;
-            }
-          | undefined;
+        let remote: McpToolSet<SessionContext> | undefined;
         try {
           if (process.env.MCP_SERVER_URL)
             remote = yield* mcpTools<SessionContext>({
@@ -140,19 +137,19 @@ export const aiSession = restate.object({
       return yield* new LazyStateConversation().page();
     },
     *steer(message: string) {
-      const active = yield* restate.sharedState().get<{invocationId: string}>("active");
+      const active = yield* restate.sharedState().get<ActiveTurn>("active");
       if (!active) return false;
       restate.invocation(active.invocationId).signal("steering").resolve(message);
       return true;
     },
     *interrupt(reason: string) {
-      const active = yield* restate.sharedState().get<{invocationId: string}>("active");
+      const active = yield* restate.sharedState().get<ActiveTurn>("active");
       if (!active) return false;
       restate.invocation(active.invocationId).signal("interrupt").resolve(reason);
       return true;
     },
     *approve(input: {signalName: string; approved: boolean}) {
-      const active = yield* restate.sharedState().get<{invocationId: string}>("active");
+      const active = yield* restate.sharedState().get<ActiveTurn>("active");
       const requests = (yield* restate.sharedState().get<ApprovalRequest[]>("approvals")) ?? [];
       if (!active || !requests.some((request) => request.signalName === input.signalName))
         return false;

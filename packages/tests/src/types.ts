@@ -2,16 +2,18 @@ import {agent, tool, type ToolContext, type Model, type OutputDecision} from "@r
 import {z} from "zod";
 
 // Compile-only examples verify the public type boundary.
+type TenantContext = {tenant: string};
+
 const model: Model = function* () {
   return {type: "final", text: "Done"};
 };
-const a = agent<{tenant: string}>({
+const a = agent<TenantContext>({
   model,
   tools: {
     lookup: tool({
       input: z.object({id: z.string()}),
       description: "Lookup",
-      *execute(input, ctx: ToolContext<{tenant: string}>) {
+      *execute(input, ctx: ToolContext<TenantContext>) {
         const id: string = input.id;
         // @ts-expect-error The schema infers string, not number.
         const wrong: number = input.id;

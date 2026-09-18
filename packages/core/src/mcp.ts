@@ -30,6 +30,10 @@ export type McpOptions = {
   fetch?: typeof fetch;
 };
 type Session = {id?: string; version?: string};
+export type McpToolSet<C = unknown> = {
+  tools: Record<string, Tool<C>>;
+  close(): restate.Operation<void>;
+};
 // The original tools/list validated the tools capability. A reconstructed Client
 // skips initialize when resuming a session; seed only that already-verified capability.
 class ResumedToolClient extends Client {
@@ -39,12 +43,7 @@ class ResumedToolClient extends Client {
   }
 }
 /** Snapshot the catalog once. No process-local MCP session is a source of truth. */
-export function* mcpTools<C = unknown>(
-  options: McpOptions,
-): restate.Operation<{
-  tools: Record<string, Tool<C>>;
-  close(): restate.Operation<void>;
-}> {
+export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<McpToolSet<C>> {
   if (!/^[a-zA-Z0-9_-]{1,24}$/.test(options.namespace))
     throw new TerminalError("Invalid MCP namespace");
   const timeout = positiveInteger(options.timeoutMs ?? 60000, "timeoutMs");
@@ -126,15 +125,15 @@ export function* mcpTools<C = unknown>(
       const discovery = client.getDiscoverResult();
       if (options.protocol === "stateless" && !discovery)
         throw new TerminalError("MCP stateless discovery missing");
+      let prior: PriorDiscovery = {kind: "legacy"};
+      if (discovery) prior = {kind: "modern", discover: discovery};
       return {
         tools: listed.tools,
         session: {
           id: transport.sessionId,
           version: transport.protocolVersion,
         },
-        prior: discovery
-          ? ({kind: "modern", discover: discovery} as PriorDiscovery)
-          : ({kind: "legacy"} as PriorDiscovery),
+        prior,
       };
     } finally {
       await client.close();
@@ -144,9 +143,12 @@ export function* mcpTools<C = unknown>(
   for (const definition of catalog.tools) {
     if (options.allow && !options.allow(definition.name)) continue;
     const original = `${options.namespace}_${definition.name}`;
-    const name = /^[a-zA-Z0-9_-]{1,64}$/.test(original)
-      ? original
-      : `${original.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 51)}_${createHash("sha256").update(original).digest("hex").slice(0, 12)}`;
+    let name = original;
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(original)) {
+      const prefix = original.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 51);
+      const suffix = createHash("sha256").update(original).digest("hex").slice(0, 12);
+      name = `${prefix}_${suffix}`;
+    }
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name) || tools.has(name))
       throw new TerminalError(`Invalid or duplicate MCP tool name: ${name}`);
     if (JSON.stringify(definition.inputSchema).length > 64000)

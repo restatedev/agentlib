@@ -77,14 +77,13 @@ function fixture(
           },
         ],
       };
-    else if (message.method === "tools/call")
+    else if (message.method === "tools/call") {
       result = {
         content: [{type: "text", text: `found ${message.params.arguments.id}`}],
-        ...(config.toolError
-          ? {isError: true}
-          : {structuredContent: {found: message.params.arguments.id}}),
       };
-    else return new Response("Unknown method", {status: 400});
+      if (config.toolError) result.isError = true;
+      else result.structuredContent = {found: message.params.arguments.id};
+    } else return new Response("Unknown method", {status: 400});
     if (protocol === "stateless")
       result = {...result, resultType: "complete", ttlMs: 60000, cacheScope: "private"};
     return new Response(JSON.stringify({jsonrpc: "2.0", id: message.id, result}), {headers: out});

@@ -19,12 +19,15 @@ import type {
 import type {ToolCatalog} from "./tool-catalog.js";
 import {jsonSchema} from "./validation.js";
 
-type ToolExecutorOptions<C> = {
-  root: AgentRuntime<C>;
-  context: RunContext<C>;
+export type ToolExecutionLimits = Readonly<{
   maxToolCalls: number;
   maxToolDepth: number;
   maxOutputChars: number;
+}>;
+
+type ToolExecutorOptions<C> = ToolExecutionLimits & {
+  root: AgentRuntime<C>;
+  context: RunContext<C>;
   update: (event: AgentEvent) => Operation<void>;
   cancelOperation: ToolContext<C>["cancelOperation"];
 };
@@ -128,10 +131,10 @@ export function createToolExecutor<C>({
       cancelOperation,
     };
     try {
-      const reason = root.beforeTool
-        ? denial(yield* root.beforeTool(structuredClone(call), toolContext))
-        : undefined;
-      if (reason !== undefined) throw new ToolDenied(reason);
+      if (root.beforeTool) {
+        const reason = denial(yield* root.beforeTool(structuredClone(call), toolContext));
+        if (reason !== undefined) throw new ToolDenied(reason);
+      }
       if (owner !== root && owner.beforeTool) {
         const denied = denial(yield* owner.beforeTool(structuredClone(call), toolContext));
         if (denied !== undefined) throw new ToolDenied(denied);
@@ -163,3 +166,5 @@ export function createToolExecutor<C>({
     },
   };
 }
+
+export type ToolExecutor<C> = ReturnType<typeof createToolExecutor<C>>;

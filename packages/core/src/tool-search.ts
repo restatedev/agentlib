@@ -63,7 +63,13 @@ export function createToolSearch(catalog: ToolManifest[], providers: ReadonlyMap
       const normalized = words(query.trim());
       // No fuzzy matching initially: misspellings should not bury exact terms.
       const matches = index.search(normalized);
-      matches.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      matches.sort((a, b) => {
+        const score = b.score - a.score;
+        if (score) return score;
+        if (a.id < b.id) return -1;
+        if (a.id > b.id) return 1;
+        return 0;
+      });
       const exact = catalog.find((tool) => tool.name.toLowerCase() === query.trim().toLowerCase());
       return [
         ...new Set([

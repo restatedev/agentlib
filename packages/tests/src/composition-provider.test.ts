@@ -162,9 +162,8 @@ void test("structured output repairs invalid candidates and publishes only the g
     output: z.object({answer: z.string()}),
     *model(req) {
       assert.ok(req.outputSchema);
-      return ++step === 1
-        ? {type: "final", text: '{"answer":3}'}
-        : {type: "final", text: '{"answer":"yes"}'};
+      if (++step === 1) return {type: "final", text: '{"answer":3}'};
+      return {type: "final", text: '{"answer":"yes"}'};
     },
     *afterRun(result) {
       if (result.status === "completed")

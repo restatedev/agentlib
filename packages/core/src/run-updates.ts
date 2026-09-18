@@ -8,7 +8,7 @@ import {
 import {createMailbox} from "./mailbox.js";
 import type {RunHistory} from "./run-history.js";
 import type {RunTasks} from "./run-tasks.js";
-import type {AgentEvent, RunContext, UpdateHandler} from "./types.js";
+import type {AgentEvent, RunContext, SteeringSource, UpdateHandler} from "./types.js";
 
 /** Owns update sequencing and the steering watcher; history owns observations. */
 export class RunUpdates<C> {
@@ -35,7 +35,7 @@ export class RunUpdates<C> {
     if (this.runHook) yield* this.runHook(structuredClone(value), this.context.context);
   }
 
-  startSteering(tasks: RunTasks, source?: () => Future<string>): void {
+  startSteering(tasks: RunTasks, source?: SteeringSource): void {
     if (source) this.watcher = tasks.track(this.watch(source));
   }
 
@@ -59,7 +59,7 @@ export class RunUpdates<C> {
     if (this.watcher) yield* allSettled([this.watcher]);
   }
 
-  private *watch(source: () => Future<string>): Operation<void> {
+  private *watch(source: SteeringSource): Operation<void> {
     while (true) {
       const message = yield* source();
       if (typeof message !== "string" || !message.trim())

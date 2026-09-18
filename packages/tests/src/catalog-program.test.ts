@@ -196,20 +196,19 @@ void test("PTC runs and nested durable effects replay without invoking the host 
       }),
     },
     *model(req) {
-      return req.messages.some((m) => m.role === "tool")
-        ? done
-        : {
-            type: "tool_calls",
-            calls: [
-              {
-                id: "p",
-                name: "program",
-                input: {
-                  source: "async tools => await Promise.all([tools.read({n:2}),tools.read({n:4})])",
-                },
-              },
-            ],
-          };
+      if (req.messages.some((m) => m.role === "tool")) return done;
+      return {
+        type: "tool_calls",
+        calls: [
+          {
+            id: "p",
+            name: "program",
+            input: {
+              source: "async tools => await Promise.all([tools.read({n:2}),tools.read({n:4})])",
+            },
+          },
+        ],
+      };
     },
   });
   const handler = (ctx: Context) => r.execute(ctx, a.run("go"));

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import OpenAI from "openai";
+import type {ChatCompletionAssistantMessageParam} from "openai/resources/chat/completions";
 import {execute} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {agent, tool} from "@restate-agents/core";
+import {agent, tool, type ToolManifest} from "@restate-agents/core";
 import {openAIModel} from "@restate-agents/core/openai";
 import {runHandler} from "./replay-harness.mjs";
 
@@ -20,6 +21,23 @@ void test(
         const request = JSON.parse(init.body);
         requests.push(request);
         const first = requests.length === 1;
+        let message: ChatCompletionAssistantMessageParam = {
+          role: "assistant",
+          content: "Found 123",
+        };
+        if (first) {
+          message = {
+            role: "assistant",
+            content: "Looking it up",
+            tool_calls: [
+              {
+                id: "one",
+                type: "function",
+                function: {name: "lookup", arguments: '{"id":"123"}'},
+              },
+            ],
+          };
+        }
         return Response.json({
           id: "test",
           object: "chat.completion",
@@ -29,19 +47,7 @@ void test(
             {
               index: 0,
               finish_reason: first ? "tool_calls" : "stop",
-              message: first
-                ? {
-                    role: "assistant",
-                    content: "Looking it up",
-                    tool_calls: [
-                      {
-                        id: "one",
-                        type: "function",
-                        function: {name: "lookup", arguments: '{"id":"123"}'},
-                      },
-                    ],
-                  }
-                : {role: "assistant", content: "Found 123"},
+              message,
             },
           ],
         });
@@ -113,14 +119,15 @@ void test("GPT-5.6 tools use a compatible reasoning default without overriding e
       model: fixture.model,
       settings: {reasoning_effort: fixture.explicit},
     });
+    const tools: ToolManifest[] = [];
+    if (fixture.tools)
+      tools.push({name: "lookup", description: "lookup", inputSchema: {type: "object"}});
     await runHandler((ctx) =>
       execute(
         ctx,
         model({
           messages: [{role: "user", content: "hello"}],
-          tools: fixture.tools
-            ? [{name: "lookup", description: "lookup", inputSchema: {type: "object"}}]
-            : [],
+          tools,
         }),
       ),
     );

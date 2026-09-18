@@ -19,11 +19,13 @@ import {traceModel} from "./telemetry.js";
 import {jsonSchema} from "./validation.js";
 import type {Model, ModelChunk, ModelRequest, ModelResponse, ToolCall} from "./types.js";
 
+type GenerateSettings = Parameters<typeof generateText>[0];
+
 export type ProviderOptions = {
   model: LanguageModel;
   retry?: RetryOptions;
-  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"];
-  telemetry?: Parameters<typeof generateText>[0]["experimental_telemetry"];
+  providerOptions?: GenerateSettings["providerOptions"];
+  telemetry?: GenerateSettings["experimental_telemetry"];
   tracer?: Tracer;
   includeChunks?: boolean;
   /** Best-effort I/O inside one journal attempt. A new start replaces that step's
@@ -92,7 +94,7 @@ export function aiModel(options: ProviderOptions): Model {
             {description: t.description, inputSchema: aiSchema(t.inputSchema), strict: false},
           ]),
         );
-        const settings = {
+        const settings: GenerateSettings = {
           model: options.model,
           instructions: request.instructions,
           messages: messages(request),
@@ -102,10 +104,10 @@ export function aiModel(options: ProviderOptions): Model {
           abortSignal: signal,
           providerOptions: options.providerOptions,
           experimental_telemetry: options.telemetry,
-          ...(request.outputSchema
-            ? {output: Output.object({schema: aiSchema(request.outputSchema)})}
-            : {}),
         };
+        if (request.outputSchema) {
+          settings.output = Output.object({schema: aiSchema(request.outputSchema)});
+        }
         const chunks: ModelChunk[] = [];
         const info = {step: request.step ?? 0, signal};
         try {
@@ -137,14 +139,15 @@ export function aiModel(options: ProviderOptions): Model {
           }
           if (finishReason === "tool-calls" && !calls.length)
             throw new ModelProtocolError("Model indicated tool calls but returned none");
-          return calls.length
-            ? {type: "tool_calls", calls, text, ...(options.includeChunks ? {chunks} : {})}
-            : {
-                type: "final",
-                text,
-                ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
-                ...(options.includeChunks ? {chunks} : {}),
-              };
+          if (calls.length) {
+            return {type: "tool_calls", calls, text, ...(options.includeChunks ? {chunks} : {})};
+          }
+          return {
+            type: "final",
+            text,
+            ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
+            ...(options.includeChunks ? {chunks} : {}),
+          };
         } catch (error) {
           if (NoObjectGeneratedError.isInstance(error)) {
             finished(error.finishReason);

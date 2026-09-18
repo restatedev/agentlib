@@ -117,12 +117,11 @@ void test("web search bounds results, forwards cancellation, and replays without
     tools: {search},
     *model(req) {
       assert.ok(!JSON.stringify(req).includes("private-key"));
-      return req.messages.some((m) => m.role === "tool")
-        ? final
-        : {
-            type: "tool_calls",
-            calls: [{id: "search", name: "search", input: {query: "public fact"}}],
-          };
+      if (req.messages.some((m) => m.role === "tool")) return final;
+      return {
+        type: "tool_calls",
+        calls: [{id: "search", name: "search", input: {query: "public fact"}}],
+      };
     },
   });
   const handler = (ctx: Context) => r.execute(ctx, a.run("go"));

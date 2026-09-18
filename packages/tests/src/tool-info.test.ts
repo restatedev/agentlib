@@ -35,14 +35,15 @@ void test("tool descriptions expose selected parameters without changing executi
     },
     *model(request) {
       assert.doesNotMatch(JSON.stringify(request), /Close ticket/);
-      return request.step === 1
-        ? {
-            type: "tool_calls",
-            calls: [
-              {id: "call-1", name: "closeTicket", input: {ticketId: "T-42", reason: "Resolved"}},
-            ],
-          }
-        : {type: "final", text: "Closed"};
+      if (request.step === 1) {
+        return {
+          type: "tool_calls",
+          calls: [
+            {id: "call-1", name: "closeTicket", input: {ticketId: "T-42", reason: "Resolved"}},
+          ],
+        };
+      }
+      return {type: "final", text: "Closed"};
     },
     *onUpdate(update) {
       updates.push(update);

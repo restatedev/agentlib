@@ -98,12 +98,11 @@ const reviewModel: Model = function* (request) {
   return yield* r.run(
     async () => {
       if (request.instructions?.startsWith("Code writer")) {
-        if (input.previousCode) assert.match(input.feedback!, /empty input/);
-        return answer({
-          code: input.previousCode
-            ? "return items.length ? items[0] : undefined;"
-            : "return items[0].value;",
-        });
+        if (input.previousCode) {
+          assert.match(input.feedback!, /empty input/);
+          return answer({code: "return items.length ? items[0] : undefined;"});
+        }
+        return answer({code: "return items[0].value;"});
       }
       return answer({
         approved: input.task !== "always reject" && input.code!.includes("items.length"),

@@ -27,15 +27,25 @@ const demoProgram = `async tools => {
   return { winner, results, completionOrder };
 }`;
 
+type Completion = {id: string; outcome: Outcome};
+
+function requestOutcome(request: Request): Outcome {
+  if (request.name === "lookup") {
+    return {ok: true, value: {key: request.args[0]!, amount: 10}};
+  }
+  if (request.name === "score") return {ok: true, value: 20};
+  return {ok: true, value: null};
+}
+
 function runTrace(
   source: string,
   choose: (requests: Request[]) => Request,
-  recorded?: {id: string; outcome: Outcome}[],
+  recorded?: Completion[],
 ) {
   const guest = new Guest(source, ["lookup", "score", "checkpoint"]);
   const pending: Request[] = [];
   const calls: Request[] = [];
-  const events: {id: string; outcome: Outcome}[] = [];
+  const events: Completion[] = [];
   try {
     for (let step = 0; step < 100; step++) {
       guest.drain();
@@ -47,15 +57,7 @@ function runTrace(
       const event = recorded?.[step];
       const request = event ? pending.find((r) => r.id === event.id)! : choose(pending);
       assert.ok(request, "Every delivered completion must have a matching call");
-      const outcome: Outcome = event?.outcome ?? {
-        ok: true,
-        value:
-          request.name === "lookup"
-            ? {key: request.args[0]!, amount: 10}
-            : request.name === "score"
-              ? 20
-              : null,
-      };
+      const outcome = event?.outcome ?? requestOutcome(request);
       pending.splice(pending.indexOf(request), 1);
       events.push({id: request.id, outcome});
       guest.deliver(request.id, outcome);
@@ -101,7 +103,7 @@ void test("native Promise.any/allSettled handle a guest rejection and a fulfillm
     const settled = await Promise.allSettled([a, b]);
     return { winner, statuses: settled.map(x => x.status) };
   }`;
-  const events: {id: string; outcome: Outcome}[] = [
+  const events: Completion[] = [
     {
       id: "call-0",
       outcome: {ok: false, error: {name: "Error", message: "missing"}},

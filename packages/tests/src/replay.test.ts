@@ -14,9 +14,10 @@ void test(
       model: journaledModel(async (request, {signal}): Promise<ModelResponse> => {
         assert.ok(signal instanceof AbortSignal);
         effects.models++;
-        return request.messages.length === 1
-          ? {type: "tool_calls", calls: [{id: "one", name: "lookup", input: {}}]}
-          : {type: "final", text: "Found it"};
+        if (request.messages.length === 1) {
+          return {type: "tool_calls", calls: [{id: "one", name: "lookup", input: {}}]};
+        }
+        return {type: "final", text: "Found it"};
       }),
       tools: {
         lookup: tool({
@@ -68,9 +69,10 @@ void test(
     const a = agent({
       model: journaledModel(async (request): Promise<ModelResponse> => {
         models++;
-        return request.messages.length === 1
-          ? {type: "tool_calls", calls: [{id: "one", name: "write", input: {}}]}
-          : {type: "final", text: "Saved"};
+        if (request.messages.length === 1) {
+          return {type: "tool_calls", calls: [{id: "one", name: "write", input: {}}]};
+        }
+        return {type: "final", text: "Saved"};
       }),
       tools: {
         write: tool({

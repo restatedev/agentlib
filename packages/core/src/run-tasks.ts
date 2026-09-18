@@ -8,13 +8,15 @@ import {
   type Operation,
   type Task,
 } from "@restatedev/restate-sdk-gen";
-import {RunInterrupted} from "./errors.js";
+import {RunInterrupted, type CapturedFailure} from "./errors.js";
+
+export type FutureBranches = Record<string, Future<unknown>>;
 
 /** Owns child tasks, their first fatal failure, and the interruption cutoff. */
 export class RunTasks {
   private readonly owned = new Set<Task<unknown>>();
   private readonly fatal = oneshot<void>();
-  private failure: {error: unknown} | undefined;
+  private failure: CapturedFailure | undefined;
   private finalizing = false;
 
   track<T>(operation: Operation<T>): Task<T> {
@@ -30,7 +32,7 @@ export class RunTasks {
   *supervise<T>(operation: Operation<T>, interrupt?: Future<string>): Operation<T> {
     const driver = spawn(operation);
     try {
-      const branches: Record<string, Future<unknown>> = {
+      const branches: FutureBranches = {
         fatal: this.fatal.receive,
         ...(interrupt ? {interrupt} : {}),
         driver,

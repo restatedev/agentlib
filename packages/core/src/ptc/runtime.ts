@@ -6,6 +6,7 @@ import {
   spawn,
   type Task,
 } from "@restatedev/restate-sdk-gen";
+import type {CapturedFailure} from "../errors.js";
 import {
   Guest,
   type GuestLimits,
@@ -30,7 +31,7 @@ export function* executeProgram(
   let guest: Guest | undefined;
   const pending = new Map<string, Task<Outcome>>();
   let value: Json = null;
-  let failure: {error: unknown} | undefined;
+  let failure: CapturedFailure | undefined;
   let stopReason: unknown = new InterruptedError("Program finished; unawaited tool call cancelled");
   try {
     guest = new Guest(source, tools.names, limits);

@@ -12,9 +12,8 @@ export function programTool(options: {tools?: string[]; limits?: GuestLimits} = 
     input: z.object({source: z.string().min(1).max(64000)}),
     *execute({source}, context) {
       const allowed = context.availableTools().filter((name) => name !== context.toolName);
-      const names = options.tools
-        ? options.tools.filter((name) => allowed.includes(name))
-        : allowed;
+      let names = allowed;
+      if (options.tools) names = options.tools.filter((name) => allowed.includes(name));
       try {
         return yield* executeProgram(
           source,

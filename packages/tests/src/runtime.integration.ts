@@ -70,15 +70,14 @@ const runner = r.service({
           if (request.step === 1)
             return {type: "tool_calls", calls: [{id: "same-call-id", name: "owner", input: {}}]};
           const last = request.messages.at(-1);
-          return {
-            type: "final",
-            text:
-              last?.role === "tool" &&
-              last.result.status === "success" &&
-              typeof last.result.output === "string"
-                ? last.result.output
-                : "missing tool result",
-          };
+          if (
+            last?.role === "tool" &&
+            last.result.status === "success" &&
+            typeof last.result.output === "string"
+          ) {
+            return {type: "final", text: last.result.output};
+          }
+          return {type: "final", text: "missing tool result"};
         },
       });
       return yield* r.all(
@@ -162,9 +161,10 @@ const runner = r.service({
           }),
         },
         *model(request) {
-          return request.step === 1
-            ? {type: "tool_calls", calls: [{id: "report", name: "report", input: {}}]}
-            : final;
+          if (request.step === 1) {
+            return {type: "tool_calls", calls: [{id: "report", name: "report", input: {}}]};
+          }
+          return final;
         },
       }).stream("go");
       // Let the producer buffer several updates before the first read.
@@ -242,14 +242,15 @@ const runner = r.service({
           }),
         },
         *model(request): r.Operation<ModelResponse> {
-          return request.step === 1
-            ? {
-                type: "tool_calls",
-                calls: [
-                  {id: "close", name: "closeTicket", input: {ticketId: "T-42", reason: "Resolved"}},
-                ],
-              }
-            : final;
+          if (request.step === 1) {
+            return {
+              type: "tool_calls",
+              calls: [
+                {id: "close", name: "closeTicket", input: {ticketId: "T-42", reason: "Resolved"}},
+              ],
+            };
+          }
+          return final;
         },
         *onUpdate(update) {
           updates.push(update);
@@ -308,40 +309,49 @@ const runner = r.service({
           if ((scenario === "steering" || scenario === "steering-tools") && request.step === 1) {
             r.invocation(r.handlerRequest().id).signal("steering").resolve("new requirement");
             yield* r.sleep(10);
-            return scenario === "steering-tools"
-              ? {type: "tool_calls", calls: [{id: "stale-write", name: "write", input: {}}]}
-              : {type: "final", text: "stale"};
+            if (scenario === "steering-tools") {
+              return {type: "tool_calls", calls: [{id: "stale-write", name: "write", input: {}}]};
+            }
+            return {type: "final", text: "stale"};
           }
           if (scenario === "steering" || scenario === "steering-tools") {
             assert.match(JSON.stringify(request.messages), /new requirement/);
             return final;
           }
           if (request.step === 1) {
-            const names =
-              scenario === "failure"
-                ? ["wait", "fail"]
-                : scenario === "approval"
-                  ? ["approval"]
-                  : scenario === "rpc-cancel"
-                    ? ["remote"]
-                    : scenario === "program"
-                      ? ["program"]
-                      : ["write", "lookup", "sleep"];
+            let names: string[];
+            switch (scenario) {
+              case "failure":
+                names = ["wait", "fail"];
+                break;
+              case "approval":
+                names = ["approval"];
+                break;
+              case "rpc-cancel":
+                names = ["remote"];
+                break;
+              case "program":
+                names = ["program"];
+                break;
+              default:
+                names = ["write", "lookup", "sleep"];
+            }
             return {
               type: "tool_calls",
-              calls: names.map((name): ToolCall => ({
-                id: name,
-                name,
-                input:
-                  name === "sleep"
-                    ? {milliseconds: 10}
-                    : name === "program"
-                      ? {
-                          source:
-                            "async tools => await Promise.all([tools.lookup({}),tools.write({})])",
-                        }
-                      : {},
-              })),
+              calls: names.map((name): ToolCall => {
+                if (name === "sleep") return {id: name, name, input: {milliseconds: 10}};
+                if (name === "program") {
+                  return {
+                    id: name,
+                    name,
+                    input: {
+                      source:
+                        "async tools => await Promise.all([tools.lookup({}),tools.write({})])",
+                    },
+                  };
+                }
+                return {id: name, name, input: {}};
+              }),
             };
           }
           return final;
@@ -384,12 +394,11 @@ const runner = r.service({
       const a = agent({
         tools: catalog.tools,
         *model(req): r.Operation<ModelResponse> {
-          return req.messages.some((m) => m.role === "tool")
-            ? final
-            : {
-                type: "tool_calls",
-                calls: [{id: "discover", name: "lookupDiscovered", input: {key: "discovered"}}],
-              };
+          if (req.messages.some((m) => m.role === "tool")) return final;
+          return {
+            type: "tool_calls",
+            calls: [{id: "discover", name: "lookupDiscovered", input: {key: "discovered"}}],
+          };
         },
       });
       return yield* a.run("go");

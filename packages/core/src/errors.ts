@@ -2,6 +2,9 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import {InterruptedError} from "@restatedev/restate-sdk-gen";
 import type {GuardrailResult} from "./types.js";
 
+/** A present failure can contain any thrown value, including undefined. */
+export type CapturedFailure = {error: unknown};
+
 /** Explicit, model-recoverable tool failure. Other exceptions propagate. */
 export class ToolError extends Error {
   constructor(
@@ -25,9 +28,7 @@ export class ModelProtocolError extends TerminalError {
   }
 }
 export function denial(result: GuardrailResult): string | undefined {
-  return typeof result === "string"
-    ? result
-    : result === false
-      ? "Rejected by guardrail"
-      : undefined;
+  if (typeof result === "string") return result;
+  if (result === false) return "Rejected by guardrail";
+  return undefined;
 }
