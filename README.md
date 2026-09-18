@@ -8,6 +8,7 @@ The SDK includes parallel and background tools, QuickJS programmatic tool calls,
 MCP, deferred tool search, conversation compaction, steering, interruption,
 handoffs, structured output, provider adapters, streaming, and OTel hooks.
 See the [embedding guide](docs/embedded-sdk.md) and [feature coverage](docs/sdk-status.md).
+The [domain glossary](CONTEXT.md) defines runs, sessions, conversations, and lifecycle controls.
 
 ## Workspace
 
@@ -90,6 +91,8 @@ The same endpoint registers three additional examples adapted from
 
 See the [example commands and source references](packages/examples/README.md).
 The [self-review](docs/self-review.md) records corrected defects and design decisions.
+The [skills review](docs/skills-review.md) records the subsequent standards,
+requirements, and architecture assessment.
 
 The Chat Completions adapter sends `reasoning_effort: "none"` by default for GPT-5.6
 requests with tools, avoiding the model's tool/reasoning compatibility error.

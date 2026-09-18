@@ -124,12 +124,36 @@ Every direct or nested tool call uses the same dispatcher:
 A policy returns `true`/`undefined` to allow, or `false`/a reason string to deny.
 Tool denials become observations the model can handle. `beforeRun` runs before
 compaction or inference; root and active-agent `beforeStep` policies see each request.
-`afterRun` can reject or rewrite output. Status, step count, stop reason, and history
-belong to the runtime; changing lifecycle metadata is rejected. The candidate stays
+`afterRun` receives an isolated, deeply read-only `OutputCandidate`. Return nothing
+to accept it, return `{output}` to replace its output, or throw to reject it. Status,
+step count, stop reason, and history belong to the runtime; returning any of those
+fields is rejected. The candidate stays
 outside persisted history until the output policy accepts it. Steering received while
 an asynchronous output policy runs triggers replanning before publication. A late
 application interruption after acceptance does not revoke that completed result;
 native Restate invocation cancellation still propagates.
+
+```ts
+// AgentOptions.afterRun for a text-output agent:
+function* afterRun(candidate: OutputCandidate<string>) {
+  if (candidate.status === "completed") {
+    return {output: candidate.output.trim()};
+  }
+  // Keep an existing stopped/interrupted summary unchanged.
+}
+```
+
+Import `OutputCandidate` and `OutputDecision` from `@restate-agents/core` when
+annotating reusable policies. Replacements are validated against the root output
+schema; text runs require a string. A stopped or interrupted run may receive a
+string summary, or `{output: undefined}` to omit its summary. It keeps its original
+status and reason. Candidate history includes the proposed answer for inspection;
+it does not confer ownership of the persisted conversation.
+
+**Policy migration:** replace `return result` with a bare return, and
+`return {...result, output: value}` with `return {output: value}`. Returning a full
+run result is rejected even if its lifecycle fields are unchanged. Read-only
+candidate values must be copied to construct a modified structured output.
 
 `tool({... *execute() {...}})` composes directly with Restate state, sleeps,
 signals, calls, and spawned tasks. Put ordinary network I/O in `restate.run`.
@@ -151,6 +175,10 @@ inside a raw `restate.run` and assume its identity survives replay; return outco
 data or use `asyncTool`.
 
 ## Parallel work and lifecycle controls
+
+The [domain glossary](../CONTEXT.md) distinguishes a run from its enclosing
+invocation and the application's session. It also separates application
+interruption from Restate invocation cancellation.
 
 Foreground calls start concurrently. Completions are observed as they arrive,
 while tool-response messages remain in request order. A later failure wakes the

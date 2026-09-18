@@ -51,6 +51,9 @@ establishes the specific Chat Completions tool restriction. See the
 [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) and
 [GPT-5.6 Luna model page](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
 
+Subsequently, the user supplied AI Hero's external skill catalog. Five relevant
+skills were installed and applied in a separate [skills review](skills-review.md).
+
 The [example guide](../packages/examples/README.md#provenance-and-validation) links
 each upstream source at the inspected commit and explains its adaptation.
 

@@ -69,7 +69,6 @@ Available sources: ${JSON.stringify(context.sources.map(({id, title}) => ({id, t
         result.output.sourceIds.some((id) => !context.readSourceIds.has(id))
       )
         throw new GuardrailError("The finding cites a source the worker did not read");
-      return result;
     },
   });
   const writer = agent({

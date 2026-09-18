@@ -13,6 +13,8 @@ export type {
   ModelRequest,
   ModelChunk,
   ModelResponse,
+  OutputCandidate,
+  OutputDecision,
   RunOptions,
   RunResult,
   Tool,

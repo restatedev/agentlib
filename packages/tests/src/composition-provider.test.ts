@@ -86,9 +86,8 @@ void test("handoff preserves completed history, changes tools/instructions, and 
     *model() {
       return {type: "tool_calls", calls: [{id: "h", name: "transfer", input: {}}]};
     },
-    *afterRun(result) {
+    *afterRun() {
       guarded++;
-      return result;
     },
   });
   const result = await r.execute(ctx(), triage.run("go"));
@@ -168,9 +167,8 @@ void test("structured output repairs invalid candidates and publishes only the g
         : {type: "final", text: '{"answer":"yes"}'};
     },
     *afterRun(result) {
-      return result.status === "completed"
-        ? {...result, output: {answer: result.output.answer.toUpperCase()}}
-        : result;
+      if (result.status === "completed")
+        return {output: {answer: result.output.answer.toUpperCase()}};
     },
     *onUpdate(event) {
       if (event.type === "run-end") emitted.push(event.output);

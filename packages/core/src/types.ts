@@ -89,6 +89,29 @@ export type RunResult<Output = string> = {steps: number; messages: Message[]} & 
   | {status: "stopped"; reason: "max_steps"; output?: string}
   | {status: "interrupted"; reason: string; output?: string}
 );
+// Keep recursive JSON arrays behind an array interface so diagnostics terminate.
+// Tuples retain their positions, including optional and variadic elements.
+type ReadonlyValue<T> = T extends readonly unknown[]
+  ? "0" extends keyof T
+    ? {readonly [Key in keyof T]: ReadonlyValue<T[Key]>}
+    : T extends readonly []
+      ? readonly []
+      : ReadonlyArray<ReadonlyValue<T[number]>>
+  : T extends object
+    ? {readonly [Key in keyof T]: ReadonlyValue<T[Key]>}
+    : T;
+
+/** Isolated facts and candidate output for a policy to inspect, before publication. */
+export type OutputCandidate<Output = string> = ReadonlyValue<RunResult<Output>>;
+
+/** Replace output only. Stopped/interrupted runs accept an optional text summary. */
+export type OutputDecision<Output = string> = {
+  output: ReadonlyValue<Output> | string | undefined;
+  status?: never;
+  steps?: never;
+  reason?: never;
+  messages?: never;
+};
 export type AgentEvent = {step: number} & (
   | {type: "step-start"}
   | {type: "tool-start"; call: ToolCall}
@@ -136,8 +159,11 @@ export type AgentOptions<Context, Output = string> = {
   beforeStep?(request: ModelRequest, context: RunContext<Context>): Operation<GuardrailResult>;
   beforeTool?(call: ToolCall, context: ToolContext<Context>): Operation<GuardrailResult>;
   afterTool?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
-  /** May reject or rewrite output. Status, steps, reason and history belong to the runtime. */
-  afterRun?(result: RunResult<Output>, context: RunContext<Context>): Operation<RunResult<Output>>;
+  /** Return nothing to accept, {output} to replace, or throw to reject. */
+  afterRun?(
+    candidate: OutputCandidate<Output>,
+    context: RunContext<Context>,
+  ): Operation<void | OutputDecision<Output>>;
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
   onUpdate?: UpdateHandler<Context>;
   /** Optional tool-free final model call after interruption or a step limit. */

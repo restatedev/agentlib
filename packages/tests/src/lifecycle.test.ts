@@ -462,9 +462,8 @@ void test("steering received during an output guard triggers a fresh answer", as
           assert.match(JSON.stringify(req.messages), /updated/);
           return done;
         },
-        *afterRun(result) {
+        *afterRun() {
           if (step === 1) yield* change.send("updated");
-          return result;
         },
       });
       const result = yield* a.run("go", {

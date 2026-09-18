@@ -29,6 +29,7 @@ import type {
   AgentOptions,
   AgentRuntime,
   Message,
+  OutputCandidate,
   RunContext,
   RunOptions,
   RunResult,
@@ -358,18 +359,32 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
                 ? candidate.output
                 : JSON.stringify(candidate.output),
           });
-        const guarded = track(options.afterRun(candidate, context));
+        // The clone gives untyped policies isolation; the public view is deeply readonly.
+        const guarded = track(
+          options.afterRun(candidate as unknown as OutputCandidate<O>, context),
+        );
         yield* ready({guard: guarded});
-        const next = yield* guarded;
-        if (
-          next.status !== result.status ||
-          next.steps !== result.steps ||
-          ("reason" in result && (!("reason" in next) || next.reason !== result.reason))
-        )
-          throw new GuardrailError(
-            "afterRun may rewrite output, but not run status, steps, or reason",
-          );
-        result = next;
+        const decision = yield* guarded;
+        if (decision !== undefined) {
+          if (
+            decision === null ||
+            typeof decision !== "object" ||
+            !Object.hasOwn(decision, "output") ||
+            Reflect.ownKeys(decision).some((key) => key !== "output")
+          )
+            throw new GuardrailError(
+              "afterRun must return nothing or an object containing only output",
+            );
+          if (result.status === "completed") {
+            // The root output schema (or text contract) validates this below.
+            result = {...result, output: decision.output as O};
+          } else {
+            const summary: unknown = decision.output;
+            if (summary !== undefined && typeof summary !== "string")
+              throw new GuardrailError("A stopped or interrupted output must be a text summary");
+            result = {...result, output: summary};
+          }
+        }
       }
       if (result.status === "completed" && (steering.length || revision !== beforeGuard)) {
         // Steering may arrive while a generator output policy is awaiting I/O.
@@ -380,8 +395,11 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       }
       watcher?.interrupt(new InterruptedError("Run is finalizing"));
       if (watcher) yield* allSettled([watcher]);
-      if (result.status === "completed" && options.output)
-        result = {...result, output: options.output.parse(result.output)};
+      if (result.status === "completed") {
+        if (options.output) result = {...result, output: options.output.parse(result.output)};
+        else if (typeof result.output !== "string")
+          throw new GuardrailError("A completed text run must have a string output");
+      }
       const output = result.output === undefined ? undefined : jsonSchema.parse(result.output);
       if (output !== undefined && JSON.stringify(output).length > maxOutputChars)
         throw new AgentLimitError("Final output exceeds maxOutputChars");

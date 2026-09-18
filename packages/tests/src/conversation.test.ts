@@ -41,7 +41,7 @@ void test("output policies replace the answer in persisted and returned conversa
       return {type: "final", text: "private candidate"};
     },
     *afterRun(result) {
-      return result.status === "completed" ? {...result, output: "public answer"} : result;
+      if (result.status === "completed") return {output: "public answer"};
     },
   });
   await r.execute(

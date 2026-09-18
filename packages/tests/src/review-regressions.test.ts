@@ -92,7 +92,6 @@ void test("interruption during an output guard never persists the unaccepted can
             yield* stop.send("stop before publication");
             yield* r.channel().receive;
           }
-          return result;
         },
       });
       const result = yield* a.run("go", {conversation: convo, controls: {interrupt: stop.receive}});
@@ -114,9 +113,7 @@ void test("an output policy's stopped summary is included in persisted history",
           return toolCall;
         },
         *afterRun(result) {
-          return result.status === "stopped"
-            ? {...result, output: "No write was performed"}
-            : result;
+          if (result.status === "stopped") return {output: "No write was performed"};
         },
       });
       const result = yield* a.run("go", {conversation: convo});
@@ -131,11 +128,12 @@ void test("an output policy's stopped summary is included in persisted history",
 });
 
 void test("output policies cannot convert an exhausted run into completed success", async () => {
-  const a = agent({
+  const a = agent<undefined>({
     maxSteps: 1,
     *model() {
       return toolCall;
     },
+    // @ts-expect-error JavaScript callers are also checked for forbidden lifecycle edits.
     *afterRun(result) {
       return {...result, status: "completed", output: "fake success"};
     },
@@ -170,8 +168,8 @@ void test("output hooks cannot mutate the runtime's history through their candid
       return final;
     },
     *afterRun(result) {
+      // @ts-expect-error Runtime isolation also protects against untyped candidate mutation.
       result.messages.splice(0, result.messages.length, {role: "user", content: "forged"});
-      return result;
     },
   });
   const result = await r.execute(context(), a.run("original"));

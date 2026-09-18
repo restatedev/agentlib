@@ -206,6 +206,25 @@ const runner = r.service({
 const session = r.object({
   name: "SdkConversation",
   handlers: {
+    *approveOutput() {
+      const conversation = new LazyStateConversation();
+      const outputs: unknown[] = [];
+      const result = yield* agent({
+        *model(): r.Operation<ModelResponse> {
+          return {type: "final", text: "approved answer"};
+        },
+        *afterRun(candidate) {
+          assert.equal(candidate.status, "completed");
+          assert.equal(candidate.output, "approved answer");
+          yield* r.sleep(1);
+          // Returning nothing approves the candidate without returning lifecycle facts.
+        },
+        *onUpdate(update) {
+          if (update.type === "run-end") outputs.push(update.output);
+        },
+      }).run("go", {conversation});
+      return {result, outputs, history: yield* conversation.page()};
+    },
     *interruptGuard() {
       const conversation = new LazyStateConversation();
       const result = yield* agent({
@@ -219,7 +238,6 @@ const session = r.object({
               .resolve("stop before publication");
             yield* r.sleep(60000);
           }
-          return result;
         },
       }).run("go", {conversation, interruptSignal: "interrupt"});
       return {result, history: yield* conversation.page()};
@@ -337,6 +355,25 @@ void test("the embeddable session example exposes shared controls without model 
   assert.equal(await client.interrupt("stop"), false);
   assert.equal(await client.approve({signalName: "unknown", approved: true}), false);
 });
+
+void test(
+  "native output policy approves without returning lifecycle state",
+  {timeout: 20000},
+  async () => {
+    const response = await connect({url: env.baseUrl()})
+      .client(session, "output-approval")
+      .approveOutput();
+    assert.equal(response.result.status, "completed");
+    assert.equal(response.result.steps, 1);
+    assert.equal(response.result.output, "approved answer");
+    assert.deepEqual(response.outputs, ["approved answer"]);
+    assert.deepEqual(response.history.messages, [
+      {role: "user", content: "go"},
+      {role: "assistant", content: "approved answer"},
+    ]);
+    assert.deepEqual(response.result.messages, response.history.messages);
+  },
+);
 
 void test(
   "native interrupted output guard never commits its candidate",
