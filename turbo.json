@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["tsconfig.base.json"],
+  "tasks": {
+    "compile": {
+      "dependsOn": ["^compile"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^compile"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^compile"],
+      "outputs": []
+    },
+    "test:integration": {
+      "dependsOn": ["^compile"],
+      "cache": false
+    },
+    "//#lint": {
+      "dependsOn": ["@restate-agents/core#compile", "@restate-agents/examples#compile"],
+      "cache": false
+    },
+    "//#format": {
+      "cache": false
+    },
+    "//#lint:fix": {
+      "cache": false
+    },
+    "//#format:fix": {
+      "cache": false
+    }
+  }
+}

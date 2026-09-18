@@ -1,0 +1,24 @@
+{
+  "name": "@restate-agents/tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/*.test.ts",
+    "test:integration": "node --import tsx --test src/*.integration.ts"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@restate-agents/core": "workspace:*",
+    "@restate-agents/examples": "workspace:*",
+    "@restatedev/restate-sdk": "^1.17.1",
+    "@restatedev/restate-sdk-clients": "1.17.1",
+    "@restatedev/restate-sdk-gen": "^1.17.1",
+    "@restatedev/restate-sdk-testcontainers": "1.17.1",
+    "ai": "7.0.26",
+    "minisearch": "7.2.0",
+    "openai": "^7.17.0",
+    "zod": "^4.6.5"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "@restate-agents/core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Embeddable agents native to Restate coroutines",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./openai": {
+      "types": "./dist/openai.d.ts",
+      "import": "./dist/openai.js"
+    },
+    "./program": {
+      "types": "./dist/program.d.ts",
+      "import": "./dist/program.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "import": "./dist/provider.js"
+    },
+    "./telemetry": {
+      "types": "./dist/telemetry.d.ts",
+      "import": "./dist/telemetry.js"
+    },
+    "./web-search": {
+      "types": "./dist/web-search.d.ts",
+      "import": "./dist/web-search.js"
+    },
+    "./discovery": {
+      "types": "./dist/discovery.d.ts",
+      "import": "./dist/discovery.js"
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@jitl/quickjs-singlefile-cjs-release-sync": "0.31.0",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@opentelemetry/api": "1.9.0",
+    "@restatedev/restate-sdk": "^1.17.1",
+    "@restatedev/restate-sdk-gen": "^1.17.1",
+    "ai": "7.0.26",
+    "minisearch": "7.2.0",
+    "openai": "^7.17.0",
+    "quickjs-emscripten-core": "0.31.0",
+    "zod": "^4.6.5"
+  }
+}

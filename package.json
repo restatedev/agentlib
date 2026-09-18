@@ -1,27 +1,33 @@
 {
-  "name": "agents",
-  "version": "0.0.1",
+  "name": "restate-agents-workspace",
   "private": true,
-  "description": "A durable agent loop in six snippets, on the Restate generator SDK (@restatedev/restate-sdk-gen)",
   "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
   "scripts": {
-    "dev": "tsx watch src/app.ts",
-    "start": "tsx src/app.ts",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc"
-  },
-  "dependencies": {
-    "@restatedev/restate-sdk": "^1.17.1",
-    "@restatedev/restate-sdk-gen": "^1.17.1",
-    "openai": "^7.17.0",
-    "zod": "^4.6.5"
+    "preinstall": "node scripts/require-pnpm.mjs",
+    "build": "turbo run compile lint format typecheck",
+    "typecheck": "turbo run typecheck",
+    "lint": "oxlint --type-aware --type-check --deny-warnings .",
+    "lint:fix": "oxlint --type-aware --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "check": "pnpm build && pnpm test && pnpm test:integration",
+    "dev": "pnpm --filter @restate-agents/core compile && pnpm --filter @restate-agents/examples dev",
+    "start": "pnpm --filter @restate-agents/examples start"
   },
   "devDependencies": {
-    "@types/node": "^24",
-    "tsx": "^4",
-    "typescript": "^5"
-  }
+    "@types/node": "^24.13.5",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "tsx": "^4.23.13",
+    "turbo": "2.10.13",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11 <12"
+  },
+  "packageManager": "pnpm@11.19.0"
 }

@@ -1,6 +1,7 @@
 # Node
 node_modules
 dist
+.pnpm-store/
 
 # debug
 npm-debug.log*
@@ -16,3 +17,6 @@ yarn-error.log*
 # Restate
 .restate
 restate-data
+
+# Workspace task cache
+.turbo/
