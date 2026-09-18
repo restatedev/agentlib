@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk";
 import {agent} from "@restate-agents/promise";
 import {z} from "zod";
-import {exampleModel as model} from "../shared.js";
+import {completedOutput, exampleModel as model} from "../shared.js";
 
 const triage = agent({
   model,
@@ -17,7 +17,8 @@ export const promiseTicketTriage = restate.service({
   name: "PromiseTicketTriage",
   handlers: {
     async classify(ctx: restate.Context, message: string) {
-      return await triage.run(ctx, message);
+      const result = await triage.run(ctx, message);
+      return completedOutput(result);
     },
   },
 });

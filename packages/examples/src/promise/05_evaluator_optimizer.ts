@@ -30,19 +30,11 @@ export const promiseCodeReview = restate.service({
     generate: restate.createServiceHandler(
       {
         input: restate.serde.schema(z.object({task: z.string().min(1).max(4000)})),
-        output: restate.serde.schema(
-          z.object({
-            status: z.enum(["accepted", "exhausted"]),
-            code: z.string(),
-            iterations: z.number(),
-            reviews: z.array(evaluationSchema),
-          }),
-        ),
+        output: restate.serde.schema(z.string()),
       },
       async (ctx, {task}) => {
         let code = "";
         let feedback = "";
-        const reviews: z.infer<typeof evaluationSchema>[] = [];
         for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           // Distinct run names keep event IDs and approval namespaces independent.
           const draft = completedOutput(
@@ -56,13 +48,10 @@ export const promiseCodeReview = restate.service({
               name: `review-${iteration}`,
             }),
           );
-          reviews.push(review);
-          if (review.approved)
-            return {status: "accepted" as const, code, iterations: iteration, reviews};
+          if (review.approved) return code;
           feedback = review.feedback;
         }
-        // Keep the last draft and the feedback so a human can continue the work.
-        return {status: "exhausted" as const, code, iterations: MAX_ITERATIONS, reviews};
+        return `The draft still needs work after ${MAX_ITERATIONS} reviews: ${feedback}\n\n${code}`;
       },
     ),
   },

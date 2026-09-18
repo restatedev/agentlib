@@ -27,14 +27,14 @@ export const racingAgents = restate.service({
     answer: restate.schemas(
       {
         input: z.object({question: z.string().min(1).max(4000)}),
-        output: z.object({winner: z.string(), answer: z.string()}),
+        output: z.string(),
       },
       function* ({question}) {
         const tasks = Object.entries(candidates).map(([name, candidate]) =>
           restate.spawn(
             (function* () {
               const result = yield* candidate.run(question, {name});
-              return {winner: name, answer: completedOutput(result)};
+              return completedOutput(result);
             })(),
           ),
         );

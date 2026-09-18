@@ -15,7 +15,7 @@ import {
 } from "@restate-agents/core";
 import {mcpTools, type McpToolSet} from "@restate-agents/core/mcp";
 import {programTool} from "@restate-agents/core/program";
-import {exampleModel as model} from "../shared.js";
+import {exampleModel as model, replyText} from "../shared.js";
 
 type SessionContext = {sessionKey: string};
 type ActiveTurn = {invocationId: string};
@@ -76,7 +76,7 @@ export const aiSession = restate.object({
   name: "AiSession",
   handlers: {
     doTurn: restate.schemas(
-      {input: z.object({message: z.string().min(1)}), output: z.json()},
+      {input: z.object({message: z.string().min(1)}), output: z.string()},
       function* ({message}) {
         const invocationId = restate.handlerRequest().id;
         const context = {sessionKey: restate.handlerRequest().key!};
@@ -97,7 +97,7 @@ export const aiSession = restate.object({
                 return process.env.MCP_TOKEN;
               },
             });
-          return yield* support.run(message, {
+          const result = yield* support.run(message, {
             context,
             conversation,
             tools: remote?.tools,
@@ -115,6 +115,7 @@ export const aiSession = restate.object({
               restate.state().set("updates", updates);
             },
           });
+          return replyText(result);
         } finally {
           restate.state().clear("active");
           restate.state().clear("approvals");

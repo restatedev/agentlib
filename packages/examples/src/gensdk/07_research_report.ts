@@ -101,11 +101,7 @@ export const researchReport = restate.service({
     generate: restate.schemas(
       {
         input: z.object({topic: z.string().min(1).max(2000), sources: sourcesSchema}),
-        output: z.object({
-          report: z.string(),
-          findings: z.array(findingSchema),
-          taskCount: z.number(),
-        }),
+        output: z.string(),
       },
       function* ({topic, sources}) {
         const plan = completedOutput(
@@ -129,7 +125,7 @@ export const researchReport = restate.service({
           yield* restate.allSettled(workers);
         }
         const report = completedOutput(yield* writer.run(JSON.stringify({topic, findings})));
-        return {report, findings, taskCount: findings.length};
+        return report;
       },
     ),
   },

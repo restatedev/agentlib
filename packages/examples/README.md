@@ -56,7 +56,8 @@ The request bodies are identical.
 ## 01 — Run your first agent
 
 Start with `agent({model})` and a single handler. The handler passes the request
-to the agent and returns its result. Each call starts with no conversation history.
+to the agent and returns its answer as a JSON string. Each call starts with no
+conversation history.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/Hello/ask" --json '"Say hello in one sentence."'
@@ -64,9 +65,9 @@ curl --globoff "$RESTATE_CALL_URL/Hello/ask" --json '"Say hello in one sentence.
 curl --globoff "$RESTATE_CALL_URL/PromiseHello/ask" --json '"Say hello in one sentence."'
 ```
 
-On success, the response has `status: "completed"`, the answer in `output`, and
-its conversation in `messages`. Keep returning the whole result in these first
-lessons so callers can also see when a run stops or is interrupted.
+The response is just the answer, such as `"Hello!"`. The `replyText` helper
+extracts the answer from the run result, or returns a short explanation if the
+run stopped or was interrupted without producing an answer.
 
 ## 02 — Give the agent a tool
 
@@ -95,7 +96,8 @@ flavor. Use `handlerTool` for typed calls to other Restate handlers.
 ## 03 — Remember previous turns
 
 Change the service to a keyed Restate object. Before the run, load its saved
-messages. Pass them to the agent, then save `result.messages` afterward.
+messages. Pass them to the agent, then save `result.messages` afterward. Return
+only the reply; the history stays in object state.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '"My name is Bob."'
@@ -109,16 +111,16 @@ adds conversation compaction and lifecycle controls.
 ## 04 — Return structured data
 
 Add an `output` schema to describe the result. The SDK validates the model's
-answer and gives the caller a typed `output` value.
+answer and gives the caller the typed object directly.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/TicketTriage/classify" \
   --json '"I was charged twice for my subscription."'
 ```
 
-A completed result contains an object such as
+A successful response is an object such as
 `{"category":"billing","summary":"The customer reports a duplicate subscription charge."}`
-in `output`. Lesson 05 uses this same mechanism to connect two agents.
+without a run-result wrapper. Lesson 05 uses this same mechanism to connect two agents.
 
 ## 05 — Compose a draft-and-review loop
 
@@ -131,8 +133,9 @@ curl --globoff "$RESTATE_CALL_URL/CodeReview/generate" \
   --json '{"task":"Read the first item of an array safely, returning undefined when it is empty."}'
 ```
 
-The result includes `status: "accepted" | "exhausted"`, the last `code`, iteration
-count, and every review. Acceptance is the model's review decision; the code is
+The response is the accepted code as a string. If all three reviews reject the
+draft, the response explains that it still needs work and includes the latest
+feedback and code. Acceptance is the model's review decision; the code is
 returned as text and never executed. The shared `completedOutput` helper makes
 a stopped or interrupted run fail the stage instead of advancing the workflow.
 
@@ -152,7 +155,7 @@ curl --globoff "$RESTATE_CALL_URL/RegularSdkSupport/bob/ask" \
 ```
 
 The handler loads history, runs the agent, then saves history and its actual
-status. A thrown failure skips those state writes. `handlerTool` cancels an
+status, returning only the reply. A thrown failure skips those state writes. `handlerTool` cancels an
 unfinished child call when interrupted. Both services are registered by
 `pnpm dev:promise` and `pnpm dev`.
 
@@ -172,7 +175,7 @@ curl --globoff "$RESTATE_CALL_URL/RacingAgents/answer" \
   --json '{"question":"How should a durable workflow handle external side effects?"}'
 ```
 
-The result contains `winner` and `answer`. Both agents start, so the pattern can
+The response is the winning answer as a string. Both agents start, so the pattern can
 consume more tokens than a single run. They share a model with different
 instructions; change their `model` fields to compare providers.
 
@@ -201,7 +204,7 @@ curl --globoff "$RESTATE_CALL_URL/ResearchReport/generate" --json '{
 }'
 ```
 
-The result contains `report`, `findings`, and `taskCount`. This example uses
+The response is the final report as a string. Worker findings remain internal. This example uses
 supplied documents and does not browse the web. Citation IDs are checked against
 tool reads; factual quality and final prose still depend on the model.
 
@@ -219,6 +222,9 @@ curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \
 
 Optional MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`.
 This is the full integration reference after the smaller lessons.
+
+`doTurn` returns only the answer or interruption summary. Read conversation
+history through `history` and control details through `status` when needed.
 
 ## Model configuration
 

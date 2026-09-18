@@ -82,6 +82,7 @@ const researchModel: Model = function* (request) {
   );
 };
 
+const reviewCounts = new Map<string, number>();
 const reviewModel: Model = function* (request) {
   const message = request.messages.find((message) => message.role === "user");
   assert.ok(message && message.role === "user");
@@ -100,6 +101,7 @@ const reviewModel: Model = function* (request) {
         }
         return answer({code: "return items[0].value;"});
       }
+      reviewCounts.set(input.task, (reviewCounts.get(input.task) ?? 0) + 1);
       return answer({
         approved: input.task !== "always reject" && input.code!.includes("items.length"),
         feedback: "Handle empty input.",
@@ -203,6 +205,17 @@ const tutorialModel = journaledModel(async (request): Promise<ModelResponse> => 
 
 const fixtureModel: Model = function* (request) {
   const instructions = request.instructions ?? "";
+  if (instructions.startsWith("Help with the user's task.")) {
+    const turns = request.messages.filter((message) => message.role === "user");
+    if (turns.at(-1)!.content === "interrupt") {
+      r.invocation(r.handlerRequest().id).signal("interrupt").resolve("User cancelled");
+      yield* r.sleep(60000);
+    }
+    return {type: "final", text: `Session answer; previous turns: ${turns.length - 1}`};
+  }
+  const last = request.messages.at(-1);
+  if (last?.role === "user" && last.content.startsWith("The run stopped:"))
+    return {type: "final", text: "Stopped as requested."};
   if (instructions.startsWith("Research ")) return yield* researchModel(request);
   if (instructions.startsWith("Code ")) return yield* reviewModel(request);
   if (instructions.startsWith("Quick answer.")) return yield* racingModels.quick(request);
@@ -237,6 +250,7 @@ const [
   {racingAgents},
   {regularSdkSupport, supportPolicies},
   {promiseCodeReview},
+  {aiSession},
 ] = await Promise.all([
   import("@restate-agents/examples/gensdk/hello"),
   import("@restate-agents/examples/gensdk/tools"),
@@ -251,6 +265,7 @@ const [
   import("@restate-agents/examples/gensdk/racing-agents"),
   import("@restate-agents/examples/promise/regular-sdk"),
   import("@restate-agents/examples/promise/evaluator-optimizer"),
+  import("@restate-agents/examples/gensdk/session"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -274,6 +289,7 @@ before(
         regularSdkSupport,
         supportPolicies,
         promiseCodeReview,
+        aiSession,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -304,41 +320,54 @@ const tutorialExamples = [
 for (const tutorial of tutorialExamples) {
   void test(`${tutorial.name} 01: each request starts a fresh run`, async () => {
     const first = await tutorial.hello().ask("Hello");
-    assert.equal(first.status, "completed");
-    assert.equal(first.output, "Hello");
+    assert.equal(first, "Hello");
     const second = await tutorial.hello().ask("Another request");
-    assert.equal(second.status, "completed");
-    assert.equal(second.output, "Another request");
+    assert.equal(second, "Another request");
   });
 
   void test(`${tutorial.name} 02: the model receives the executed tool's result`, async () => {
     const result = await tutorial.tools().ask("Look up ticket T-42");
-    assert.equal(result.status, "completed");
-    assert.equal(result.output, "Ticket T-42 is open.");
-    assert.equal(result.steps, 2);
+    assert.equal(result, "Ticket T-42 is open.");
   });
 
   void test(`${tutorial.name} 03: history persists between turns and is isolated by key`, async () => {
     const first = await tutorial.conversation("bob").ask("My name is Bob.");
-    assert.equal(first.status, "completed");
+    assert.equal(first, "My name is Bob.");
     const second = await tutorial.conversation("bob").ask("What is my name?");
-    assert.equal(second.status, "completed");
-    assert.equal(second.output, "My name is Bob. | What is my name?");
-    assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
+    assert.equal(second, "My name is Bob. | What is my name?");
     const other = await tutorial.conversation("alice").ask("What is my name?");
-    assert.equal(other.status, "completed");
-    assert.equal(other.output, "What is my name?");
+    assert.equal(other, "What is my name?");
   });
 
   void test(`${tutorial.name} 04: structured output reaches the caller as an object`, async () => {
     const result = await tutorial.structuredOutput().classify("I was charged twice.");
-    assert.equal(result.status, "completed");
-    assert.deepEqual(result.output, {
+    assert.deepEqual(result, {
       category: "billing",
       summary: "Duplicate subscription charge.",
     });
   });
 }
+
+void test("support session returns only its reply while retaining conversation history", async () => {
+  const client = connect({url: env.baseUrl()}).client(aiSession, "replies");
+  const first = await client.doTurn({message: "Hello"});
+  assert.equal(first, "Session answer; previous turns: 0");
+  const second = await client.doTurn({message: "Another question"});
+  assert.equal(second, "Session answer; previous turns: 1");
+  const history = await client.history();
+  assert.deepEqual(history.messages, [
+    {role: "user", content: "Hello"},
+    {role: "assistant", content: first},
+    {role: "user", content: "Another question"},
+    {role: "assistant", content: second},
+  ]);
+});
+
+void test("interrupted support session returns its final summary", {timeout: 20000}, async () => {
+  const client = connect({url: env.baseUrl()}).client(aiSession, "interrupted");
+  assert.equal(await client.doTurn({message: "interrupt"}), "Stopped as requested.");
+  assert.equal((await client.status()).active, null);
+});
 
 void test("regular SDK runs work before and after an agent with journaled and RPC tools", async () => {
   const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "conversation");
@@ -350,17 +379,17 @@ void test("regular SDK runs work before and after an agent with journaled and RP
   await state.setAll({messages: previous});
 
   const first = await client.ask({message: "first"});
-  assert.equal(first.status, "completed");
-  assert.equal(first.output, "Answered first; previous turns: 1");
-  assert.deepEqual(first.messages.slice(0, previous.length), previous);
-  assert.deepEqual(await state.get("messages"), first.messages);
+  assert.equal(first, "Answered first; previous turns: 1");
+  const firstMessages = (await state.get<Message[]>("messages"))!;
+  assert.deepEqual(firstMessages.slice(0, previous.length), previous);
+  assert.deepEqual(firstMessages.at(-1), {role: "assistant", content: first});
   assert.equal(await state.get("lastStatus"), "completed");
 
   const second = await client.ask({message: "second"});
-  assert.equal(second.status, "completed");
-  assert.equal(second.output, "Answered second; previous turns: 2");
-  assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
-  assert.deepEqual(await state.get("messages"), second.messages);
+  assert.equal(second, "Answered second; previous turns: 2");
+  const secondMessages = (await state.get<Message[]>("messages"))!;
+  assert.deepEqual(secondMessages.slice(0, firstMessages.length), firstMessages);
+  assert.deepEqual(secondMessages.at(-1), {role: "assistant", content: second});
   assert.equal(regularEffects.size, 4);
   assert.ok([...regularEffects.values()].every((count) => count === 1));
 });
@@ -368,10 +397,12 @@ void test("regular SDK runs work before and after an agent with journaled and RP
 void test("regular SDK saves stopped runs with their actual status", async () => {
   const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "stopped");
   const result = await client.ask({message: "stop"});
-  assert.equal(result.status, "stopped");
+  assert.equal(result, "Agent stopped: max_steps");
   const state = env.stateOf(regularSdkSupport, "stopped");
   assert.equal(await state.get("lastStatus"), "stopped");
-  assert.deepEqual(await state.get("messages"), result.messages);
+  const messages = (await state.get<Message[]>("messages"))!;
+  assert.deepEqual(messages[0], {role: "user", content: "stop"});
+  assert.equal(messages.filter((message) => message.role === "tool").length, 14);
 });
 
 void test("regular SDK propagates agent failure without executing the following state writes", async () => {
@@ -391,9 +422,8 @@ void test(
     const result = await connect({url: env.baseUrl()})
       .client(researchReport)
       .generate({topic: "Reliable execution", sources});
-    assert.equal(result.taskCount, 2);
-    assert.equal(result.findings.length, 2);
-    assert.match(result.report, /\[durability\]/);
+    assert.match(result, /\[durability\]/);
+    assert.match(result, /\[idempotency\]/);
     assert.equal(effects.size, 6);
     assert.ok([...effects.values()].every((count) => count === 1));
   },
@@ -428,22 +458,20 @@ const reviewExamples = [
 ];
 for (const reviewExample of reviewExamples) {
   void test(`${reviewExample.name}: evaluator feedback reaches the next draft and stops on acceptance`, async () => {
-    const result = await reviewExample.client().generate({task: "Read the first item safely"});
-    assert.equal(result.status, "accepted");
-    assert.equal(result.iterations, 2);
-    assert.deepEqual(
-      result.reviews.map((review) => review.approved),
-      [false, true],
-    );
-    assert.match(result.code, /items.length/);
+    const task = "Read the first item safely";
+    const before = reviewCounts.get(task) ?? 0;
+    const result = await reviewExample.client().generate({task});
+    assert.equal(result, "return items.length ? items[0] : undefined;");
+    assert.equal(reviewCounts.get(task)! - before, 2);
   });
 
   void test(`${reviewExample.name}: exhausting the budget retains the last draft and feedback`, async () => {
-    const result = await reviewExample.client().generate({task: "always reject"});
-    assert.equal(result.status, "exhausted");
-    assert.equal(result.iterations, 3);
-    assert.equal(result.reviews.length, 3);
-    assert.match(result.code, /items.length/);
+    const task = "always reject";
+    const before = reviewCounts.get(task) ?? 0;
+    const result = await reviewExample.client().generate({task});
+    assert.match(result, /still needs work after 3 reviews: Handle empty input/);
+    assert.match(result, /items.length/);
+    assert.equal(reviewCounts.get(task)! - before, 3);
   });
 }
 
@@ -454,17 +482,17 @@ void test(
     const result = await connect({url: env.baseUrl()})
       .client(racingAgents)
       .answer({question: "cancel loser"});
-    assert.deepEqual(result, {winner: "quick", answer: "Quick answer"});
+    assert.equal(result, "Quick answer");
     assert.equal(cleanedRaces.size, 1);
   },
 );
 
 for (const question of ["fallback", "stopped quick"]) {
   void test(`racing waits for a completed answer after ${question}`, {timeout: 20000}, async () => {
-    assert.deepEqual(await connect({url: env.baseUrl()}).client(racingAgents).answer({question}), {
-      winner: "thorough",
-      answer: "Thorough answer",
-    });
+    assert.equal(
+      await connect({url: env.baseUrl()}).client(racingAgents).answer({question}),
+      "Thorough answer",
+    );
   });
 }
 void test("racing fails clearly if neither agent completes", async () => {

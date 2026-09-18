@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk";
 import {agent, asyncTool} from "@restate-agents/promise";
 import {z} from "zod";
-import {exampleModel as model} from "../shared.js";
+import {exampleModel as model, replyText} from "../shared.js";
 
 const support = agent({
   model,
@@ -31,7 +31,8 @@ export const promiseTicketLookup = restate.service({
   name: "PromiseTicketLookup",
   handlers: {
     async ask(ctx: restate.Context, message: string) {
-      return await support.run(ctx, message);
+      const result = await support.run(ctx, message);
+      return replyText(result);
     },
   },
 });

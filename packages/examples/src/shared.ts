@@ -13,6 +13,12 @@ export const exampleModel = openAIModel({
   },
 });
 
+/** Return the answer, or a short explanation when the run ended without one. */
+export function replyText(result: RunResult): string {
+  if (result.status === "completed") return result.output;
+  return result.output ?? `Agent ${result.status}: ${result.reason}`;
+}
+
 /** A stopped/interrupted child cannot silently become a successful workflow stage. */
 export function completedOutput<T>(result: RunResult<T>): T {
   if (result.status !== "completed")

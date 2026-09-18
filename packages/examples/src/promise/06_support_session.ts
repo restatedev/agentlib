@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk";
 import {agent, asyncTool, handlerTool, type Message} from "@restate-agents/promise";
 import {z} from "zod";
-import {exampleModel as model} from "../shared.js";
+import {exampleModel as model, replyText} from "../shared.js";
 
 type TurnInput = {message: string};
 type RefundPolicy = {refundWindowDays: number; requiresReceipt: boolean};
@@ -68,7 +68,7 @@ export const regularSdkSupport = restate.object({
       // After: persist the conversation and the actual outcome of the run.
       ctx.set("messages", result.messages);
       ctx.set("lastStatus", result.status);
-      return result;
+      return replyText(result);
     },
   },
 });
