@@ -356,12 +356,14 @@ const runner = r.service({
           }
           return final;
         },
+        *onApproval(request) {
+          yield* r.run(async () => null, {name: "Publish approval"});
+          r.invocation(request.invocationId).signal(request.signalName).resolve(true);
+        },
         *onUpdate(event) {
           updates.push(event.type);
           if (scenario === "late-interrupt" && event.type === "run-end")
             r.invocation(r.handlerRequest().id).signal("interrupt").resolve("after acceptance");
-          if (event.type === "approval-required")
-            r.invocation(r.handlerRequest().id).signal(event.request.signalName).resolve(true);
           if (scenario === "rpc-cancel" && event.type === "tool-start") {
             r.spawn(
               (function* () {
@@ -652,12 +654,11 @@ void test(
 void test("the embeddable session example exposes shared controls without model credentials", async () => {
   const client = connect({url: env.baseUrl()}).client(aiSession, "example");
   const status = await client.status();
-  assert.deepEqual(status.approvals, []);
+  assert.equal(status.approval, null);
   assert.deepEqual(status.updates, []);
   assert.deepEqual(await client.history(), {messages: [], next: 0});
   assert.equal(await client.steer("new note"), false);
   assert.equal(await client.interrupt("stop"), false);
-  assert.equal(await client.approve({signalName: "unknown", approved: true}), false);
 });
 
 void test(

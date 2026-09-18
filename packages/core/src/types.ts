@@ -54,7 +54,17 @@ export type RunContext<Context> = {
   /** Stable namespace; use distinct names for multiple runs in one handler. */
   name: string;
 };
-export type ApprovalRequest = {call: ToolCall; signalName: string; question?: string};
+export type ApprovalRequest = {
+  invocationId: string;
+  call: ToolCall;
+  signalName: string;
+  question?: string;
+};
+/** Publish an approval request before the SDK waits for its decision. */
+export type ApprovalHandler<Context = unknown> = (
+  request: ApprovalRequest,
+  context: Context,
+) => Operation<void>;
 export type ToolContext<Context> = RunContext<Context> & {
   callId: string;
   toolName: string;
@@ -161,6 +171,7 @@ export type RunOptions<Context> = {
   conversation?: import("./conversation.js").Conversation;
   name?: string;
   onUpdate?: UpdateHandler<Context>;
+  onApproval?: ApprovalHandler<Context>;
   steeringSignal?: string;
   interruptSignal?: string;
   /** Application-supplied control futures, useful when embedding in another loop. */
@@ -192,6 +203,8 @@ export type AgentOptions<Context, Output = string> = {
     candidate: OutputCandidate<Output>,
     context: RunContext<Context>,
   ): Operation<void | OutputDecision<Output>>;
+  onApproval?: ApprovalHandler<Context>;
+  /** Override the decision mechanism; onApproval only publishes the request. */
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
   onUpdate?: UpdateHandler<Context>;
   /** Optional tool-free final model call after interruption or a step limit. */
@@ -214,6 +227,7 @@ export type AgentRuntime<C> = Pick<
   | "beforeStep"
   | "beforeTool"
   | "afterTool"
+  | "onApproval"
   | "onHumanApproval"
 >;
 export type Agent<Context, Output = string> = {

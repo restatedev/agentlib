@@ -37,6 +37,7 @@ export type {
 export type {
   RunContext,
   ApprovalRequest,
+  ApprovalHandler,
   GuardrailResult,
   AgentStream,
   AgentRuntime,

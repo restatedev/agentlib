@@ -11,6 +11,12 @@ const model: Model = function* () {
 };
 const a = agent<TenantContext>({
   model,
+  *onApproval(request, context) {
+    const tenant: string = context.tenant;
+    const invocationId: string = request.invocationId;
+    void tenant;
+    void invocationId;
+  },
   tools: {
     lookup: tool({
       input: z.object({id: z.string()}),
@@ -25,7 +31,15 @@ const a = agent<TenantContext>({
     }),
   },
 });
-a.run("Go", {context: {tenant: "a"}});
+a.run("Go", {
+  context: {tenant: "a"},
+  *onApproval(request, context) {
+    const tenant: string = context.tenant;
+    const signalName: string = request.signalName;
+    void tenant;
+    void signalName;
+  },
+});
 // @ts-expect-error A typed context is required on each run.
 a.run("Go");
 // @ts-expect-error Context fields are checked.
@@ -35,6 +49,12 @@ agent({model}).run("Go");
 declare const ctx: RestateContext;
 const promiseAgent = promise.agent<TenantContext>({
   model,
+  onApproval(request, ctx, context) {
+    const tenant: string = context.tenant;
+    return ctx.run(`Publish ${request.signalName}`, () => {
+      void tenant;
+    });
+  },
   onUpdate(update, ctx, context) {
     const tenant: string = context.tenant;
     return ctx.run(`Observe ${update.type}`, () => {
@@ -78,6 +98,12 @@ void promiseAgent.run(ctx, "Go", {context: {tenant: 3}});
 void promise.agent({model}).run(ctx, "Go");
 void promiseAgent.run(ctx, "Go", {
   context: {tenant: "a"},
+  onApproval(request, _ctx, context) {
+    const tenant: string = context.tenant;
+    const approval: promise.ApprovalRequest = request;
+    void tenant;
+    void approval;
+  },
   onUpdate(update, _ctx, context) {
     const tenant: string = context.tenant;
     const event: promise.AgentUpdate = update;
@@ -93,6 +119,22 @@ promise.agent({
 void promise.agent({model}).run(ctx, "Go", {
   // @ts-expect-error Generator update hooks belong to the gensdk entry point.
   *onUpdate() {},
+});
+promise.agent({
+  model,
+  // @ts-expect-error Approval hooks must return synchronously or return a RestatePromise.
+  async onApproval() {},
+});
+void promise.agent({model}).run(ctx, "Go", {
+  // @ts-expect-error Generator approval hooks belong to the gensdk entry point.
+  *onApproval() {},
+});
+agent({
+  model,
+  // @ts-expect-error Approval notifications do not return the approval decision.
+  *onApproval() {
+    return true;
+  },
 });
 promise.tool({
   description: "Invalid native promise",

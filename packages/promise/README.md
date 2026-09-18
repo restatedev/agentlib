@@ -45,10 +45,19 @@ context and your application context. It can return synchronously or return a
 When both callbacks are supplied, the agent callback finishes before the run
 callback receives the same event.
 
+Define `onApproval(request, ctx, context)` on the agent or an individual run to
+store or publish approval requests. Each request contains `invocationId`,
+`signalName`, the tool call, and an optional question. The callback can return
+synchronously or return a `RestatePromise<void>`. The agent callback completes
+before the run callback, and both complete before the SDK waits for the decision.
+For an event bus, return `ctx.run("Publish approval", () => publish(request))`;
+external I/O must be journaled so replay does not republish completed work.
+
 The [human-approval lesson](../examples/src/promise/06_human_approval.ts) uses
-`needsApproval: true`, records pending requests through `onUpdate`, and resolves
-their durable signals from a shared handler. Custom `onHumanApproval` hooks
-remain available through core.
+`needsApproval: true`, stores the request in state from `onApproval`, and resolves
+its durable signal from a shared handler. `onApproval` publishes the request;
+it does not return a decision. Core's `onHumanApproval` remains an optional override
+for the decision mechanism.
 
 Use `@restate-agents/core` for generator composition, streaming, conversation
 abstractions, and the remaining agent-level generator hooks. The local `adopt` compatibility

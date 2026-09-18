@@ -7,6 +7,7 @@ import type {FutureBranches, RunTasks} from "./run-tasks.js";
 import type {RunUpdates} from "./run-updates.js";
 import type {
   AgentRuntime,
+  ApprovalHandler,
   Message,
   ModelToolCallsResponse,
   RunContext,
@@ -39,6 +40,7 @@ export class RunTools<C> {
     private readonly tasks: RunTasks,
     private readonly history: RunHistory,
     private readonly updates: RunUpdates<C>,
+    onApproval?: ApprovalHandler<C>,
   ) {
     const previousCallIds = history.snapshot().flatMap((message) => {
       if (message.role !== "assistant") return [];
@@ -50,6 +52,7 @@ export class RunTools<C> {
       context,
       ...limits,
       update: (event) => updates.emit(event),
+      onApproval,
       cancelOperation: (id, reason) => this.cancel(id, reason),
     });
   }

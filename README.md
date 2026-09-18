@@ -80,6 +80,15 @@ structured output, and a draft-and-review loop. Lesson 06 in
 inspect and answer a pending approval before a tool executes. Later
 lessons cover support sessions, concurrent agents, and parallel research.
 
+Use `onApproval(request, context)` on a gensdk agent or run to publish approval
+requests. The request includes its invocation ID, signal name, and tool arguments.
+The SDK awaits the hook before waiting for the decision. Agent hooks run first
+(root, then the tool's agent after a handoff), followed by the run hook. Each gets
+its own request snapshot. Use Restate state, journaled I/O, or durable service calls
+to externalize it. The promise flavor accepts `onApproval(request, ctx, context)`.
+The general `approval-required` update remains available for observers;
+core's `onHumanApproval` optionally replaces how the decision is obtained.
+
 - [gensdk lessons](packages/examples/src/gensdk/01_hello.ts): `yield* agent.run(...)`; run with `pnpm dev:gensdk`.
 - [Promise lessons](packages/examples/src/promise/01_hello.ts): `await agent.run(ctx, ...)`; run with `pnpm dev:promise` and call `PromiseHello/ask`.
 

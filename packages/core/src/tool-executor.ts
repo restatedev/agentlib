@@ -10,6 +10,8 @@ import {
 import type {
   AgentEvent,
   AgentRuntime,
+  ApprovalHandler,
+  ApprovalRequest,
   RunContext,
   ToolCall,
   ToolContext,
@@ -29,6 +31,7 @@ type ToolExecutorOptions<C> = ToolExecutionLimits & {
   root: AgentRuntime<C>;
   context: RunContext<C>;
   update: (event: AgentEvent) => Operation<void>;
+  onApproval?: ApprovalHandler<C>;
   cancelOperation: ToolContext<C>["cancelOperation"];
 };
 
@@ -41,6 +44,7 @@ export function createToolExecutor<C>({
   maxToolDepth,
   maxOutputChars,
   update,
+  onApproval,
   cancelOperation,
 }: ToolExecutorOptions<C>) {
   let calls = 0;
@@ -97,12 +101,17 @@ export function createToolExecutor<C>({
         });
       },
       *approve(input, question) {
-        const request = {
+        const request: ApprovalRequest = {
+          invocationId: context.invocationId,
           call: {...call, input},
           signalName: `${context.name}:approval:${call.id}:${approval++}`,
           ...(question === undefined ? {} : {question}),
         };
         yield* update({type: "approval-required", step: callStep, request});
+        if (root.onApproval) yield* root.onApproval(structuredClone(request), context.context);
+        if (owner !== root && owner.onApproval)
+          yield* owner.onApproval(structuredClone(request), context.context);
+        if (onApproval) yield* onApproval(structuredClone(request), context.context);
         if (owner.onHumanApproval)
           return (yield* owner.onHumanApproval(request, toolContext)) === true;
         if (root.onHumanApproval)

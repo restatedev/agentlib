@@ -301,6 +301,14 @@ void test("nested calls share tool policies, private context, approval, and outp
         },
       }),
     },
+    *onApproval(request, context) {
+      order.push("publish-agent");
+      assert.equal(context.secret, "private");
+      assert.equal(request.invocationId, "test");
+      // Each observer gets its own snapshot; changing one must not change routing or input.
+      request.signalName = "changed";
+      request.call.input = null;
+    },
     *onHumanApproval(request) {
       order.push("approval");
       assert.match(request.signalName, /nested-0/);
@@ -313,8 +321,26 @@ void test("nested calls share tool policies, private context, approval, and outp
       return done;
     },
   });
-  await r.execute(ctx(), a.run("go", {context: {secret: "private"}}));
-  assert.deepEqual(order, ["before", "approval", "execute", "after"]);
+  await r.execute(
+    ctx(),
+    a.run("go", {
+      context: {secret: "private"},
+      *onApproval(request, context) {
+        order.push("publish-run");
+        assert.equal(context.secret, "private");
+        assert.match(request.signalName, /nested-0/);
+        assert.deepEqual(request.call.input, {n: 2});
+      },
+    }),
+  );
+  assert.deepEqual(order, [
+    "before",
+    "publish-agent",
+    "publish-run",
+    "approval",
+    "execute",
+    "after",
+  ]);
 });
 
 void test("run and tool denials precede effects, and approval denial is recoverable", async () => {

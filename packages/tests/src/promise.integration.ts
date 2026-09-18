@@ -4,7 +4,13 @@ import * as restate from "@restatedev/restate-sdk";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import {ToolError} from "@restate-agents/core";
-import {agent, asyncTool, type AsyncToolContext, type UpdateHandler} from "@restate-agents/promise";
+import {
+  agent,
+  asyncTool,
+  type ApprovalHandler,
+  type AsyncToolContext,
+  type UpdateHandler,
+} from "@restate-agents/promise";
 import {z} from "zod";
 
 type Scenario = "success" | "error" | "denied";
@@ -13,6 +19,42 @@ const effects = new Map<Scenario, number>();
 type UpdateContext = {tenant: string};
 type ObservedUpdate = {source: "agent" | "run"; tenant: string; invocationId: string; id: string};
 const observedUpdates: ObservedUpdate[] = [];
+type ApprovalContext = {tenant: string; approved: boolean};
+type ObservedApproval = {source: "agent" | "run" | "tool"; tenant: string};
+const observedApprovals: ObservedApproval[] = [];
+
+const approvalAgent = agent<ApprovalContext>({
+  *model(request) {
+    if (request.messages.some((message) => message.role === "tool"))
+      return {type: "final", text: "Done"};
+    return {
+      type: "tool_calls",
+      calls: [{id: "close", name: "closeTicket", input: {ticketId: "T-42"}}],
+    };
+  },
+  tools: {
+    closeTicket: asyncTool({
+      description: "Close a ticket after approval",
+      input: z.object({ticketId: z.string()}),
+      needsApproval: true,
+      async execute({ticketId}, {context}: AsyncToolContext<ApprovalContext>) {
+        const events = observedApprovals.filter((event) => event.tenant === context.tenant);
+        assert.deepEqual(
+          events.map((event) => event.source),
+          ["agent", "run"],
+        );
+        observedApprovals.push({source: "tool", tenant: context.tenant});
+        return {ticketId};
+      },
+    }),
+  },
+  onApproval(request, ctx, {tenant}) {
+    assert.equal(request.invocationId, ctx.request().id);
+    return ctx.run("Publish agent approval", () => {
+      observedApprovals.push({source: "agent", tenant});
+    });
+  },
+});
 
 const updateAgent = agent<UpdateContext>({
   *model() {
@@ -68,6 +110,31 @@ const assistant = agent<TestContext>({
 const harness = restate.service({
   name: "PromiseAsyncTools",
   handlers: {
+    async approval(ctx: restate.Context, context: ApprovalContext) {
+      return await approvalAgent.run(ctx, "Close T-42", {
+        context,
+        onApproval(request, boundContext, current) {
+          assert.equal(boundContext, ctx);
+          assert.deepEqual(current, context);
+          assert.deepEqual(request.call.input, {ticketId: "T-42"});
+          // A decision arriving before the SDK begins waiting must be retained.
+          ctx
+            .invocation(restate.InvocationIdParser.fromString(request.invocationId))
+            .signal(request.signalName)
+            .resolve(context.approved);
+          return ctx.run("Publish run approval", () => {
+            observedApprovals.push({source: "run", tenant: context.tenant});
+          });
+        },
+      });
+    },
+    async invalidApproval(ctx: restate.Context) {
+      const invalid = (async () => {}) as unknown as ApprovalHandler<ApprovalContext>;
+      return await approvalAgent.run(ctx, "Close T-42", {
+        context: {tenant: "invalid", approved: true},
+        onApproval: invalid,
+      });
+    },
     async updates(ctx: restate.Context, tenant: string) {
       return await updateAgent.run(ctx, "Go", {
         context: {tenant},
@@ -110,6 +177,40 @@ before(
 );
 after(async () => {
   await env?.stop();
+});
+
+void test("promise approval hooks publish durably before execution and preserve early decisions", async () => {
+  const client = connect({url: env.baseUrl()}).serviceClient(harness);
+  const contexts: ApprovalContext[] = [
+    {tenant: "approved", approved: true},
+    {tenant: "denied", approved: false},
+  ];
+  const results = await Promise.all(contexts.map((context) => client.approval(context)));
+  for (const [index, context] of contexts.entries()) {
+    const expected = ["agent", "run"];
+    if (context.approved) expected.push("tool");
+    assert.deepEqual(
+      observedApprovals
+        .filter((event) => event.tenant === context.tenant)
+        .map((event) => event.source),
+      expected,
+    );
+    assert.equal(results[index].status, "completed");
+    assert.equal(
+      results[index].messages.find((message) => message.role === "tool")?.result.status,
+      context.approved ? "success" : "denied",
+    );
+  }
+});
+
+void test("promise approval hooks reject native promises before executing the tool", async () => {
+  await assert.rejects(
+    async () => await connect({url: env.baseUrl()}).serviceClient(harness).invalidApproval(),
+    /Promise hooks must return a value or a RestatePromise/,
+  );
+  assert.ok(
+    !observedApprovals.some((event) => event.tenant === "invalid" && event.source === "tool"),
+  );
 });
 
 void test("promise update hooks await durable work in order and isolate concurrent run contexts", async () => {

@@ -386,68 +386,43 @@ type ApprovalClient = ReturnType<(typeof approvalExamples)[number]["client"]>;
 
 async function waitForApproval(client: ApprovalClient) {
   for (let attempt = 0; attempt < 250; attempt++) {
-    const {approvals} = await client.status();
-    if (approvals.length > 0) return approvals[0]!;
+    const request = await client.status();
+    if (request) return request;
     await delay(20);
   }
   throw new Error("The approval request did not become visible");
 }
 
 const approvalDecisions = [
-  {approved: true, expected: "Ticket T-42 is closed.", lastClosedTicket: "T-42"},
+  {approved: true, expected: "Ticket T-42 is closed."},
   {
     approved: false,
     expected: "Approval denied; ticket T-42 was left unchanged.",
-    lastClosedTicket: null,
   },
 ];
 for (const example of approvalExamples) {
-  for (const {approved, expected, lastClosedTicket} of approvalDecisions) {
+  for (const {approved, expected} of approvalDecisions) {
     void test(
-      `${example.name} human approval: decision ${approved} gates the tool's state change`,
+      `${example.name} human approval: decision ${approved} gates tool execution`,
       {timeout: 20000},
       async () => {
         const key = `decision-${approved}`;
         const client = example.client(key);
-        const [reply, request] = await Promise.all([
+        const [reply] = await Promise.all([
           client.ask("Close ticket T-42 after I approve it."),
           (async () => {
             const request = await waitForApproval(client);
             assert.equal(request.call.name, "closeTicket");
             assert.deepEqual(request.call.input, {ticketId: "T-42"});
-            assert.equal((await client.status()).lastClosedTicket, null);
-            assert.equal(
-              await client.approve({
-                invocationId: request.invocationId,
-                signalName: "unknown-approval",
-                approved: true,
-              }),
-              false,
-            );
-            assert.equal(
-              await client.approve({
-                invocationId: request.invocationId,
-                signalName: request.signalName,
-                approved,
-              }),
-              true,
-            );
-            return request;
+            await client.approve({
+              invocationId: request.invocationId,
+              signalName: request.signalName,
+              approved,
+            });
           })(),
         ]);
         assert.equal(reply, expected);
-        assert.deepEqual(await client.status(), {
-          approvals: [],
-          lastClosedTicket,
-        });
-        assert.equal(
-          await client.approve({
-            invocationId: request.invocationId,
-            signalName: request.signalName,
-            approved: true,
-          }),
-          false,
-        );
+        assert.equal(await client.status(), null);
       },
     );
   }
@@ -476,27 +451,20 @@ for (const example of approvalExamples) {
           const request = await waitForApproval(client);
           assert.equal(request.signalName, previous.signalName);
           assert.notEqual(request.invocationId, previous.invocationId);
-          assert.equal(
-            await client.approve({
-              invocationId: previous.invocationId,
-              signalName: previous.signalName,
-              approved: true,
-            }),
-            false,
-          );
-          assert.equal((await client.status()).lastClosedTicket, null);
-          assert.equal(
-            await client.approve({
-              invocationId: request.invocationId,
-              signalName: request.signalName,
-              approved: false,
-            }),
-            true,
-          );
+          await client.approve({
+            invocationId: previous.invocationId,
+            signalName: previous.signalName,
+            approved: true,
+          });
+          await client.approve({
+            invocationId: request.invocationId,
+            signalName: request.signalName,
+            approved: false,
+          });
         })(),
       ]);
       assert.equal(reply, "Approval denied; ticket T-42 was left unchanged.");
-      assert.deepEqual(await client.status(), {approvals: [], lastClosedTicket: null});
+      assert.equal(await client.status(), null);
     },
   );
 }

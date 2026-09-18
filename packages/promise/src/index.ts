@@ -10,6 +10,7 @@ export type {
   AsyncToolDefinition,
   HandlerToolDefinition,
   UpdateHandler,
+  ApprovalHandler,
 } from "./types.js";
 export type {
   Message,

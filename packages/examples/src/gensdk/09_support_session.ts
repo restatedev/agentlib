@@ -93,7 +93,6 @@ export const aiSession = restate.object({
         const conversation = new LazyStateConversation({
           compaction: {model, policy: {maxMessages: 64, retainMessages: 12}},
         });
-        const approvals = new Map<string, ApprovalRequest>();
         const updates: AgentUpdate[] = [];
         restate.state().set("active", {invocationId});
         let remote: McpToolSet<SessionContext> | undefined;
@@ -113,22 +112,19 @@ export const aiSession = restate.object({
             tools: remote?.tools,
             steeringSignal: "steering",
             interruptSignal: "interrupt",
+            *onApproval(request) {
+              restate.state().set("approval", request);
+            },
             *onUpdate(update) {
-              if (update.type === "approval-required")
-                approvals.set(update.request.signalName, update.request);
-              if (update.type === "tool-end")
-                for (const [name, request] of approvals)
-                  if (request.call.id === update.call.id) approvals.delete(name);
               updates.push(update);
               if (updates.length > 128) updates.shift();
-              restate.state().set("approvals", [...approvals.values()]);
               restate.state().set("updates", updates);
             },
           });
           return replyText(result);
         } finally {
           restate.state().clear("active");
-          restate.state().clear("approvals");
+          restate.state().clear("approval");
           if (remote) yield* remote.close();
         }
       },
@@ -136,7 +132,7 @@ export const aiSession = restate.object({
     *status() {
       return {
         active: yield* restate.sharedState().get("active"),
-        approvals: (yield* restate.sharedState().get("approvals")) ?? [],
+        approval: yield* restate.sharedState().get<ApprovalRequest>("approval"),
         updates: (yield* restate.sharedState().get("updates")) ?? [],
       };
     },
@@ -173,19 +169,14 @@ export const aiSession = restate.object({
     approve: restate.schemas(
       {
         input: z.object({
-          signalName: z
-            .string()
-            .min(1)
-            .describe("Copy signalName from this session's status().approvals."),
+          invocationId: z.string().min(1).describe("Copy invocationId from status().approval."),
+          signalName: z.string().min(1).describe("Copy signalName from the same approval request."),
           approved: z.boolean().default(false),
         }),
         output: z.boolean(),
       },
-      function* ({signalName, approved}) {
-        const active = yield* restate.sharedState().get<ActiveTurn>("active");
-        const requests = (yield* restate.sharedState().get<ApprovalRequest[]>("approvals")) ?? [];
-        if (!active || !requests.some((request) => request.signalName === signalName)) return false;
-        restate.invocation(active.invocationId).signal(signalName).resolve(approved);
+      function* ({invocationId, signalName, approved}) {
+        restate.invocation(invocationId).signal(signalName).resolve(approved);
         return true;
       },
     ),

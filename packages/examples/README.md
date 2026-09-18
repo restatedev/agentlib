@@ -155,8 +155,8 @@ run. This loop starts fresh runs for successive drafts. See the
 
 Both [gensdk](src/gensdk/06_human_approval.ts) and
 [promise](src/promise/06_human_approval.ts) add `needsApproval: true` to one
-`closeTicket` tool. Each lesson records the last closed demo ticket in object
-state, so you can see whether the tool executed. No external ticketing system is involved.
+`closeTicket` tool. The tool simulates an async API call; no external ticketing
+system is involved.
 
 Start a request in one terminal:
 
@@ -165,17 +165,17 @@ curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/ask" \
   --json '"Close ticket T-42 after I approve it."'
 ```
 
-This request waits. Before executing the tool, core emits `approval-required`
-and waits on a durable signal. The lesson's `onUpdate` callback saves the request
-in object state. In a second terminal, inspect it:
+This request waits. Before executing the tool, the SDK calls `onApproval(request)`
+and then waits on a durable signal. The lesson saves the request directly in
+object state. In a second terminal, inspect it:
 
 ```sh
 curl --globoff --request POST "$RESTATE_CALL_URL/TicketApproval/bob/status"
 ```
 
-`approvals` contains the proposed tool name and arguments, plus `invocationId`
-and `signalName`. `lastClosedTicket` is initially `null`. Copy both identifiers
-from the same approval request and submit a decision:
+`status` returns the stored request, containing the proposed tool name and arguments,
+plus `invocationId` and `signalName`, or `null` when no request is stored. Copy
+both identifiers from the request and submit a decision:
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/approve" --json '{
@@ -185,23 +185,28 @@ curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/approve" --json '{
 }'
 ```
 
-Approval resumes the waiting tool, and the example records `T-42` in state. The original
+Approval resumes the waiting tool. The original
 `ask` request returns only the agent's reply. To try rejection, start a request
 under another key and submit `"approved": false`: the tool is skipped and the
-agent receives a denied result. `approve` returns `true` when it sends the
-decision, including a rejection, and `false` for an unknown or stale request.
+agent receives a denied result. The `approve` handler directly resolves the
+supplied invocation's signal and returns `true` to acknowledge sending it.
+It does not check whether that request is still pending.
 
 `status` and `approve` are shared handlers, so they run while the exclusive
-`ask` handler is waiting. Both identifiers are checked to prevent an old
-decision from authorizing a later run. Pending requests are removed after
-their tools finish and cleared when the run exits. The SDK has no default
+`ask` handler is waiting. The example stores the latest approval request in one
+state entry and clears it when the run exits. The SDK has no default
 approval timeout; this lesson waits until a decision or invocation cancellation.
 
 For the promise flavor, run `pnpm dev:promise` and use `PromiseTicketApproval`
-in all three URLs. It uses an `asyncTool` to simulate the API call, records
-successful closures in `onUpdate`, and declares its controls with
+in all three URLs. It declares its controls with
 `createObjectSharedHandler`. The callback is synchronous; callbacks that need
 to wait on SDK work return a `RestatePromise` directly.
+
+`onApproval` is also available on the agent definition. It receives a copy of the
+request and the application's run context; the promise flavor also receives the
+regular SDK context. The SDK awaits publication before waiting for a decision.
+To publish to an event bus, use a journaled `run` operation or a durable service
+call in the callback. No `onUpdate` filtering is needed.
 
 ## Promise 07 — Put tools and history together
 
@@ -288,7 +293,7 @@ history through `history` and control details through `status` when needed.
 
 The default turn requests a ticket lookup, a handoff, and approval before
 closing the demo ticket. `steer` and `interrupt` have example messages too.
-For `approve`, copy a pending `signalName` from `status().approvals` and set
+For `approve`, copy `invocationId` and `signalName` from `status().approval` and set
 `approved` to `true` to allow the action; its default is `false`.
 
 ## Model configuration

@@ -82,7 +82,15 @@ class AgentRun<C, O> {
       root.onUpdate?.bind(root),
       options?.onUpdate?.bind(options),
     );
-    this.tools = new RunTools(root, this.context, config, this.tasks, history, this.updates);
+    this.tools = new RunTools(
+      root,
+      this.context,
+      config,
+      this.tasks,
+      history,
+      this.updates,
+      options?.onApproval?.bind(options),
+    );
   }
 
   *run(): Operation<RunResult<O>> {
