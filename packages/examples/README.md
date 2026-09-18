@@ -63,8 +63,8 @@ their factory functions, so the same workflows can use another adapter or gatewa
 
 [ai-session.ts](src/ai-session.ts) demonstrates persisted conversations and
 compaction, deferred search, PTC, handoffs, background tools, approvals, steering,
-interruption, and optional MCP. Ticket effects are demonstrations. See the
-[SDK guide](../../docs/embedded-sdk.md#runnable-examples-and-validation) for controls.
+interruption, and optional MCP. Ticket effects are demonstrations. Its handlers
+expose history, approval, steering, interruption, and run status.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \

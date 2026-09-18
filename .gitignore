@@ -20,3 +20,6 @@ restate-data
 
 # Workspace task cache
 .turbo/
+
+# Local design and review notes
+/docs/

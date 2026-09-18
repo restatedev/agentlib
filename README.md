@@ -7,7 +7,6 @@ application-owned Restate handler.
 The SDK includes parallel and background tools, QuickJS programmatic tool calls,
 MCP, deferred tool search, conversation compaction, steering, interruption,
 handoffs, structured output, provider adapters, streaming, and OTel hooks.
-See the [embedding guide](docs/embedded-sdk.md) and [feature coverage](docs/sdk-status.md).
 The [domain glossary](CONTEXT.md) defines runs, sessions, conversations, and lifecycle controls.
 
 ## Workspace
@@ -78,7 +77,7 @@ The example exposes history, approval, steering, and interruption handlers. Its
 ticket operations are demonstrations; no external tickets are changed. Optional
 MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`. See
 [`ai-session.ts`](packages/examples/src/ai-session.ts) and the
-[control examples](docs/embedded-sdk.md#runnable-examples-and-validation).
+[example commands](packages/examples/README.md#support-session).
 
 The same endpoint registers three additional examples adapted from
 [Restate's AI examples](https://github.com/restatedev/ai-examples):
@@ -90,7 +89,6 @@ The same endpoint registers three additional examples adapted from
 | `RacingAgents/answer`     | Concurrent embedded runs, first successful answer, cancellation and cleanup of the loser           |
 
 See the [example commands and source references](packages/examples/README.md).
-The [self-review](docs/self-review.md) records corrected defects and design decisions.
 
 The Chat Completions adapter sends `reasoning_effort: "none"` by default for GPT-5.6
 requests with tools, avoiding the model's tool/reasoning compatibility error.
