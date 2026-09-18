@@ -12,6 +12,13 @@ const support = agent({
       description: "Look up a demo ticket's status.",
       input: z.object({ticketId: z.string()}),
       describe: {name: "Look up ticket"},
+      retry: {
+        maxAttempts: 5, // Includes the initial attempt.
+        initialInterval: {milliseconds: 250},
+        exponentiationFactor: 2,
+        maxInterval: {seconds: 5},
+        maxDuration: {seconds: 30},
+      },
       async execute({ticketId}) {
         // Replace this demo record with an ordinary async API call.
         return {ticketId, status: "open"};

@@ -84,6 +84,10 @@ The SDK journals its result, so you can replace the fixed record with an async
 API call directly. The optional second argument supplies application context,
 call metadata, and an `AbortSignal` for cancellable I/O.
 
+Both tools set `retry` explicitly: up to five attempts, starting with a 250 ms
+retry delay and doubling between attempts. See [retry policies](#retry-policies)
+for model calls, individual actions, and handler calls.
+
 Use `tool` when execution needs to compose SDK operations: a generator with
 `yield*` in gensdk, or a callback returning a `RestatePromise` in the promise
 flavor. Use `handlerTool` for typed calls to other Restate handlers.
@@ -226,6 +230,66 @@ or gateway.
 
 The promise adapter uses the local `adopt` backport, so the workspace pins the
 generator SDK to 1.17.1 until upstream `internal.adopt` is released.
+
+## Retry policies
+
+Configure retries at the operation that can fail; there is no agent-wide retry
+default. `maxSteps` limits the model/tool loop, not retries.
+
+| Operation                     | Where to configure it                                  | Example                                                              |
+| ----------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------- |
+| Ordinary async tool           | `asyncTool({retry, ...})` in either flavor             | [gensdk](src/gensdk/02_tools.ts), [promise](src/promise/02_tools.ts) |
+| Model call                    | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)                                           |
+| Individual gensdk action      | `restate.run(action, {name, retry})`                   | Below                                                                |
+| Individual regular SDK action | `ctx.run(name, action, options)`                       | Below                                                                |
+| Handler-backed tool           | `retryPolicy` on the called service or handler         | [supportPolicies.refundPolicy](src/promise/06_support_session.ts)    |
+
+The tool lessons use this policy; the same shape works for model adapters and
+gensdk actions:
+
+```ts
+const retry = {
+  maxAttempts: 5, // Includes the initial attempt.
+  initialInterval: {milliseconds: 250},
+  exponentiationFactor: 2,
+  maxInterval: {seconds: 5},
+  maxDuration: {seconds: 30},
+};
+
+// Compose this operation from a gensdk handler or tool.
+function* performWithRetry() {
+  return yield* restate.run(() => performAction(), {name: "Perform action", retry});
+}
+```
+
+The regular SDK uses different option names for `ctx.run`. These can also be
+used inside a promise `tool` by returning the `ctx.run(...)` promise directly:
+
+```ts
+const result = await ctx.run("Perform action", () => performAction(), {
+  maxRetryAttempts: 5,
+  initialRetryInterval: {milliseconds: 250},
+  retryIntervalFactor: 2,
+  maxRetryInterval: {seconds: 5},
+  maxRetryDuration: {seconds: 30},
+});
+```
+
+Without an explicit policy, `asyncTool` uses one attempt and the model adapters
+use three. A supplied policy replaces that default; specify `maxAttempts` when
+you want a fixed attempt limit. The retry duration limits retries, not the
+execution time of one attempt.
+
+For `asyncTool`, an ordinary thrown `Error` follows the retry policy.
+`ToolError` is a business error returned to the model without retrying the
+callback; `TerminalError` fails without retrying. The policy covers `execute`;
+SDK operations in `before` and `after` configure their own retries. Exhausting
+an action's retry policy raises a `TerminalError`.
+
+`handlerTool` relies on the called handler's invocation policy. The promise
+support example sets `retryPolicy` through `createServiceHandler`, with
+`onMaxAttempts: "kill"` to terminate after exhaustion. Use `"pause"` instead
+to leave the invocation paused for manual intervention.
 
 ## Provenance and validation
 

@@ -10,9 +10,21 @@ type RefundPolicy = {refundWindowDays: number; requiresReceipt: boolean};
 export const supportPolicies = restate.service({
   name: "SupportPolicies",
   handlers: {
-    async refundPolicy(_ctx: restate.Context): Promise<RefundPolicy> {
-      return {refundWindowDays: 30, requiresReceipt: true};
-    },
+    refundPolicy: restate.createServiceHandler(
+      {
+        // Handler-call retries belong to the called handler.
+        retryPolicy: {
+          maxAttempts: 5,
+          initialInterval: {milliseconds: 250},
+          exponentiationFactor: 2,
+          maxInterval: {seconds: 5},
+          onMaxAttempts: "kill",
+        },
+      },
+      async (_ctx: restate.Context): Promise<RefundPolicy> => {
+        return {refundWindowDays: 30, requiresReceipt: true};
+      },
+    ),
   },
 });
 

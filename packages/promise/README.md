@@ -21,6 +21,12 @@ run/call IDs, the step, and an `AbortSignal`; it runs inside the journal boundar
 without an SDK context. Core handles result validation, business errors, and
 the optional `retry` policy.
 
+Set `retry: {maxAttempts: 5, initialInterval: {milliseconds: 250}}` on an
+`asyncTool` to retry its callback. The default is one attempt. For `tool`, set
+retry options on its SDK operations; for `handlerTool`, set `retryPolicy` on
+the called service or handler. See [retry policies](../examples/README.md#retry-policies)
+for complete examples, model retries, and error behavior.
+
 For `tool` and `handlerTool`, return SDK promises directly: an `async` callback
 or `.then()` produces a native promise and is rejected. Use `tool` to compose
 SDK operations. Handler tools retain their invocation handles so the core can
