@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import {after, before, test} from "node:test";
+import {after, before, mock, test} from "node:test";
 import {TerminalError} from "@restatedev/restate-sdk";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import * as r from "@restatedev/restate-sdk-gen";
-import {type Model, type ModelResponse} from "@restate-agents/core";
-import {createResearchServices} from "@restate-agents/examples/research-report";
-import {createCodeReviewService} from "@restate-agents/examples/evaluator-optimizer";
-import {createRacingService} from "@restate-agents/examples/racing-agents";
+import {journaledModel, type Message, type Model, type ModelResponse} from "@restate-agents/core";
 
 const sources = [
   {
@@ -84,7 +81,6 @@ const researchModel: Model = function* (request) {
     {name: `fixture:${role}`},
   );
 };
-const research = createResearchServices(researchModel);
 
 const reviewModel: Model = function* (request) {
   const message = request.messages.find((message) => message.role === "user");
@@ -112,14 +108,13 @@ const reviewModel: Model = function* (request) {
     {name: "fixture:code"},
   );
 };
-const codeReview = createCodeReviewService(reviewModel);
 
 function prompt(request: Parameters<Model>[0]) {
   const message = request.messages.find((message) => message.role === "user");
   assert.ok(message && message.role === "user");
   return message.content;
 }
-const racing = createRacingService({
+const racingModels = {
   *quick(request) {
     const input = prompt(request);
     if (input === "fallback" || input === "both fail")
@@ -153,13 +148,78 @@ const racing = createRacingService({
       );
     }
   },
+} satisfies Record<string, Model>;
+
+const regularEffects = new Map<string, number>();
+const regularModel = journaledModel(async (request): Promise<ModelResponse> => {
+  const turns = request.messages.filter((message) => message.role === "user");
+  const input = turns.at(-1)!.content;
+  const callId = `${input}:${turns.length}:${request.step}`;
+  regularEffects.set(callId, (regularEffects.get(callId) ?? 0) + 1);
+  if (input === "fail") throw new TerminalError("Expected model failure");
+  if (request.step === 1 || input === "stop") {
+    return {
+      type: "tool_calls",
+      calls: [
+        {id: `${callId}:ticket`, name: "lookupTicket", input: {ticketId: "T-42"}},
+        {id: `${callId}:policy`, name: "refundPolicy", input: {}},
+      ],
+    };
+  }
+  const results = request.messages.slice(-2);
+  assert.deepEqual(
+    results.map((message) => {
+      assert.equal(message.role, "tool");
+      return message.result;
+    }),
+    [
+      {status: "success", output: {ticketId: "T-42", status: "open"}},
+      {status: "success", output: {refundWindowDays: 30, requiresReceipt: true}},
+    ],
+  );
+  return {type: "final", text: `Answered ${input}; previous turns: ${turns.length - 1}`};
 });
+
+const fixtureModel: Model = function* (request) {
+  const instructions = request.instructions ?? "";
+  if (instructions.startsWith("Research ")) return yield* researchModel(request);
+  if (instructions.startsWith("Code ")) return yield* reviewModel(request);
+  if (instructions.startsWith("Quick answer.")) return yield* racingModels.quick(request);
+  if (instructions.startsWith("Thorough answer.")) return yield* racingModels.thorough(request);
+  if (instructions.startsWith("Help the user with their support ticket."))
+    return yield* regularModel(request);
+  throw new Error(`Unexpected example instructions: ${instructions}`);
+};
+
+// Replace only the external model. Import the same service instances the app serves.
+mock.module("@restate-agents/core/openai", {
+  namedExports: {openAIModel: () => fixtureModel},
+});
+const [
+  {researchReport, researchWorker},
+  {codeReview},
+  {racingAgents},
+  {regularSdkSupport, supportPolicies},
+] = await Promise.all([
+  import("@restate-agents/examples/research-report"),
+  import("@restate-agents/examples/evaluator-optimizer"),
+  import("@restate-agents/examples/racing-agents"),
+  import("@restate-agents/examples/regular-sdk"),
+]);
 
 let env: RestateTestEnvironment;
 before(
   async () => {
     env = await RestateTestEnvironment.start({
-      services: [barrier, research.researchReport, research.researchWorker, codeReview, racing],
+      services: [
+        barrier,
+        researchReport,
+        researchWorker,
+        codeReview,
+        racingAgents,
+        regularSdkSupport,
+        supportPolicies,
+      ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
   },
@@ -169,12 +229,56 @@ after(async () => {
   await env?.stop();
 });
 
+void test("regular SDK runs work before and after an agent with journaled and RPC tools", async () => {
+  const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "conversation");
+  const state = env.stateOf(regularSdkSupport, "conversation");
+  const previous: Message[] = [
+    {role: "user", content: "Earlier question"},
+    {role: "assistant", content: "Earlier answer"},
+  ];
+  await state.setAll({messages: previous});
+
+  const first = await client.ask({message: "first"});
+  assert.equal(first.status, "completed");
+  assert.equal(first.output, "Answered first; previous turns: 1");
+  assert.deepEqual(first.messages.slice(0, previous.length), previous);
+  assert.deepEqual(await state.get("messages"), first.messages);
+  assert.equal(await state.get("lastStatus"), "completed");
+
+  const second = await client.ask({message: "second"});
+  assert.equal(second.status, "completed");
+  assert.equal(second.output, "Answered second; previous turns: 2");
+  assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
+  assert.deepEqual(await state.get("messages"), second.messages);
+  assert.equal(regularEffects.size, 4);
+  assert.ok([...regularEffects.values()].every((count) => count === 1));
+});
+
+void test("regular SDK saves stopped runs with their actual status", async () => {
+  const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "stopped");
+  const result = await client.ask({message: "stop"});
+  assert.equal(result.status, "stopped");
+  const state = env.stateOf(regularSdkSupport, "stopped");
+  assert.equal(await state.get("lastStatus"), "stopped");
+  assert.deepEqual(await state.get("messages"), result.messages);
+});
+
+void test("regular SDK propagates agent failure without executing the following state writes", async () => {
+  const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "failure");
+  const state = env.stateOf(regularSdkSupport, "failure");
+  const previous: Message[] = [{role: "user", content: "Earlier question"}];
+  await state.setAll({messages: previous, lastStatus: "completed"});
+  await assert.rejects(async () => await client.ask({message: "fail"}), /Expected model failure/);
+  assert.deepEqual(await state.get("messages"), previous);
+  assert.equal(await state.get("lastStatus"), "completed");
+});
+
 void test(
   "research plans typed work, runs RPC workers in parallel, cites sources, and replays effects once",
   {timeout: 20000},
   async () => {
     const result = await connect({url: env.baseUrl()})
-      .client(research.researchReport)
+      .client(researchReport)
       .generate({topic: "Reliable execution", sources});
     assert.equal(result.taskCount, 2);
     assert.equal(result.findings.length, 2);
@@ -188,7 +292,7 @@ void test("research rejects duplicate source IDs before invoking a model", async
   const calls = effects.size;
   await assert.rejects(
     connect({url: env.baseUrl()})
-      .client(research.researchReport)
+      .client(researchReport)
       .generate({topic: "Invalid catalog", sources: [sources[0], sources[0]]}),
     /Source IDs must be unique/,
   );
@@ -198,7 +302,7 @@ void test("research rejects duplicate source IDs before invoking a model", async
 void test("a research worker cannot cite a supplied source it has not read", async () => {
   await assert.rejects(
     connect({url: env.baseUrl()})
-      .client(research.researchWorker)
+      .client(researchWorker)
       .research({question: "cite without reading", sources}),
     /source the worker did not read/,
   );
@@ -232,7 +336,7 @@ void test(
   {timeout: 20000},
   async () => {
     const result = await connect({url: env.baseUrl()})
-      .client(racing)
+      .client(racingAgents)
       .answer({question: "cancel loser"});
     assert.deepEqual(result, {winner: "quick", answer: "Quick answer"});
     assert.equal(cleanedRaces.size, 1);
@@ -241,7 +345,7 @@ void test(
 
 for (const question of ["fallback", "stopped quick"]) {
   void test(`racing waits for a completed answer after ${question}`, {timeout: 20000}, async () => {
-    assert.deepEqual(await connect({url: env.baseUrl()}).client(racing).answer({question}), {
+    assert.deepEqual(await connect({url: env.baseUrl()}).client(racingAgents).answer({question}), {
       winner: "thorough",
       answer: "Thorough answer",
     });
@@ -249,7 +353,7 @@ for (const question of ["fallback", "stopped quick"]) {
 }
 void test("racing fails clearly if neither agent completes", async () => {
   await assert.rejects(
-    connect({url: env.baseUrl()}).client(racing).answer({question: "both fail"}),
+    connect({url: env.baseUrl()}).client(racingAgents).answer({question: "both fail"}),
     /Neither candidate produced a completed answer/,
   );
 });

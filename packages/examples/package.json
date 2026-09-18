@@ -19,6 +19,10 @@
     "./racing-agents": {
       "types": "./dist/racing-agents.d.ts",
       "import": "./dist/racing-agents.js"
+    },
+    "./regular-sdk": {
+      "types": "./dist/regular-sdk.d.ts",
+      "import": "./dist/regular-sdk.js"
     }
   },
   "scripts": {

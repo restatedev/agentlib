@@ -1,4 +1,4 @@
-# Coroutine-native agent examples
+# Agent examples
 
 Each example owns its Restate handlers and embeds `@restate-agents/core` operations.
 The SDK does not register those services. All examples run in the same endpoint.
@@ -9,6 +9,7 @@ Read the examples in this order to introduce one orchestration pattern at a time
 
 | Example                                   | Main lesson                                         | Follow in the source                                                    |
 | ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| [Regular SDK](src/regular-sdk.ts)         | Embed an agent in an ordinary async handler         | Load history → run agent with tools → save history and status           |
 | [Code review](src/evaluator-optimizer.ts) | Compose sequential runs with typed outputs          | Draft → review → feedback → next draft, with a three-iteration limit    |
 | [Racing agents](src/racing-agents.ts)     | Compose concurrent runs in one invocation           | Spawn → first successful completion → interrupt and join peers          |
 | [Research report](src/research-report.ts) | Distribute work across child invocations            | Plan → parallel worker RPCs → guarded findings → synthesis              |
@@ -56,8 +57,32 @@ RESTATE_CALL_URL=http://localhost:8080
 The shared model is defined in [shared.ts](src/shared.ts). `openAIModel` defaults
 GPT-5.6 function-tool requests to `reasoning_effort: "none"` to avoid the default
 Luna model's Chat Completions tool/reasoning compatibility error.
-Explicit model settings are preserved. The examples accept generator models in
-their factory functions, so the same workflows can use another adapter or gateway.
+Explicit model settings are preserved. Each example declares its agents and
+exports its services directly. Change an agent's `model` field to use another
+adapter or gateway.
+
+## Regular SDK: before, agent, after
+
+[regular-sdk.ts](src/regular-sdk.ts) uses a normal `restate.ObjectContext` handler.
+It loads history with `await ctx.get(...)`, awaits the agent through the public
+coroutine SDK `execute(ctx, operation)`, then saves history and the run status
+with `ctx.set(...)`.
+
+The agent has two tools: `lookupTicket` journals a demo lookup with `asyncTool`,
+and `refundPolicy` calls a regular Restate service through `handlerTool`. Both
+services are registered by `pnpm dev`.
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/RegularSdkSupport/bob/ask" \
+  --json '{"message":"Look up ticket T-42 and tell me the refund policy."}'
+```
+
+A later call with the same key reuses the saved conversation. A stopped or
+interrupted run saves its actual status; a thrown failure skips the following
+state writes and propagates to Restate.
+
+This example uses the existing core tools. Custom tool callbacks returning
+`RestatePromise` still require a public adoption function in the coroutine SDK.
 
 ## Support session
 
@@ -139,8 +164,8 @@ curl --globoff "$RESTATE_CALL_URL/RacingAgents/answer" \
 ```
 
 The result contains `winner` and `answer`. Both calls start, so this pattern can
-consume more tokens than a single run. The factory accepts separate `quick` and
-`thorough` models; the runnable defaults share one provider with different instructions.
+consume more tokens than a single run. The two agents share the configured model
+with different instructions; set their `model` fields separately to compare providers.
 
 ## Provenance and validation
 
@@ -154,13 +179,14 @@ commit `60d1eda2e5f3aae96db2efeba498e52367a01648`:
 | Code review     | [workflow-evaluator-optimizer.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-evaluator-optimizer.ts) | Structured decisions, previous draft carried forward, explicit exhaustion with the last draft retained |
 | Racing agents   | [racing-agents.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/racing-agents.ts)                               | Embedded operations, first completed success, cancellation with joined cleanup                         |
 
-`pnpm test:integration` runs these exported factories against the official
-`RestateTestEnvironment` and a real `RestateContainer().alwaysReplay()` with fixture
-models. It verifies parallel RPC execution, committed effects occurring once,
+`pnpm test:integration` registers these exported services with the official
+`RestateTestEnvironment` and a real `RestateContainer().alwaysReplay()`. Tests
+replace the model adapter import with fixture models using Node's module mocking.
+They verify parallel RPC execution, committed effects occurring once,
 feedback propagation, bounded exhaustion, first-success racing, and loser cleanup.
 The tests need Docker and make no paid model calls.
 
-To modify a workflow, pass a generator `Model` to its exported factory and exercise
-the returned handler through the Restate client. The [example integration tests](../tests/src/examples.integration.ts)
-show this setup. Keep assertions on returned results and observable effects, so
-changing internal helper functions does not require rewriting the tests.
+To modify a workflow, edit its agents and handlers directly. The
+[example integration tests](../tests/src/examples.integration.ts) invoke those
+same exported services through the Restate client and check returned results
+and observable effects.

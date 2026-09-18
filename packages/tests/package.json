@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test src/*.test.ts",
-    "test:integration": "node --import tsx --test src/*.integration.ts"
+    "test:integration": "node --experimental-test-module-mocks --import tsx --test src/*.integration.ts"
   },
   "devDependencies": {
     "@opentelemetry/api": "1.9.0",
