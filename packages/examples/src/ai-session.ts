@@ -20,17 +20,19 @@ const lookupTicket = tool({
   description:
     "Look up a demo support ticket. This example does not connect to a ticketing system.",
   input: z.object({ticket: z.string().min(1)}),
+  describe: ({ticket}) => ({name: "Look up ticket", details: {ticket}}),
   deferred: true,
   provider: "support",
-  *execute({ticket}, {context}: import("@restate-agents/core").ToolContext<SessionContext>) {
+  *execute({ticket}, {context, info}: import("@restate-agents/core").ToolContext<SessionContext>) {
     return yield* restate.run(async () => ({ticket, status: "open", session: context.sessionKey}), {
-      name: "demo-ticket",
+      name: info.name,
     });
   },
 });
 const closeTicket = tool({
   description: "Close a demo ticket after human approval. No external ticket is changed.",
   input: z.object({ticket: z.string().min(1)}),
+  describe: ({ticket}) => ({name: "Close ticket", details: {ticket}}),
   needsApproval: true,
   *before({ticket}) {
     return ticket !== "locked" || "The locked ticket cannot be changed";
@@ -43,7 +45,7 @@ const closeTicket = tool({
         demo: true,
         idempotencyKey: `${context.invocationId}:${context.callId}`,
       }),
-      {name: "demo-close-ticket"},
+      {name: context.info.name},
     );
   },
 });

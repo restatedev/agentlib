@@ -41,18 +41,12 @@ failure cleanup, tool ordering, approvals, PTC, and conversation compaction.
 - The new examples share only model configuration and completion checking. Each
   workflow keeps its orchestration visible in its own file and accepts a model for tests.
 
-## Skills and sources
+## Sources
 
-The skill-installer catalog was checked for a relevant TypeScript design/readability
-skill. It had no direct match, so no unrelated skill was installed. OpenAI Docs was
-used for the reported model compatibility issue. Official documentation establishes
-that GPT-5.6 defaults to medium reasoning; the API error supplied in the report
-establishes the specific Chat Completions tool restriction. See the
+The model compatibility fix follows the official
 [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) and
-[GPT-5.6 Luna model page](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
-
-Subsequently, the user supplied AI Hero's external skill catalog. Five relevant
-skills were installed and applied in a separate [skills review](skills-review.md).
+[GPT-5.6 Luna model page](https://developers.openai.com/api/docs/models/gpt-5.6-luna),
+together with the reported Chat Completions error.
 
 The [example guide](../packages/examples/README.md#provenance-and-validation) links
 each upstream source at the inspected commit and explains its adaptation.

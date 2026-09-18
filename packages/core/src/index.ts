@@ -19,6 +19,7 @@ export type {
   RunResult,
   Tool,
   ToolCall,
+  ToolInfo,
   ToolContext,
   ToolDefinition,
   ToolManifest,

@@ -35,6 +35,7 @@ import type {
   RunResult,
   ToolCall,
   ToolContext,
+  ToolInfo,
   ToolResult,
 } from "./types.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
@@ -193,10 +194,26 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
         return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
       let nested = 0,
         approval = 0;
+      let info: ToolInfo = {name: call.name, details: structuredClone(call.input)};
       const toolContext: ToolContext<C> = {
         ...context,
         callId: call.id,
         toolName: call.name,
+        get info() {
+          return structuredClone(info);
+        },
+        *describe(next) {
+          if (!next || typeof next.name !== "string" || !next.name.trim())
+            throw new TypeError("Tool display name must be a nonempty string");
+          const snapshot: ToolInfo = {
+            name: next.name,
+            ...(next.details === undefined ? {} : {details: jsonSchema.parse(next.details)}),
+          };
+          if (JSON.stringify(snapshot).length > maxOutputChars)
+            throw new AgentLimitError("Tool display information exceeds maxOutputChars");
+          info = snapshot;
+          yield* update({type: "tool-info", step: callStep, callId: call.id, info});
+        },
         step: callStep,
         availableTools: () => [...registry.registry.keys()],
         *searchTools(query) {
@@ -231,7 +248,12 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           if (registry.registry.get(name)?.handoff)
             throw new ToolError("Handoffs must be direct model calls");
           const child = {id: `${call.id}/nested-${nested++}`, name, input: jsonSchema.parse(input)};
-          yield* update({type: "tool-start", step: callStep, call: child});
+          yield* update({
+            type: "tool-start",
+            step: callStep,
+            call: child,
+            info: {name, details: child.input},
+          });
           const result = yield* executeCall(child, callStep, owner, registry, depth + 1);
           yield* update({type: "tool-end", step: callStep, call: child, result});
           if (result.status === "success") return result.output;
@@ -281,7 +303,12 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       const owner = active;
       const registry = current;
       function* invokeTool(): Operation<ToolResult> {
-        yield* update({type: "tool-start", step: callStep, call});
+        yield* update({
+          type: "tool-start",
+          step: callStep,
+          call,
+          info: {name: call.name, details: call.input},
+        });
         const result = yield* executeCall(call, callStep, owner, registry);
         yield* update({type: "tool-end", step: callStep, call, result});
         entry.result = result;

@@ -4,6 +4,8 @@ import type {z} from "zod";
 /** Values that can cross a model or durable journal boundary. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | {[key: string]: JsonValue};
 export type ToolCall = {id: string; name: string; input: JsonValue};
+/** Display-only information. It is never included in a model's tool schema or history. */
+export type ToolInfo = {name: string; details?: JsonValue};
 export type ToolResult =
   | {status: "success"; output: JsonValue}
   | {status: "error"; code: string; message: string}
@@ -51,6 +53,10 @@ export type ApprovalRequest = {call: ToolCall; signalName: string; question?: st
 export type ToolContext<Context> = RunContext<Context> & {
   callId: string;
   toolName: string;
+  /** Current display information; each read returns an isolated snapshot. */
+  readonly info: ToolInfo;
+  /** Publish display information without modifying this call's input or identity. */
+  describe(info: ToolInfo): Operation<void>;
   availableTools(): string[];
   searchTools(query: string): Operation<{name: string; description: string}[]>;
   step: number;
@@ -74,6 +80,8 @@ export type Tool<Context = unknown> = {
 export type ToolDefinition<Schema extends z.ZodType, Context> = {
   description: string;
   input: Schema;
+  /** Static display information or a pure projection of a copy of validated input. */
+  describe?: ToolInfo | ((input: z.output<Schema>) => ToolInfo);
   background?: boolean;
   deferred?: boolean;
   provider?: string;
@@ -114,7 +122,8 @@ export type OutputDecision<Output = string> = {
 };
 export type AgentEvent = {step: number} & (
   | {type: "step-start"}
-  | {type: "tool-start"; call: ToolCall}
+  | {type: "tool-start"; call: ToolCall; info?: ToolInfo}
+  | {type: "tool-info"; callId: string; info: ToolInfo}
   | {type: "tool-end"; call: ToolCall; result: ToolResult}
   | {type: "tool-pending"; call: ToolCall; operationId: string}
   | {type: "approval-required"; request: ApprovalRequest}

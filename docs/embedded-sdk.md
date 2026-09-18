@@ -305,6 +305,42 @@ and run end. Events have monotonically increasing sequences and stable IDs based
 on invocation, run name, and sequence. Give multiple runs in one invocation distinct
 names. Hooks can overlap; order external events by sequence and deduplicate by ID.
 
+Tools can supply display information independently of their model-facing description:
+
+```ts
+const closeTicket = asyncTool({
+  description: "Close a resolved support ticket",
+  input: z.object({ticketId: z.string(), reason: z.string()}),
+  describe: ({ticketId, reason}) => ({
+    name: "Close ticket",
+    details: {ticketId, reason},
+  }),
+  async execute({ticketId, reason}) {
+    return await tickets.close(ticketId, reason);
+  },
+});
+```
+
+`describe` accepts either a static `{name, details}` object or a pure function of
+a copy of the validated input. `details` accepts JSON. `tool-start.info` defaults
+to the registered tool name and raw parameters; a `tool-info` update carries any
+custom description, keyed by `callId`. Generator tools can also call
+`yield* context.describe({name, details})` as more information becomes available.
+`context.info` returns an isolated snapshot. Custom information is validated and
+bounded by `maxOutputChars`; it never enters model schemas, conversation history,
+or tool results. These updates contain full JSON so consumers can truncate their
+display without losing the underlying data. As with other hooks, descriptions
+are evaluated again during replay and must not perform ordinary I/O.
+
+`asyncTool` uses the display name for its native Restate run entry. Generator
+tools can pass `{name: context.info.name}` to their own `restate.run` calls.
+The currently installed Restate SDK supports journal names only: details are
+available through agent updates, but do not yet appear beside native journal
+entries. Selecting descriptive fields does not redact the original tool input
+from `tool-start.call` or other existing events. When migrating an existing
+deployment, let in-flight invocations finish on its previous deployment: the
+new journal names replace `tool:<callId>` and must not change during replay.
+
 Use `yield* agent.stream(...)`, then `yield* stream.next()` until done and
 `yield* stream.result` for the result. The queue is bounded to 4,096 events; consume
 it while the run progresses. Close it when abandoning a consumer. External updates

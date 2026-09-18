@@ -25,6 +25,12 @@ export function tool<Schema extends z.ZodType, Context = unknown>(
       const parsed = definition.input.safeParse(input);
       if (!parsed.success)
         throw new ToolError(`Invalid tool input: ${parsed.error.message}`, "invalid_input");
+      if (definition.describe)
+        yield* context.describe(
+          typeof definition.describe === "function"
+            ? definition.describe(structuredClone(parsed.data))
+            : definition.describe,
+        );
       const reason = definition.before
         ? denial(yield* definition.before(parsed.data, context))
         : undefined;
@@ -79,7 +85,7 @@ export function asyncTool<S extends z.ZodType, C = unknown>(
             throw error;
           }
         },
-        {name: `tool:${context.callId}`, retry: definition.retry ?? {maxAttempts: 1}},
+        {name: context.info.name, retry: definition.retry ?? {maxAttempts: 1}},
       );
       if (!result.ok) throw new ToolError(result.message, result.code);
       return result.value;

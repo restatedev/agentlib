@@ -13,6 +13,7 @@ import {
   sleepTool,
   tool,
   type ModelResponse,
+  type AgentUpdate,
   type ToolCall,
 } from "@restate-agents/core";
 import {programTool} from "@restate-agents/core/program";
@@ -52,6 +53,36 @@ const gateway = r.service({
 const runner = r.service({
   name: "SdkHarness",
   handlers: {
+    *toolInfo() {
+      const updates: AgentUpdate[] = [];
+      const result = yield* agent({
+        tools: {
+          closeTicket: asyncTool({
+            description: "Close a demo ticket",
+            input: z.object({ticketId: z.string(), reason: z.string()}),
+            describe: ({ticketId}) => ({name: "Close ticket", details: {ticketId}}),
+            async execute(input) {
+              effects.set("tool-info", (effects.get("tool-info") ?? 0) + 1);
+              return {closed: input.ticketId, reason: input.reason};
+            },
+          }),
+        },
+        *model(request): r.Operation<ModelResponse> {
+          return request.step === 1
+            ? {
+                type: "tool_calls",
+                calls: [
+                  {id: "close", name: "closeTicket", input: {ticketId: "T-42", reason: "Resolved"}},
+                ],
+              }
+            : final;
+        },
+        *onUpdate(update) {
+          updates.push(update);
+        },
+      }).run("Close T-42");
+      return {result, updates, invocationId: r.handlerRequest().id};
+    },
     *run(scenario: string) {
       const updates: string[] = [];
       let modelCleaned = false;
@@ -355,6 +386,28 @@ void test("the embeddable session example exposes shared controls without model 
   assert.equal(await client.interrupt("stop"), false);
   assert.equal(await client.approve({signalName: "unknown", approved: true}), false);
 });
+
+void test(
+  "tool details survive forced replay and the native journal uses the display name",
+  {timeout: 20000},
+  async () => {
+    const response = await connect({url: env.baseUrl()}).client(runner).toolInfo();
+    const metadata = response.updates.find((update) => update.type === "tool-info");
+    assert.ok(metadata && metadata.type === "tool-info");
+    assert.deepEqual(metadata.info, {name: "Close ticket", details: {ticketId: "T-42"}});
+    assert.equal(response.result.status, "completed");
+    assert.equal(effects.get("tool-info"), 1);
+    const journal = await fetch(`${env.adminAPIBaseUrl()}/query`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", Accept: "application/json"},
+      body: JSON.stringify({
+        query: `SELECT name FROM sys_journal WHERE id = '${response.invocationId}' AND name = 'Close ticket'`,
+      }),
+    });
+    assert.equal(journal.status, 200, await journal.clone().text());
+    assert.match(await journal.text(), /Close ticket/);
+  },
+);
 
 void test(
   "native output policy approves without returning lifecycle state",
