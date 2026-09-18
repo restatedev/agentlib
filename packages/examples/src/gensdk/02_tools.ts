@@ -30,9 +30,15 @@ const support = agent({
 export const ticketLookup = restate.service({
   name: "TicketLookup",
   handlers: {
-    *ask(message: string) {
-      const result = yield* support.run(message);
-      return replyText(result);
-    },
+    ask: restate.schemas(
+      {
+        input: z.string().min(1).meta({default: "What is the status of ticket T-42?"}),
+        output: z.string(),
+      },
+      function* (message) {
+        const result = yield* support.run(message);
+        return replyText(result);
+      },
+    ),
   },
 });

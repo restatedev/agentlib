@@ -26,6 +26,18 @@ const sourcesSchema = z
     (sources) => new Set(sources.map((source) => source.id)).size === sources.length,
     "Source IDs must be unique",
   );
+const exampleSources = [
+  {
+    id: "durability",
+    title: "Recovery",
+    text: "Restate journals completed operations and reuses their results during replay.",
+  },
+  {
+    id: "idempotency",
+    title: "External effects",
+    text: "An external effect can repeat if its result was not committed. Use stable idempotency keys for external mutations.",
+  },
+];
 const findingSchema = z.object({
   answer: z.string().min(1).max(12000),
   sourceIds: z.array(z.string()).max(8),
@@ -84,7 +96,14 @@ export const researchWorker = restate.service({
   handlers: {
     research: restate.schemas(
       {
-        input: z.object({question: z.string().min(1).max(500), sources: sourcesSchema}),
+        input: z.object({
+          question: z
+            .string()
+            .min(1)
+            .max(500)
+            .default("How do replay and idempotency make external effects reliable?"),
+          sources: sourcesSchema.default(exampleSources),
+        }),
         output: findingSchema,
       },
       function* ({question, sources}) {
@@ -100,7 +119,14 @@ export const researchReport = restate.service({
   handlers: {
     generate: restate.schemas(
       {
-        input: z.object({topic: z.string().min(1).max(2000), sources: sourcesSchema}),
+        input: z.object({
+          topic: z
+            .string()
+            .min(1)
+            .max(2000)
+            .default("Explain how replay and idempotency make external effects reliable."),
+          sources: sourcesSchema.default(exampleSources),
+        }),
         output: z.string(),
       },
       function* ({topic, sources}) {

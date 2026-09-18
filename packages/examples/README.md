@@ -11,6 +11,13 @@ or edit previous lessons. Later lessons combine those concepts into workflows.
 The `app.ts` files only register the services, and [shared.ts](src/shared.ts)
 configures the model.
 
+Each prompt handler declares a Zod input schema with a scenario-specific
+default for the request editor. Matching lessons use the same defaults
+in both flavors. The research example also supplies demo sources. Rediscover
+the endpoint after changing a schema so Restate receives the updated defaults.
+String bodies use `.meta({default: ...})` to prefill the editor while keeping
+the request body required; object fields use `.default(...)`.
+
 | Lesson | New concept                               | gensdk source                                                     | Promise source                                                     |
 | ------ | ----------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
 | 01     | One agent, one request                    | [01_hello.ts](src/gensdk/01_hello.ts)                             | [01_hello.ts](src/promise/01_hello.ts)                             |
@@ -225,6 +232,11 @@ This is the full integration reference after the smaller lessons.
 
 `doTurn` returns only the answer or interruption summary. Read conversation
 history through `history` and control details through `status` when needed.
+
+The default turn requests a ticket lookup, a handoff, and approval before
+closing the demo ticket. `steer` and `interrupt` have example messages too.
+For `approve`, copy a pending `signalName` from `status().approvals` and set
+`approved` to `true` to allow the action; its default is `false`.
 
 ## Model configuration
 

@@ -29,7 +29,17 @@ export const promiseCodeReview = restate.service({
   handlers: {
     generate: restate.createServiceHandler(
       {
-        input: restate.serde.schema(z.object({task: z.string().min(1).max(4000)})),
+        input: restate.serde.schema(
+          z.object({
+            task: z
+              .string()
+              .min(1)
+              .max(4000)
+              .default(
+                "Write a TypeScript function that returns the first item of an array, or undefined when it is empty.",
+              ),
+          }),
+        ),
         output: restate.serde.schema(z.string()),
       },
       async (ctx, {task}) => {

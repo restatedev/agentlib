@@ -4,7 +4,6 @@ import {agent, asyncTool, handlerTool, type Message} from "@restate-agents/promi
 import {z} from "zod";
 import {exampleModel as model, replyText} from "../shared.js";
 
-type TurnInput = {message: string};
 type RefundPolicy = {refundWindowDays: number; requiresReceipt: boolean};
 
 export const supportPolicies = restate.service({
@@ -58,17 +57,30 @@ const support = agent({
 export const regularSdkSupport = restate.object({
   name: "RegularSdkSupport",
   handlers: {
-    async ask(ctx: restate.ObjectContext, input: TurnInput) {
-      // Before: load this session's conversation using the regular SDK.
-      const messages = (await ctx.get<Message[]>("messages")) ?? [];
+    ask: restate.createObjectHandler(
+      {
+        input: restate.serde.schema(
+          z.object({
+            message: z
+              .string()
+              .min(1)
+              .default("Look up ticket T-42 and tell me the refund policy."),
+          }),
+        ),
+        output: restate.serde.schema(z.string()),
+      },
+      async (ctx, {message}) => {
+        // Before: load this session's conversation using the regular SDK.
+        const messages = (await ctx.get<Message[]>("messages")) ?? [];
 
-      // During: the existing agent owns its model calls and concurrent tools.
-      const result = await support.run(ctx, input.message, {messages});
+        // During: the existing agent owns its model calls and concurrent tools.
+        const result = await support.run(ctx, message, {messages});
 
-      // After: persist the conversation and the actual outcome of the run.
-      ctx.set("messages", result.messages);
-      ctx.set("lastStatus", result.status);
-      return replyText(result);
-    },
+        // After: persist the conversation and the actual outcome of the run.
+        ctx.set("messages", result.messages);
+        ctx.set("lastStatus", result.status);
+        return replyText(result);
+      },
+    ),
   },
 });

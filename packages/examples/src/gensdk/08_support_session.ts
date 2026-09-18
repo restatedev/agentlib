@@ -76,7 +76,17 @@ export const aiSession = restate.object({
   name: "AiSession",
   handlers: {
     doTurn: restate.schemas(
-      {input: z.object({message: z.string().min(1)}), output: z.string()},
+      {
+        input: z.object({
+          message: z
+            .string()
+            .min(1)
+            .default(
+              "Look up ticket T-42, then transfer it to the resolution specialist to close it after my approval.",
+            ),
+        }),
+        output: z.string(),
+      },
       function* ({message}) {
         const invocationId = restate.handlerRequest().id;
         const context = {sessionKey: restate.handlerRequest().key!};
@@ -133,26 +143,52 @@ export const aiSession = restate.object({
     *history() {
       return yield* new LazyStateConversation().page();
     },
-    *steer(message: string) {
-      const active = yield* restate.sharedState().get<ActiveTurn>("active");
-      if (!active) return false;
-      restate.invocation(active.invocationId).signal("steering").resolve(message);
-      return true;
-    },
-    *interrupt(reason: string) {
-      const active = yield* restate.sharedState().get<ActiveTurn>("active");
-      if (!active) return false;
-      restate.invocation(active.invocationId).signal("interrupt").resolve(reason);
-      return true;
-    },
-    *approve(input: {signalName: string; approved: boolean}) {
-      const active = yield* restate.sharedState().get<ActiveTurn>("active");
-      const requests = (yield* restate.sharedState().get<ApprovalRequest[]>("approvals")) ?? [];
-      if (!active || !requests.some((request) => request.signalName === input.signalName))
-        return false;
-      restate.invocation(active.invocationId).signal(input.signalName).resolve(input.approved);
-      return true;
-    },
+    steer: restate.schemas(
+      {
+        input: z
+          .string()
+          .min(1)
+          .meta({default: "Focus on ticket T-42 and keep your answer short."}),
+        output: z.boolean(),
+      },
+      function* (message) {
+        const active = yield* restate.sharedState().get<ActiveTurn>("active");
+        if (!active) return false;
+        restate.invocation(active.invocationId).signal("steering").resolve(message);
+        return true;
+      },
+    ),
+    interrupt: restate.schemas(
+      {
+        input: z.string().min(1).meta({default: "Stop this task; I no longer need the result."}),
+        output: z.boolean(),
+      },
+      function* (reason) {
+        const active = yield* restate.sharedState().get<ActiveTurn>("active");
+        if (!active) return false;
+        restate.invocation(active.invocationId).signal("interrupt").resolve(reason);
+        return true;
+      },
+    ),
+    approve: restate.schemas(
+      {
+        input: z.object({
+          signalName: z
+            .string()
+            .min(1)
+            .describe("Copy signalName from this session's status().approvals."),
+          approved: z.boolean().default(false),
+        }),
+        output: z.boolean(),
+      },
+      function* ({signalName, approved}) {
+        const active = yield* restate.sharedState().get<ActiveTurn>("active");
+        const requests = (yield* restate.sharedState().get<ApprovalRequest[]>("approvals")) ?? [];
+        if (!active || !requests.some((request) => request.signalName === signalName)) return false;
+        restate.invocation(active.invocationId).signal(signalName).resolve(approved);
+        return true;
+      },
+    ),
   },
   options: {
     handlers: {

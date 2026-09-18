@@ -30,9 +30,17 @@ const support = agent({
 export const promiseTicketLookup = restate.service({
   name: "PromiseTicketLookup",
   handlers: {
-    async ask(ctx: restate.Context, message: string) {
-      const result = await support.run(ctx, message);
-      return replyText(result);
-    },
+    ask: restate.createServiceHandler(
+      {
+        input: restate.serde.schema(
+          z.string().min(1).meta({default: "What is the status of ticket T-42?"}),
+        ),
+        output: restate.serde.schema(z.string()),
+      },
+      async (ctx, message) => {
+        const result = await support.run(ctx, message);
+        return replyText(result);
+      },
+    ),
   },
 });

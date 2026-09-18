@@ -29,7 +29,15 @@ export const codeReview = restate.service({
   handlers: {
     generate: restate.schemas(
       {
-        input: z.object({task: z.string().min(1).max(4000)}),
+        input: z.object({
+          task: z
+            .string()
+            .min(1)
+            .max(4000)
+            .default(
+              "Write a TypeScript function that returns the first item of an array, or undefined when it is empty.",
+            ),
+        }),
         output: z.string(),
       },
       function* ({task}) {
