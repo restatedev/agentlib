@@ -1,4 +1,4 @@
-// 06: Combine conversation history with guarded tools and a typed service call.
+// 07: Combine conversation history with guarded tools and a typed service call.
 import * as restate from "@restatedev/restate-sdk";
 import {agent, asyncTool, handlerTool, type Message} from "@restate-agents/promise";
 import {z} from "zod";

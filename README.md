@@ -74,9 +74,10 @@ curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
 
 Read the [numbered tutorial](packages/examples/README.md) from `01_hello.ts` onward.
 Both flavors start with one agent run, then introduce tools, conversation history,
-structured output, and a draft-and-review loop. Gensdk lesson
-[06_human_approval.ts](packages/examples/src/gensdk/06_human_approval.ts) shows
-how to inspect and answer a pending approval before a tool executes. Later
+structured output, and a draft-and-review loop. Lesson 06 in
+[gensdk](packages/examples/src/gensdk/06_human_approval.ts) and
+[promise](packages/examples/src/promise/06_human_approval.ts) shows how to
+inspect and answer a pending approval before a tool executes. Later
 lessons cover support sessions, concurrent agents, and parallel research.
 
 - [gensdk lessons](packages/examples/src/gensdk/01_hello.ts): `yield* agent.run(...)`; run with `pnpm dev:gensdk`.

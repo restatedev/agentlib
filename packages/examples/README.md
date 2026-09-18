@@ -5,7 +5,7 @@ Choose a flavor and read its numbered files from `01` onward:
 - [gensdk](src/gensdk): `@restate-agents/core`, generator tools, and `yield* agent.run(...)`.
 - [Promise](src/promise): `@restate-agents/promise`, regular SDK tools, and `await agent.run(ctx, ...)`.
 
-The first five lessons match across both flavors. Each file stands alone and
+The first six lessons match across both flavors. Each file stands alone and
 introduces one concept using what you learned earlier; you do not need to import
 or edit previous lessons. Later lessons combine those concepts into workflows.
 The `app.ts` files only register the services, and [shared.ts](src/shared.ts)
@@ -18,17 +18,17 @@ the endpoint after changing a schema so Restate receives the updated defaults.
 String bodies use `.meta({default: ...})` to prefill the editor while keeping
 the request body required; object fields use `.default(...)`.
 
-| Lesson | New concept                           | gensdk source                                                     | Promise source                                                     |
-| ------ | ------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 01     | One agent, one request                | [01_hello.ts](src/gensdk/01_hello.ts)                             | [01_hello.ts](src/promise/01_hello.ts)                             |
-| 02     | A tool with validated arguments       | [02_tools.ts](src/gensdk/02_tools.ts)                             | [02_tools.ts](src/promise/02_tools.ts)                             |
-| 03     | Conversation history between requests | [03_conversation.ts](src/gensdk/03_conversation.ts)               | [03_conversation.ts](src/promise/03_conversation.ts)               |
-| 04     | Validated, typed output               | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     | [04_structured_output.ts](src/promise/04_structured_output.ts)     |
-| 05     | A bounded draft-and-review loop       | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) | [05_evaluator_optimizer.ts](src/promise/05_evaluator_optimizer.ts) |
-| 06     | Human approval / support integration  | [06_human_approval.ts](src/gensdk/06_human_approval.ts)           | [06_support_session.ts](src/promise/06_support_session.ts)         |
-| 07     | Race concurrent agents                | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             | —                                                                  |
-| 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/gensdk/08_research_report.ts)         | —                                                                  |
-| 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         | —                                                                  |
+| Lesson | New concept                             | gensdk source                                                     | Promise source                                                     |
+| ------ | --------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 01     | One agent, one request                  | [01_hello.ts](src/gensdk/01_hello.ts)                             | [01_hello.ts](src/promise/01_hello.ts)                             |
+| 02     | A tool with validated arguments         | [02_tools.ts](src/gensdk/02_tools.ts)                             | [02_tools.ts](src/promise/02_tools.ts)                             |
+| 03     | Conversation history between requests   | [03_conversation.ts](src/gensdk/03_conversation.ts)               | [03_conversation.ts](src/promise/03_conversation.ts)               |
+| 04     | Validated, typed output                 | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     | [04_structured_output.ts](src/promise/04_structured_output.ts)     |
+| 05     | A bounded draft-and-review loop         | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) | [05_evaluator_optimizer.ts](src/promise/05_evaluator_optimizer.ts) |
+| 06     | Human approval                          | [06_human_approval.ts](src/gensdk/06_human_approval.ts)           | [06_human_approval.ts](src/promise/06_human_approval.ts)           |
+| 07     | Concurrent agents / support integration | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             | [07_support_session.ts](src/promise/07_support_session.ts)         |
+| 08     | Parallel worker RPCs and synthesis      | [08_research_report.ts](src/gensdk/08_research_report.ts)         | —                                                                  |
+| 09     | Handoffs and session controls           | [09_support_session.ts](src/gensdk/09_support_session.ts)         | —                                                                  |
 
 ## Start
 
@@ -56,7 +56,7 @@ If your server uses a scoped call prefix, use that instead, for example:
 RESTATE_CALL_URL='http://[fd07:b51a:cc66::2]:8080/restate/call'
 ```
 
-The commands below show the gensdk endpoints. For lessons 01–05, prepend
+The commands below show the gensdk endpoints. For lessons 01–06, prepend
 `Promise` to the service name to call the promise version: `Hello/ask` becomes
 `PromiseHello/ask`, and `ChatSession/bob/ask` becomes `PromiseChatSession/bob/ask`.
 The request bodies are identical.
@@ -151,11 +151,12 @@ A **run** completes one task; a **step** is one planning model call inside that
 run. This loop starts fresh runs for successive drafts. See the
 [glossary](../../CONTEXT.md) for the lifecycle terms.
 
-## gensdk 06 — Wait for human approval
+## 06 — Wait for human approval
 
-[06_human_approval.ts](src/gensdk/06_human_approval.ts) adds `needsApproval: true`
-to one tool. `closeTicket` records the last closed demo ticket in object state,
-so you can see whether it executed. No external ticketing system is involved.
+Both [gensdk](src/gensdk/06_human_approval.ts) and
+[promise](src/promise/06_human_approval.ts) add `needsApproval: true` to one
+`closeTicket` tool. Each lesson records the last closed demo ticket in object
+state, so you can see whether the tool executed. No external ticketing system is involved.
 
 Start a request in one terminal:
 
@@ -184,7 +185,7 @@ curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/approve" --json '{
 }'
 ```
 
-Approval resumes the waiting tool, which records `T-42` in state. The original
+Approval resumes the waiting tool, and the example records `T-42` in state. The original
 `ask` request returns only the agent's reply. To try rejection, start a request
 under another key and submit `"approved": false`: the tool is skipped and the
 agent receives a denied result. `approve` returns `true` when it sends the
@@ -196,11 +197,13 @@ decision from authorizing a later run. Pending requests are removed after
 their tools finish and cleared when the run exits. The SDK has no default
 approval timeout; this lesson waits until a decision or invocation cancellation.
 
-This lesson uses gensdk's update hook. The promise entry point supports the
-tool's `needsApproval` option but does not yet expose the approval/update hooks
-needed for this application flow.
+For the promise flavor, run `pnpm dev:promise` and use `PromiseTicketApproval`
+in all three URLs. It uses an `asyncTool` to simulate the API call, records
+successful closures in `onUpdate`, and declares its controls with
+`createObjectSharedHandler`. The callback is synchronous; callbacks that need
+to wait on SDK work return a `RestatePromise` directly.
 
-## Promise 06 — Put tools and history together
+## Promise 07 — Put tools and history together
 
 The promise support lesson combines lessons 02 and 03, then adds a guard and a
 typed service call. `lookupTicket` uses `asyncTool`; `refundPolicy` uses
@@ -310,7 +313,7 @@ default. `maxSteps` limits the model/tool loop, not retries.
 | Model call                    | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)                                           |
 | Individual gensdk action      | `restate.run(action, {name, retry})`                   | Below                                                                |
 | Individual regular SDK action | `ctx.run(name, action, options)`                       | Below                                                                |
-| Handler-backed tool           | `retryPolicy` on the called service or handler         | [supportPolicies.refundPolicy](src/promise/06_support_session.ts)    |
+| Handler-backed tool           | `retryPolicy` on the called service or handler         | [supportPolicies.refundPolicy](src/promise/07_support_session.ts)    |
 
 The tool lessons use this policy; the same shape works for model adapters and
 gensdk actions:

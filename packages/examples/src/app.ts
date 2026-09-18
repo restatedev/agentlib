@@ -13,7 +13,8 @@ import {promiseTicketLookup} from "./promise/02_tools.js";
 import {promiseChatSession} from "./promise/03_conversation.js";
 import {promiseTicketTriage} from "./promise/04_structured_output.js";
 import {promiseCodeReview} from "./promise/05_evaluator_optimizer.js";
-import {regularSdkSupport, supportPolicies} from "./promise/06_support_session.js";
+import {promiseTicketApproval} from "./promise/06_human_approval.js";
+import {regularSdkSupport, supportPolicies} from "./promise/07_support_session.js";
 
 await serve({
   services: [
@@ -32,6 +33,7 @@ await serve({
     promiseChatSession,
     promiseTicketTriage,
     promiseCodeReview,
+    promiseTicketApproval,
     regularSdkSupport,
     supportPolicies,
   ],

@@ -17,6 +17,7 @@ import {
 } from "@restate-agents/core";
 import type {z} from "zod";
 import {currentContext} from "./context.js";
+import {resolveHook} from "./hooks.js";
 import type {
   AsyncToolDefinition,
   HandlerToolDefinition,
@@ -112,19 +113,7 @@ function toCoreHook<Input, Output, C>(
 ): CoreToolHook<Input, Output, C> | undefined {
   if (!hook) return undefined;
   return function* (input, context) {
-    const result = hook(input, currentContext(), toolContext(context));
-    if (
-      result !== null &&
-      typeof result === "object" &&
-      typeof Reflect.get(result, "then") === "function"
-    ) {
-      const promise = result as Promise<Output>;
-      if (!isRestatePromise(promise)) {
-        throw new TypeError("Promise tool hooks must return a value or a RestatePromise.");
-      }
-      return yield* adopt(promise);
-    }
-    return result as Output;
+    return yield* resolveHook(hook(input, currentContext(), toolContext(context)));
   };
 }
 

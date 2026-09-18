@@ -35,6 +35,12 @@ agent({model}).run("Go");
 declare const ctx: RestateContext;
 const promiseAgent = promise.agent<TenantContext>({
   model,
+  onUpdate(update, ctx, context) {
+    const tenant: string = context.tenant;
+    return ctx.run(`Observe ${update.type}`, () => {
+      void tenant;
+    });
+  },
   tools: {
     asyncLookup: promise.asyncTool({
       description: "Lookup through an ordinary async API",
@@ -70,6 +76,24 @@ void promiseAgent.run(ctx, "Go");
 // @ts-expect-error Application context fields remain checked.
 void promiseAgent.run(ctx, "Go", {context: {tenant: 3}});
 void promise.agent({model}).run(ctx, "Go");
+void promiseAgent.run(ctx, "Go", {
+  context: {tenant: "a"},
+  onUpdate(update, _ctx, context) {
+    const tenant: string = context.tenant;
+    const event: promise.AgentUpdate = update;
+    void tenant;
+    void event;
+  },
+});
+promise.agent({
+  model,
+  // @ts-expect-error Update hooks must return synchronously or return a RestatePromise.
+  async onUpdate() {},
+});
+void promise.agent({model}).run(ctx, "Go", {
+  // @ts-expect-error Generator update hooks belong to the gensdk entry point.
+  *onUpdate() {},
+});
 promise.tool({
   description: "Invalid native promise",
   input: z.object({}),

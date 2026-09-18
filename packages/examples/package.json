@@ -56,9 +56,13 @@
       "types": "./dist/promise/04_structured_output.d.ts",
       "import": "./dist/promise/04_structured_output.js"
     },
+    "./promise/human-approval": {
+      "types": "./dist/promise/06_human_approval.d.ts",
+      "import": "./dist/promise/06_human_approval.js"
+    },
     "./promise/regular-sdk": {
-      "types": "./dist/promise/06_support_session.d.ts",
-      "import": "./dist/promise/06_support_session.js"
+      "types": "./dist/promise/07_support_session.d.ts",
+      "import": "./dist/promise/07_support_session.js"
     },
     "./promise/evaluator-optimizer": {
       "types": "./dist/promise/05_evaluator_optimizer.d.ts",

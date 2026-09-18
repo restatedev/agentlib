@@ -4,12 +4,27 @@ import * as restate from "@restatedev/restate-sdk";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import {ToolError} from "@restate-agents/core";
-import {agent, asyncTool, type AsyncToolContext} from "@restate-agents/promise";
+import {agent, asyncTool, type AsyncToolContext, type UpdateHandler} from "@restate-agents/promise";
 import {z} from "zod";
 
 type Scenario = "success" | "error" | "denied";
 type TestContext = {tenant: string; scenario: Scenario};
 const effects = new Map<Scenario, number>();
+type UpdateContext = {tenant: string};
+type ObservedUpdate = {source: "agent" | "run"; tenant: string; invocationId: string; id: string};
+const observedUpdates: ObservedUpdate[] = [];
+
+const updateAgent = agent<UpdateContext>({
+  *model() {
+    return {type: "final", text: "Done"};
+  },
+  onUpdate(update, ctx, {tenant}) {
+    const invocationId = ctx.request().id;
+    return ctx.run(`agent-update-${update.sequence}`, () => {
+      observedUpdates.push({source: "agent", tenant, invocationId, id: update.id});
+    });
+  },
+});
 
 const assistant = agent<TestContext>({
   tools: {
@@ -53,6 +68,27 @@ const assistant = agent<TestContext>({
 const harness = restate.service({
   name: "PromiseAsyncTools",
   handlers: {
+    async updates(ctx: restate.Context, tenant: string) {
+      return await updateAgent.run(ctx, "Go", {
+        context: {tenant},
+        onUpdate(update, boundContext, context) {
+          assert.equal(boundContext, ctx);
+          assert.equal(context.tenant, tenant);
+          const invocationId = boundContext.request().id;
+          return boundContext.run(`run-update-${update.sequence}`, () => {
+            const previous = observedUpdates.filter((event) => event.tenant === tenant).at(-1);
+            assert.equal(previous?.source, "agent");
+            assert.equal(previous.id, update.id);
+            observedUpdates.push({source: "run", tenant, invocationId, id: update.id});
+          });
+        },
+      });
+    },
+    async invalidUpdate(ctx: restate.Context) {
+      // Exercise the runtime boundary for untyped callers too.
+      const invalid = (async () => {}) as unknown as UpdateHandler<UpdateContext>;
+      return await updateAgent.run(ctx, "Go", {context: {tenant: "invalid"}, onUpdate: invalid});
+    },
     async run(ctx: restate.Context, scenario: Scenario) {
       return await assistant.run(ctx, "Look up T-42", {
         name: "test-run",
@@ -74,6 +110,30 @@ before(
 );
 after(async () => {
   await env?.stop();
+});
+
+void test("promise update hooks await durable work in order and isolate concurrent run contexts", async () => {
+  const client = connect({url: env.baseUrl()}).serviceClient(harness);
+  const tenants = ["one", "two"];
+  const results = await Promise.all(tenants.map((tenant) => client.updates(tenant)));
+  assert.ok(results.every((result) => result.status === "completed"));
+  for (const tenant of tenants) {
+    const events = observedUpdates.filter((event) => event.tenant === tenant);
+    assert.deepEqual(
+      events.map((event) => event.source),
+      ["agent", "run", "agent", "run"],
+    );
+    assert.equal(new Set(events.map((event) => event.invocationId)).size, 1);
+    assert.equal(new Set(events.map((event) => event.id)).size, 2);
+    assert.ok(events.every((event) => event.id.startsWith(`${event.invocationId}:`)));
+  }
+});
+
+void test("promise update hooks reject native promises", async () => {
+  await assert.rejects(
+    async () => await connect({url: env.baseUrl()}).serviceClient(harness).invalidUpdate(),
+    /Promise hooks must return a value or a RestatePromise/,
+  );
 });
 
 void test("promise asyncTool preserves context, adapts SDK hooks, and journals execution once", async () => {

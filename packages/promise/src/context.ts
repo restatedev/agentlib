@@ -6,6 +6,6 @@ export const restateContext = contextLocal<Context>();
 
 export function currentContext(): Context {
   const ctx = restateContext.get();
-  if (!ctx) throw new Error("Promise tools must run inside a promise agent.");
+  if (!ctx) throw new Error("Promise SDK callbacks must run inside a promise agent.");
   return ctx;
 }

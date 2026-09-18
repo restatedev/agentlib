@@ -270,6 +270,7 @@ const [
   {promiseCodeReview},
   {aiSession},
   {ticketApproval},
+  {promiseTicketApproval},
 ] = await Promise.all([
   import("@restate-agents/examples/gensdk/hello"),
   import("@restate-agents/examples/gensdk/tools"),
@@ -286,6 +287,7 @@ const [
   import("@restate-agents/examples/promise/evaluator-optimizer"),
   import("@restate-agents/examples/gensdk/session"),
   import("@restate-agents/examples/gensdk/human-approval"),
+  import("@restate-agents/examples/promise/human-approval"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -311,6 +313,7 @@ before(
         promiseCodeReview,
         aiSession,
         ticketApproval,
+        promiseTicketApproval,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -369,8 +372,19 @@ for (const tutorial of tutorialExamples) {
   });
 }
 
-async function waitForApproval(key: string) {
-  const client = connect({url: env.baseUrl()}).client(ticketApproval, key);
+const approvalExamples = [
+  {
+    name: "gensdk",
+    client: (key: string) => connect({url: env.baseUrl()}).client(ticketApproval, key),
+  },
+  {
+    name: "promise",
+    client: (key: string) => connect({url: env.baseUrl()}).objectClient(promiseTicketApproval, key),
+  },
+];
+type ApprovalClient = ReturnType<(typeof approvalExamples)[number]["client"]>;
+
+async function waitForApproval(client: ApprovalClient) {
   for (let attempt = 0; attempt < 250; attempt++) {
     const {approvals} = await client.status();
     if (approvals.length > 0) return approvals[0]!;
@@ -387,103 +401,105 @@ const approvalDecisions = [
     lastClosedTicket: null,
   },
 ];
-for (const {approved, expected, lastClosedTicket} of approvalDecisions) {
-  void test(
-    `human approval: decision ${approved} gates the tool's state change`,
-    {timeout: 20000},
-    async () => {
-      const key = `decision-${approved}`;
-      const client = connect({url: env.baseUrl()}).client(ticketApproval, key);
-      const [reply, request] = await Promise.all([
-        client.ask("Close ticket T-42 after I approve it."),
-        (async () => {
-          const request = await waitForApproval(key);
-          assert.equal(request.call.name, "closeTicket");
-          assert.deepEqual(request.call.input, {ticketId: "T-42"});
-          assert.equal((await client.status()).lastClosedTicket, null);
-          assert.equal(
-            await client.approve({
-              invocationId: request.invocationId,
-              signalName: "unknown-approval",
-              approved: true,
-            }),
-            false,
-          );
-          assert.equal(
-            await client.approve({
-              invocationId: request.invocationId,
-              signalName: request.signalName,
-              approved,
-            }),
-            true,
-          );
-          return request;
-        })(),
-      ]);
-      assert.equal(reply, expected);
-      assert.deepEqual(await client.status(), {
-        approvals: [],
-        lastClosedTicket,
-      });
-      assert.equal(
-        await client.approve({
-          invocationId: request.invocationId,
-          signalName: request.signalName,
-          approved: true,
-        }),
-        false,
-      );
-    },
-  );
-}
-
-void test(
-  "human approval: an earlier invocation cannot authorize a new request",
-  {timeout: 20000},
-  async () => {
-    const key = "stale-approval";
-    const client = connect({url: env.baseUrl()}).client(ticketApproval, key);
-    const [, previous] = await Promise.all([
-      client.ask("Close ticket T-42 after I approve it."),
-      (async () => {
-        const request = await waitForApproval(key);
-        await client.approve({
-          invocationId: request.invocationId,
-          signalName: request.signalName,
-          approved: false,
+for (const example of approvalExamples) {
+  for (const {approved, expected, lastClosedTicket} of approvalDecisions) {
+    void test(
+      `${example.name} human approval: decision ${approved} gates the tool's state change`,
+      {timeout: 20000},
+      async () => {
+        const key = `decision-${approved}`;
+        const client = example.client(key);
+        const [reply, request] = await Promise.all([
+          client.ask("Close ticket T-42 after I approve it."),
+          (async () => {
+            const request = await waitForApproval(client);
+            assert.equal(request.call.name, "closeTicket");
+            assert.deepEqual(request.call.input, {ticketId: "T-42"});
+            assert.equal((await client.status()).lastClosedTicket, null);
+            assert.equal(
+              await client.approve({
+                invocationId: request.invocationId,
+                signalName: "unknown-approval",
+                approved: true,
+              }),
+              false,
+            );
+            assert.equal(
+              await client.approve({
+                invocationId: request.invocationId,
+                signalName: request.signalName,
+                approved,
+              }),
+              true,
+            );
+            return request;
+          })(),
+        ]);
+        assert.equal(reply, expected);
+        assert.deepEqual(await client.status(), {
+          approvals: [],
+          lastClosedTicket,
         });
-        return request;
-      })(),
-    ]);
-    const [reply] = await Promise.all([
-      client.ask("Close ticket T-42 after I approve it."),
-      (async () => {
-        const request = await waitForApproval(key);
-        assert.equal(request.signalName, previous.signalName);
-        assert.notEqual(request.invocationId, previous.invocationId);
-        assert.equal(
-          await client.approve({
-            invocationId: previous.invocationId,
-            signalName: previous.signalName,
-            approved: true,
-          }),
-          false,
-        );
-        assert.equal((await client.status()).lastClosedTicket, null);
         assert.equal(
           await client.approve({
             invocationId: request.invocationId,
             signalName: request.signalName,
-            approved: false,
+            approved: true,
           }),
-          true,
+          false,
         );
-      })(),
-    ]);
-    assert.equal(reply, "Approval denied; ticket T-42 was left unchanged.");
-    assert.deepEqual(await client.status(), {approvals: [], lastClosedTicket: null});
-  },
-);
+      },
+    );
+  }
+
+  void test(
+    `${example.name} human approval: an earlier invocation cannot authorize a new request`,
+    {timeout: 20000},
+    async () => {
+      const key = "stale-approval";
+      const client = example.client(key);
+      const [, previous] = await Promise.all([
+        client.ask("Close ticket T-42 after I approve it."),
+        (async () => {
+          const request = await waitForApproval(client);
+          await client.approve({
+            invocationId: request.invocationId,
+            signalName: request.signalName,
+            approved: false,
+          });
+          return request;
+        })(),
+      ]);
+      const [reply] = await Promise.all([
+        client.ask("Close ticket T-42 after I approve it."),
+        (async () => {
+          const request = await waitForApproval(client);
+          assert.equal(request.signalName, previous.signalName);
+          assert.notEqual(request.invocationId, previous.invocationId);
+          assert.equal(
+            await client.approve({
+              invocationId: previous.invocationId,
+              signalName: previous.signalName,
+              approved: true,
+            }),
+            false,
+          );
+          assert.equal((await client.status()).lastClosedTicket, null);
+          assert.equal(
+            await client.approve({
+              invocationId: request.invocationId,
+              signalName: request.signalName,
+              approved: false,
+            }),
+            true,
+          );
+        })(),
+      ]);
+      assert.equal(reply, "Approval denied; ticket T-42 was left unchanged.");
+      assert.deepEqual(await client.status(), {approvals: [], lastClosedTicket: null});
+    },
+  );
+}
 
 void test("support session returns only its reply while retaining conversation history", async () => {
   const client = connect({url: env.baseUrl()}).client(aiSession, "replies");
