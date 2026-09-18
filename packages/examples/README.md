@@ -93,6 +93,11 @@ The SDK journals its result, so you can replace the fixed record with an async
 API call directly. The optional second argument supplies application context,
 call metadata, and an `AbortSignal` for cancellable I/O.
 
+`describe` is optional. Tool display information defaults to the registered name
+(such as `lookupTicket`) and the call arguments; `asyncTool` also uses that name
+for its journal step. Add `describe` when you want a custom label or a smaller
+selection of display details. It does not change the model-facing `description`.
+
 Both tools set `retry` explicitly: up to five attempts, starting with a 250 ms
 retry delay and doubling between attempts. See [retry policies](#retry-policies)
 for model calls, individual actions, and handler calls.
@@ -194,7 +199,7 @@ It does not check whether that request is still pending.
 
 `status` and `approve` are shared handlers, so they run while the exclusive
 `ask` handler is waiting. The example stores the latest approval request in one
-state entry and clears it when the run exits. The SDK has no default
+state entry and clears it after the run returns a result. The SDK has no default
 approval timeout; this lesson waits until a decision or invocation cancellation.
 
 For the promise flavor, run `pnpm dev:promise` and use `PromiseTicketApproval`

@@ -36,7 +36,6 @@ const support = agent({
     lookupTicket: asyncTool({
       description: "Look up a demo ticket. This does not connect to a ticketing system.",
       input: z.object({ticketId: z.string().min(1)}),
-      describe: ({ticketId}) => ({name: "Look up ticket", details: {ticketId}}),
       before({ticketId}) {
         if (!ticketId.startsWith("T-")) return "Demo ticket IDs start with T-";
       },

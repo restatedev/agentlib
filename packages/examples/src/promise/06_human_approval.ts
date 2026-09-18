@@ -12,7 +12,6 @@ const support = agent({
     closeTicket: asyncTool({
       description: "Close a demo ticket after human approval. No external ticket is changed.",
       input: z.object({ticketId: z.string().min(1)}),
-      describe: ({ticketId}) => ({name: "Close ticket", details: {ticketId}}),
       needsApproval: true,
       async execute({ticketId}) {
         // Replace this demo result with an ordinary async API call.
@@ -33,16 +32,13 @@ export const promiseTicketApproval = restate.object({
         output: restate.serde.schema(z.string()),
       },
       async (ctx, message) => {
-        try {
-          const result = await support.run(ctx, message, {
-            onApproval(request) {
-              ctx.set("approval", request);
-            },
-          });
-          return replyText(result);
-        } finally {
-          ctx.clear("approval");
-        }
+        const result = await support.run(ctx, message, {
+          onApproval(request) {
+            ctx.set("approval", request);
+          },
+        });
+        ctx.clear("approval");
+        return replyText(result);
       },
     ),
     status: restate.createObjectSharedHandler(async (ctx) => ctx.get<ApprovalRequest>("approval")),

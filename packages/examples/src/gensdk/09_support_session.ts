@@ -23,7 +23,6 @@ const lookupTicket = asyncTool({
   description:
     "Look up a demo support ticket. This example does not connect to a ticketing system.",
   input: z.object({ticket: z.string().min(1)}),
-  describe: ({ticket}) => ({name: "Look up ticket", details: {ticket}}),
   deferred: true,
   provider: "support",
   async execute({ticket}, {context}: AsyncToolContext<SessionContext>) {
@@ -33,7 +32,6 @@ const lookupTicket = asyncTool({
 const closeTicket = asyncTool({
   description: "Close a demo ticket after human approval. No external ticket is changed.",
   input: z.object({ticket: z.string().min(1)}),
-  describe: ({ticket}) => ({name: "Close ticket", details: {ticket}}),
   needsApproval: true,
   *before({ticket}) {
     return ticket !== "locked" || "The locked ticket cannot be changed";

@@ -95,7 +95,8 @@ export type Tool<Context = unknown> = {
 export type ToolDefinition<Schema extends z.ZodType, Context> = {
   description: string;
   input: Schema;
-  /** Static display information or a pure projection of a copy of validated input. */
+  /** Optional display override; defaults to the registered tool name and call arguments.
+   * Accepts static information or a pure projection of a copy of validated input. */
   describe?: ToolInfo | ((input: z.output<Schema>) => ToolInfo);
   background?: boolean;
   deferred?: boolean;

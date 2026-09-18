@@ -11,7 +11,6 @@ const support = agent({
     lookupTicket: asyncTool({
       description: "Look up a demo ticket's status.",
       input: z.object({ticketId: z.string()}),
-      describe: {name: "Look up ticket"},
       retry: {
         maxAttempts: 5, // Includes the initial attempt.
         initialInterval: {milliseconds: 250},
