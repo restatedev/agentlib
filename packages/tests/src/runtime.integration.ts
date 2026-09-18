@@ -54,6 +54,51 @@ const gateway = r.service({
 const runner = r.service({
   name: "SdkHarness",
   handlers: {
+    *concurrentRuns() {
+      const a = agent<{owner: string}>({
+        maxToolCalls: 1,
+        tools: {
+          owner: tool({
+            ...base,
+            *execute(_, context) {
+              yield* r.sleep(5);
+              return context.context.owner;
+            },
+          }),
+        },
+        *model(request) {
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "same-call-id", name: "owner", input: {}}]};
+          const last = request.messages.at(-1);
+          return {
+            type: "final",
+            text:
+              last?.role === "tool" &&
+              last.result.status === "success" &&
+              typeof last.result.output === "string"
+                ? last.result.output
+                : "missing tool result",
+          };
+        },
+      });
+      return yield* r.all(
+        ["first", "second"].map((name) =>
+          r.spawn(
+            (function* () {
+              const updates: AgentUpdate[] = [];
+              const result = yield* a.run(name, {
+                name,
+                context: {owner: name},
+                *onUpdate(update) {
+                  updates.push(update);
+                },
+              });
+              return {result, updates};
+            })(),
+          ),
+        ),
+      );
+    },
     *streamFailure() {
       const fail = r.channel<void>();
       const stream = yield* agent({
@@ -446,6 +491,30 @@ before(
 after(async () => {
   await env?.stop();
 });
+void test(
+  "native always-replay: concurrent runs isolate call budgets, history, and updates",
+  {timeout: 20000},
+  async () => {
+    const runs = await connect({url: env.baseUrl()}).client(runner).concurrentRuns();
+    assert.deepEqual(
+      runs.map(({result}) => result.output),
+      ["first", "second"],
+    );
+    assert.deepEqual(
+      runs.map(({result}) => result.messages[0]),
+      [
+        {role: "user", content: "first"},
+        {role: "user", content: "second"},
+      ],
+    );
+    for (const {updates} of runs)
+      assert.deepEqual(
+        updates.map((update) => update.sequence),
+        [1, 2, 3, 4, 5],
+      );
+    assert.equal(new Set(runs.flatMap(({updates}) => updates.map((update) => update.id))).size, 10);
+  },
+);
 void test(
   "native always-replay: producer failure wakes an empty stream reader",
   {timeout: 20000},
