@@ -1,6 +1,6 @@
 # Restate Agents
 
-An embeddable AI SDK native to Restate's coroutine SDK. Agent runs, tools,
+An embeddable AI SDK native to Restate's generator SDK (`gensdk`). Agent runs, tools,
 policies, approvals, and update hooks are generator operations inside an
 application-owned Restate handler.
 
@@ -11,12 +11,12 @@ The [domain glossary](CONTEXT.md) defines runs, sessions, conversations, and lif
 
 ## Workspace
 
-| Package                                         | Purpose                                                                                  |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| [`@restate-agents/core`](packages/core)         | SDK and optional model, MCP, PTC, discovery, search, and telemetry adapters              |
-| [`@restate-agents/promise`](packages/promise)   | Regular SDK agent runs and tools returning Restate promises                              |
-| [`@restate-agents/examples`](packages/examples) | Support session, parallel research, evaluator loop, racing agents, and runnable endpoint |
-| [`@restate-agents/tests`](packages/tests)       | Unit/replay tests, public API type checks, and real Restate integration tests            |
+| Package                                         | Purpose                                                                             |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`@restate-agents/core`](packages/core)         | SDK and optional model, MCP, PTC, discovery, search, and telemetry adapters         |
+| [`@restate-agents/promise`](packages/promise)   | Regular SDK agent runs and tools returning Restate promises                         |
+| [`@restate-agents/examples`](packages/examples) | Numbered tutorials for gensdk and promise APIs, from a first run to agent workflows |
+| [`@restate-agents/tests`](packages/tests)       | Unit/replay tests, public API type checks, and real Restate integration tests       |
 
 The workspace uses **pnpm 11.19.0** and **TypeScript 7.0.2**, the latest stable
 TypeScript release verified against the registry on 2026-09-18. Packages are private;
@@ -69,27 +69,19 @@ export OPENAI_API_KEY=...
 # Optional: AGENT_MODEL selects the example's model.
 pnpm dev
 pnpm dlx @restatedev/restate deployments register http://localhost:9080
-curl localhost:8080/AiSession/example/doTurn/send \
-  --json '{"message":"Find ticket A and ask the specialist to close it"}'
-curl localhost:8080/AiSession/example/status --json 'null'
+curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
 ```
 
-The coroutine support example exposes history, approval, steering, and interruption handlers. Its
-ticket operations are demonstrations; no external tickets are changed. Optional
-MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`. See
-[`ai-session.ts`](packages/examples/src/coroutine/ai-session.ts) and the
-[example commands](packages/examples/README.md#support-session).
+Read the [numbered tutorial](packages/examples/README.md) from `01_hello.ts` onward.
+Both flavors start with one agent run, then introduce tools, conversation history,
+structured output, and a draft-and-review loop. Later lessons cover support
+sessions, concurrent agents, and parallel research.
 
-The same endpoint registers three additional examples adapted from
-[Restate's AI examples](https://github.com/restatedev/ai-examples):
+- [gensdk lessons](packages/examples/src/gensdk/01_hello.ts): `yield* agent.run(...)`; run with `pnpm dev:gensdk`.
+- [Promise lessons](packages/examples/src/promise/01_hello.ts): `await agent.run(ctx, ...)`; run with `pnpm dev:promise` and call `PromiseHello/ask`.
 
-| Example                   | What it demonstrates                                                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------- |
-| `ResearchReport/generate` | Structured planning, parallel worker RPCs, context-backed source tools, citation guards, synthesis |
-| `CodeReview/generate`     | Typed generation and evaluation, feedback across iterations, bounded work, explicit exhaustion     |
-| `RacingAgents/answer`     | Concurrent embedded runs, first successful answer, cancellation and cleanup of the loser           |
-
-See the [example commands and source references](packages/examples/README.md).
+`pnpm dev` serves both sets. Each lesson declares its agents and handlers directly;
+the `app.ts` files register them in tutorial order.
 
 The Chat Completions adapter sends `reasoning_effort: "none"` by default for GPT-5.6
 requests with tools, avoiding the model's tool/reasoning compatibility error.

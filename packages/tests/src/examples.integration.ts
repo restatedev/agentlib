@@ -180,6 +180,27 @@ const regularModel = journaledModel(async (request): Promise<ModelResponse> => {
   return {type: "final", text: `Answered ${input}; previous turns: ${turns.length - 1}`};
 });
 
+const tutorialModel = journaledModel(async (request): Promise<ModelResponse> => {
+  if (request.tools.length > 0) {
+    if (request.step === 1)
+      return {
+        type: "tool_calls",
+        calls: [{id: "ticket", name: "lookupTicket", input: {ticketId: "T-42"}}],
+      };
+    const result = request.messages.at(-1);
+    assert.equal(result?.role, "tool");
+    assert.deepEqual(result.result, {
+      status: "success",
+      output: {ticketId: "T-42", status: "open"},
+    });
+    return {type: "final", text: "Ticket T-42 is open."};
+  }
+  if (request.outputSchema)
+    return answer({category: "billing", summary: "Duplicate subscription charge."});
+  const turns = request.messages.filter((message) => message.role === "user");
+  return {type: "final", text: turns.map((message) => message.content).join(" | ")};
+});
+
 const fixtureModel: Model = function* (request) {
   const instructions = request.instructions ?? "";
   if (instructions.startsWith("Research ")) return yield* researchModel(request);
@@ -188,6 +209,13 @@ const fixtureModel: Model = function* (request) {
   if (instructions.startsWith("Thorough answer.")) return yield* racingModels.thorough(request);
   if (instructions.startsWith("Help the user with their support ticket."))
     return yield* regularModel(request);
+  if (
+    instructions === "" ||
+    instructions.startsWith("Use lookupTicket") ||
+    instructions.startsWith("Use the conversation") ||
+    instructions.startsWith("Classify the support request")
+  )
+    return yield* tutorialModel(request);
   throw new Error(`Unexpected example instructions: ${instructions}`);
 };
 
@@ -196,15 +224,31 @@ mock.module("@restate-agents/core/openai", {
   namedExports: {openAIModel: () => fixtureModel},
 });
 const [
+  {hello},
+  {ticketLookup},
+  {chatSession},
+  {ticketTriage},
+  {promiseHello},
+  {promiseTicketLookup},
+  {promiseChatSession},
+  {promiseTicketTriage},
   {researchReport, researchWorker},
   {codeReview},
   {racingAgents},
   {regularSdkSupport, supportPolicies},
   {promiseCodeReview},
 ] = await Promise.all([
-  import("@restate-agents/examples/coroutine/research-report"),
-  import("@restate-agents/examples/coroutine/evaluator-optimizer"),
-  import("@restate-agents/examples/coroutine/racing-agents"),
+  import("@restate-agents/examples/gensdk/hello"),
+  import("@restate-agents/examples/gensdk/tools"),
+  import("@restate-agents/examples/gensdk/conversation"),
+  import("@restate-agents/examples/gensdk/structured-output"),
+  import("@restate-agents/examples/promise/hello"),
+  import("@restate-agents/examples/promise/tools"),
+  import("@restate-agents/examples/promise/conversation"),
+  import("@restate-agents/examples/promise/structured-output"),
+  import("@restate-agents/examples/gensdk/research-report"),
+  import("@restate-agents/examples/gensdk/evaluator-optimizer"),
+  import("@restate-agents/examples/gensdk/racing-agents"),
   import("@restate-agents/examples/promise/regular-sdk"),
   import("@restate-agents/examples/promise/evaluator-optimizer"),
 ]);
@@ -214,6 +258,14 @@ before(
   async () => {
     env = await RestateTestEnvironment.start({
       services: [
+        hello,
+        ticketLookup,
+        chatSession,
+        ticketTriage,
+        promiseHello,
+        promiseTicketLookup,
+        promiseChatSession,
+        promiseTicketTriage,
         barrier,
         researchReport,
         researchWorker,
@@ -231,6 +283,62 @@ before(
 after(async () => {
   await env?.stop();
 });
+
+const tutorialExamples = [
+  {
+    name: "gensdk",
+    hello: () => connect({url: env.baseUrl()}).client(hello),
+    tools: () => connect({url: env.baseUrl()}).client(ticketLookup),
+    conversation: (key: string) => connect({url: env.baseUrl()}).client(chatSession, key),
+    structuredOutput: () => connect({url: env.baseUrl()}).client(ticketTriage),
+  },
+  {
+    name: "promise",
+    hello: () => connect({url: env.baseUrl()}).serviceClient(promiseHello),
+    tools: () => connect({url: env.baseUrl()}).serviceClient(promiseTicketLookup),
+    conversation: (key: string) =>
+      connect({url: env.baseUrl()}).objectClient(promiseChatSession, key),
+    structuredOutput: () => connect({url: env.baseUrl()}).serviceClient(promiseTicketTriage),
+  },
+];
+for (const tutorial of tutorialExamples) {
+  void test(`${tutorial.name} 01: each request starts a fresh run`, async () => {
+    const first = await tutorial.hello().ask("Hello");
+    assert.equal(first.status, "completed");
+    assert.equal(first.output, "Hello");
+    const second = await tutorial.hello().ask("Another request");
+    assert.equal(second.status, "completed");
+    assert.equal(second.output, "Another request");
+  });
+
+  void test(`${tutorial.name} 02: the model receives the executed tool's result`, async () => {
+    const result = await tutorial.tools().ask("Look up ticket T-42");
+    assert.equal(result.status, "completed");
+    assert.equal(result.output, "Ticket T-42 is open.");
+    assert.equal(result.steps, 2);
+  });
+
+  void test(`${tutorial.name} 03: history persists between turns and is isolated by key`, async () => {
+    const first = await tutorial.conversation("bob").ask("My name is Bob.");
+    assert.equal(first.status, "completed");
+    const second = await tutorial.conversation("bob").ask("What is my name?");
+    assert.equal(second.status, "completed");
+    assert.equal(second.output, "My name is Bob. | What is my name?");
+    assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
+    const other = await tutorial.conversation("alice").ask("What is my name?");
+    assert.equal(other.status, "completed");
+    assert.equal(other.output, "What is my name?");
+  });
+
+  void test(`${tutorial.name} 04: structured output reaches the caller as an object`, async () => {
+    const result = await tutorial.structuredOutput().classify("I was charged twice.");
+    assert.equal(result.status, "completed");
+    assert.deepEqual(result.output, {
+      category: "billing",
+      summary: "Duplicate subscription charge.",
+    });
+  });
+}
 
 void test("regular SDK runs work before and after an agent with journaled and RPC tools", async () => {
   const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "conversation");

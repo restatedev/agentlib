@@ -1,21 +1,37 @@
 import {serve} from "@restatedev/restate-sdk";
-import {aiSession} from "./coroutine/ai-session.js";
-import {researchReport, researchWorker} from "./coroutine/research-report.js";
-import {codeReview} from "./coroutine/evaluator-optimizer.js";
-import {racingAgents} from "./coroutine/racing-agents.js";
-import {regularSdkSupport, supportPolicies} from "./promise/regular-sdk.js";
-import {promiseCodeReview} from "./promise/evaluator-optimizer.js";
+import {hello} from "./gensdk/01_hello.js";
+import {ticketLookup} from "./gensdk/02_tools.js";
+import {chatSession} from "./gensdk/03_conversation.js";
+import {ticketTriage} from "./gensdk/04_structured_output.js";
+import {codeReview} from "./gensdk/05_evaluator_optimizer.js";
+import {racingAgents} from "./gensdk/06_racing_agents.js";
+import {researchReport, researchWorker} from "./gensdk/07_research_report.js";
+import {aiSession} from "./gensdk/08_support_session.js";
+import {promiseHello} from "./promise/01_hello.js";
+import {promiseTicketLookup} from "./promise/02_tools.js";
+import {promiseChatSession} from "./promise/03_conversation.js";
+import {promiseTicketTriage} from "./promise/04_structured_output.js";
+import {promiseCodeReview} from "./promise/05_evaluator_optimizer.js";
+import {regularSdkSupport, supportPolicies} from "./promise/06_support_session.js";
 
 await serve({
   services: [
-    aiSession,
-    researchReport,
-    researchWorker,
+    hello,
+    ticketLookup,
+    chatSession,
+    ticketTriage,
     codeReview,
     racingAgents,
+    researchReport,
+    researchWorker,
+    aiSession,
+    promiseHello,
+    promiseTicketLookup,
+    promiseChatSession,
+    promiseTicketTriage,
+    promiseCodeReview,
     regularSdkSupport,
     supportPolicies,
-    promiseCodeReview,
   ],
   port: 9080,
 });

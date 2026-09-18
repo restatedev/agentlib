@@ -1,3 +1,4 @@
+// 06: Race two agents and cancel the unfinished work after the first success.
 // Reimplements restatedev/ai-examples' competitive racing with embedded operations.
 import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";

@@ -4,29 +4,61 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./coroutine/session": {
-      "types": "./dist/coroutine/ai-session.d.ts",
-      "import": "./dist/coroutine/ai-session.js"
+    "./gensdk/hello": {
+      "types": "./dist/gensdk/01_hello.d.ts",
+      "import": "./dist/gensdk/01_hello.js"
     },
-    "./coroutine/research-report": {
-      "types": "./dist/coroutine/research-report.d.ts",
-      "import": "./dist/coroutine/research-report.js"
+    "./gensdk/tools": {
+      "types": "./dist/gensdk/02_tools.d.ts",
+      "import": "./dist/gensdk/02_tools.js"
     },
-    "./coroutine/evaluator-optimizer": {
-      "types": "./dist/coroutine/evaluator-optimizer.d.ts",
-      "import": "./dist/coroutine/evaluator-optimizer.js"
+    "./gensdk/conversation": {
+      "types": "./dist/gensdk/03_conversation.d.ts",
+      "import": "./dist/gensdk/03_conversation.js"
     },
-    "./coroutine/racing-agents": {
-      "types": "./dist/coroutine/racing-agents.d.ts",
-      "import": "./dist/coroutine/racing-agents.js"
+    "./gensdk/structured-output": {
+      "types": "./dist/gensdk/04_structured_output.d.ts",
+      "import": "./dist/gensdk/04_structured_output.js"
+    },
+    "./gensdk/session": {
+      "types": "./dist/gensdk/08_support_session.d.ts",
+      "import": "./dist/gensdk/08_support_session.js"
+    },
+    "./gensdk/research-report": {
+      "types": "./dist/gensdk/07_research_report.d.ts",
+      "import": "./dist/gensdk/07_research_report.js"
+    },
+    "./gensdk/evaluator-optimizer": {
+      "types": "./dist/gensdk/05_evaluator_optimizer.d.ts",
+      "import": "./dist/gensdk/05_evaluator_optimizer.js"
+    },
+    "./gensdk/racing-agents": {
+      "types": "./dist/gensdk/06_racing_agents.d.ts",
+      "import": "./dist/gensdk/06_racing_agents.js"
+    },
+    "./promise/hello": {
+      "types": "./dist/promise/01_hello.d.ts",
+      "import": "./dist/promise/01_hello.js"
+    },
+    "./promise/tools": {
+      "types": "./dist/promise/02_tools.d.ts",
+      "import": "./dist/promise/02_tools.js"
+    },
+    "./promise/conversation": {
+      "types": "./dist/promise/03_conversation.d.ts",
+      "import": "./dist/promise/03_conversation.js"
+    },
+    "./promise/structured-output": {
+      "types": "./dist/promise/04_structured_output.d.ts",
+      "import": "./dist/promise/04_structured_output.js"
     },
     "./promise/regular-sdk": {
-      "types": "./dist/promise/regular-sdk.d.ts",
-      "import": "./dist/promise/regular-sdk.js"
+      "types": "./dist/promise/06_support_session.d.ts",
+      "import": "./dist/promise/06_support_session.js"
     },
     "./promise/evaluator-optimizer": {
-      "types": "./dist/promise/evaluator-optimizer.d.ts",
-      "import": "./dist/promise/evaluator-optimizer.js"
+      "types": "./dist/promise/05_evaluator_optimizer.d.ts",
+      "import": "./dist/promise/05_evaluator_optimizer.js"
     }
   },
   "scripts": {
@@ -34,7 +66,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/app.ts",
     "start": "node dist/app.js",
-    "dev:coroutine": "tsx watch src/coroutine/app.ts",
+    "dev:gensdk": "tsx watch src/gensdk/app.ts",
     "dev:promise": "tsx watch src/promise/app.ts"
   },
   "dependencies": {

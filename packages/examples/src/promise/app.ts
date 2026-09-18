@@ -1,8 +1,20 @@
 import {serve} from "@restatedev/restate-sdk";
-import {regularSdkSupport, supportPolicies} from "./regular-sdk.js";
-import {promiseCodeReview} from "./evaluator-optimizer.js";
+import {promiseHello} from "./01_hello.js";
+import {promiseTicketLookup} from "./02_tools.js";
+import {promiseChatSession} from "./03_conversation.js";
+import {promiseTicketTriage} from "./04_structured_output.js";
+import {promiseCodeReview} from "./05_evaluator_optimizer.js";
+import {regularSdkSupport, supportPolicies} from "./06_support_session.js";
 
 await serve({
-  services: [regularSdkSupport, supportPolicies, promiseCodeReview],
+  services: [
+    promiseHello,
+    promiseTicketLookup,
+    promiseChatSession,
+    promiseTicketTriage,
+    promiseCodeReview,
+    regularSdkSupport,
+    supportPolicies,
+  ],
   port: 9080,
 });
