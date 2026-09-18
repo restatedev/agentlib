@@ -27,6 +27,8 @@ export type {
   ToolInfo,
   ToolContext,
   ToolDefinition,
+  AsyncToolContext,
+  AsyncToolDefinition,
   ToolManifest,
   ToolResult,
   UpdateHandler,

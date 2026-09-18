@@ -79,10 +79,14 @@ curl --globoff "$RESTATE_CALL_URL/TicketLookup/ask" \
   --json '"What is the status of ticket T-42?"'
 ```
 
-The gensdk tool uses `yield* restate.run(...)`; the promise tool returns
-`ctx.run(...)` directly. These operations journal the result, providing a place
-for ordinary I/O when you replace the fixed record. A promise tool callback
-must return a `RestatePromise`; making it `async` wraps it in a native promise.
+Both flavors use `asyncTool` with an ordinary `async execute(...)` callback.
+The SDK journals its result, so you can replace the fixed record with an async
+API call directly. The optional second argument supplies application context,
+call metadata, and an `AbortSignal` for cancellable I/O.
+
+Use `tool` when execution needs to compose SDK operations: a generator with
+`yield*` in gensdk, or a callback returning a `RestatePromise` in the promise
+flavor. Use `handlerTool` for typed calls to other Restate handlers.
 
 ## 03 — Remember previous turns
 
@@ -135,7 +139,7 @@ run. This loop starts fresh runs for successive drafts. See the
 ## Promise 06 — Put tools and history together
 
 The promise support lesson combines lessons 02 and 03, then adds a guard and a
-typed service call. `lookupTicket` uses `tool` and `ctx.run`; `refundPolicy` uses
+typed service call. `lookupTicket` uses `asyncTool`; `refundPolicy` uses
 `handlerTool` and `ctx.serviceClient(supportPolicies).refundPolicy()`.
 
 ```sh

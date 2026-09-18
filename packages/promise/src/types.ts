@@ -5,6 +5,7 @@ import type {
 } from "@restatedev/restate-sdk";
 import type {
   AgentOptions as CoreAgentOptions,
+  AsyncToolDefinition as CoreAsyncToolDefinition,
   GuardrailResult,
   JsonValue,
   Message,
@@ -95,6 +96,13 @@ export type ToolDefinition<Schema extends z.ZodType, Context = unknown> = ToolOp
     context: ToolContext<Context>,
   ): RestatePromise<JsonValue>;
 };
+
+/** Ordinary async I/O; execution is journaled by core, outside the SDK context. */
+export type AsyncToolDefinition<Schema extends z.ZodType, Context = unknown> = ToolOptions<
+  Schema,
+  Context
+> &
+  Pick<CoreAsyncToolDefinition<Schema, Context>, "execute" | "retry">;
 
 /** Typed SDK calls retain their invocation handle for cancellation. */
 export type HandlerToolDefinition<Schema extends z.ZodType, Context = unknown> = ToolOptions<

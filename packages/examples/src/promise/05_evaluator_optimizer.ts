@@ -27,7 +27,7 @@ const evaluator = agent({
 export const promiseCodeReview = restate.service({
   name: "PromiseCodeReview",
   handlers: {
-    generate: restate.handlers.handler(
+    generate: restate.createServiceHandler(
       {
         input: restate.serde.schema(z.object({task: z.string().min(1).max(4000)})),
         output: restate.serde.schema(

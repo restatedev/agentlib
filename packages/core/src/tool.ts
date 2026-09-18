@@ -4,11 +4,18 @@ import {
   run,
   type ClientFuture,
   type Operation,
-  type RetryOptions,
 } from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {denial, ToolDenied, ToolError} from "./errors.js";
-import type {Agent, JsonValue, Tool, ToolContext, ToolDefinition, ToolInfo} from "./types.js";
+import type {
+  Agent,
+  AsyncToolDefinition,
+  JsonValue,
+  Tool,
+  ToolContext,
+  ToolDefinition,
+  ToolInfo,
+} from "./types.js";
 import {jsonSchema} from "./validation.js";
 
 /** Describe a tool; its generator composes directly with Restate operations. */
@@ -53,16 +60,9 @@ export function tool<Schema extends z.ZodType, Context = unknown>(
   };
 }
 
-type AsyncContext<C> = Pick<
-  ToolContext<C>,
-  "context" | "invocationId" | "name" | "callId" | "step"
-> & {signal: AbortSignal};
 /** Explicit durability boundary for ordinary I/O; preserves business errors on replay. */
 export function asyncTool<S extends z.ZodType, C = unknown>(
-  definition: Omit<ToolDefinition<S, C>, "execute"> & {
-    execute(input: z.output<S>, context: AsyncContext<C>): Promise<JsonValue>;
-    retry?: RetryOptions;
-  },
+  definition: AsyncToolDefinition<S, C>,
 ): Tool<C> {
   return tool({
     ...definition,

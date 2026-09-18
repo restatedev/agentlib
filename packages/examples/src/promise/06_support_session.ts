@@ -1,6 +1,6 @@
 // 06: Combine conversation history with guarded tools and a typed service call.
 import * as restate from "@restatedev/restate-sdk";
-import {agent, tool, handlerTool, type Message} from "@restate-agents/promise";
+import {agent, asyncTool, handlerTool, type Message} from "@restate-agents/promise";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 
@@ -22,16 +22,15 @@ const support = agent({
     "Help the user with their support ticket. Use tools to check ticket facts and policy.",
   maxSteps: 7,
   tools: {
-    lookupTicket: tool({
+    lookupTicket: asyncTool({
       description: "Look up a demo ticket. This does not connect to a ticketing system.",
       input: z.object({ticketId: z.string().min(1)}),
       describe: ({ticketId}) => ({name: "Look up ticket", details: {ticketId}}),
       before({ticketId}) {
         if (!ticketId.startsWith("T-")) return "Demo ticket IDs start with T-";
       },
-      execute({ticketId}, ctx) {
-        // ctx.run journals ordinary I/O; the demo returns a fixed record.
-        return ctx.run("Look up ticket", () => ({ticketId, status: "open"}));
+      async execute({ticketId}) {
+        return {ticketId, status: "open"};
       },
     }),
     refundPolicy: handlerTool({

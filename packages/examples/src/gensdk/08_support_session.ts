@@ -3,15 +3,15 @@ import * as restate from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
   agent,
+  asyncTool,
   cancelOperationTool,
   handoff,
   LazyStateConversation,
   searchToolsTool,
   sleepTool,
-  tool,
   type AgentUpdate,
   type ApprovalRequest,
-  type ToolContext,
+  type AsyncToolContext,
 } from "@restate-agents/core";
 import {mcpTools, type McpToolSet} from "@restate-agents/core/mcp";
 import {programTool} from "@restate-agents/core/program";
@@ -19,20 +19,18 @@ import {exampleModel as model} from "../shared.js";
 
 type SessionContext = {sessionKey: string};
 type ActiveTurn = {invocationId: string};
-const lookupTicket = tool({
+const lookupTicket = asyncTool({
   description:
     "Look up a demo support ticket. This example does not connect to a ticketing system.",
   input: z.object({ticket: z.string().min(1)}),
   describe: ({ticket}) => ({name: "Look up ticket", details: {ticket}}),
   deferred: true,
   provider: "support",
-  *execute({ticket}, {context, info}: ToolContext<SessionContext>) {
-    return yield* restate.run(async () => ({ticket, status: "open", session: context.sessionKey}), {
-      name: info.name,
-    });
+  async execute({ticket}, {context}: AsyncToolContext<SessionContext>) {
+    return {ticket, status: "open", session: context.sessionKey};
   },
 });
-const closeTicket = tool({
+const closeTicket = asyncTool({
   description: "Close a demo ticket after human approval. No external ticket is changed.",
   input: z.object({ticket: z.string().min(1)}),
   describe: ({ticket}) => ({name: "Close ticket", details: {ticket}}),
@@ -40,16 +38,13 @@ const closeTicket = tool({
   *before({ticket}) {
     return ticket !== "locked" || "The locked ticket cannot be changed";
   },
-  *execute({ticket}, context) {
-    return yield* restate.run(
-      async () => ({
-        ticket,
-        status: "closed",
-        demo: true,
-        idempotencyKey: `${context.invocationId}:${context.callId}`,
-      }),
-      {name: context.info.name},
-    );
+  async execute({ticket}, context) {
+    return {
+      ticket,
+      status: "closed",
+      demo: true,
+      idempotencyKey: `${context.invocationId}:${context.callId}`,
+    };
   },
 });
 const resolution = agent<SessionContext>({

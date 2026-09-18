@@ -36,6 +36,17 @@ declare const ctx: RestateContext;
 const promiseAgent = promise.agent<TenantContext>({
   model,
   tools: {
+    asyncLookup: promise.asyncTool({
+      description: "Lookup through an ordinary async API",
+      input: z.object({id: z.string()}),
+      async execute(input, metadata: promise.AsyncToolContext<TenantContext>) {
+        const id: string = input.id;
+        const signal: AbortSignal = metadata.signal;
+        // @ts-expect-error Journaled async callbacks cannot perform SDK operations.
+        metadata.run("nested", () => id);
+        return {id, tenant: metadata.context.tenant, aborted: signal.aborted};
+      },
+    }),
     lookup: promise.tool({
       description: "Lookup",
       input: z.object({id: z.string()}),

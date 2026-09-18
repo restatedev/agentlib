@@ -1,4 +1,4 @@
-import type {Future, Operation, Task} from "@restatedev/restate-sdk-gen";
+import type {Future, Operation, RetryOptions, Task} from "@restatedev/restate-sdk-gen";
 import type {z} from "zod";
 
 /** Values that can cross a model or durable journal boundary. */
@@ -96,6 +96,18 @@ export type ToolDefinition<Schema extends z.ZodType, Context> = {
     | ((input: z.output<Schema>, context: ToolContext<Context>) => Operation<boolean>);
   execute(input: z.output<Schema>, context: ToolContext<Context>): Operation<JsonValue>;
   after?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
+};
+/** Data and cancellation for ordinary I/O inside a journaled tool execution. */
+export type AsyncToolContext<Context = unknown> = Pick<
+  ToolContext<Context>,
+  "context" | "invocationId" | "name" | "callId" | "step"
+> & {signal: AbortSignal};
+export type AsyncToolDefinition<Schema extends z.ZodType, Context = unknown> = Omit<
+  ToolDefinition<Schema, Context>,
+  "execute"
+> & {
+  execute(input: z.output<Schema>, context: AsyncToolContext<Context>): Promise<JsonValue>;
+  retry?: RetryOptions;
 };
 export type RunResult<Output = string> = {steps: number; messages: Message[]} & (
   | {status: "completed"; output: Output}

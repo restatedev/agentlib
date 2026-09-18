@@ -8,6 +8,7 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {
   adopt,
+  asyncTool as coreAsyncTool,
   tool as coroutineTool,
   handlerTool as coroutineHandlerTool,
   type Tool as CoreTool,
@@ -17,6 +18,7 @@ import {
 import type {z} from "zod";
 import {currentContext} from "./context.js";
 import type {
+  AsyncToolDefinition,
   HandlerToolDefinition,
   Tool,
   ToolContext,
@@ -38,6 +40,18 @@ export function tool<S extends z.ZodType, C = unknown>(definition: ToolDefinitio
     *execute(input, context) {
       return yield* adopt(definition.execute(input, currentContext(), toolContext(context)));
     },
+  });
+  return core as unknown as Tool<C>;
+}
+
+/** Journal ordinary async I/O with the same policies and error handling as core. */
+export function asyncTool<S extends z.ZodType, C = unknown>(
+  definition: AsyncToolDefinition<S, C>,
+): Tool<C> {
+  const core = coreAsyncTool({
+    ...toCoreOptions(definition),
+    execute: definition.execute,
+    retry: definition.retry,
   });
   return core as unknown as Tool<C>;
 }

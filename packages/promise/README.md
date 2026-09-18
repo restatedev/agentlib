@@ -12,12 +12,19 @@ output, limits, message history, signal names, application context, and tool ove
 
 | Definition         | Callback                        | Result                                                 |
 | ------------------ | ------------------------------- | ------------------------------------------------------ |
+| `asyncTool(...)`   | `execute(input, metadata)`      | Ordinary `Promise<JsonValue>`, journaled automatically |
 | `tool(...)`        | `execute(input, ctx, metadata)` | `RestatePromise<JsonValue>`                            |
 | `handlerTool(...)` | `call(input, ctx, metadata)`    | `InvocationPromise<JsonValue>` from a typed SDK client |
 
-Return SDK promises directly: an `async` callback or `.then()` produces a native
-promise and is rejected. Use `ctx.run(...)` to journal ordinary I/O. Handler tools
-retain their invocation handles so the core can cancel unfinished child calls.
+Use `asyncTool` for ordinary async I/O. Its callback receives application context,
+run/call IDs, the step, and an `AbortSignal`; it runs inside the journal boundary
+without an SDK context. Core handles result validation, business errors, and
+the optional `retry` policy.
+
+For `tool` and `handlerTool`, return SDK promises directly: an `async` callback
+or `.then()` produces a native promise and is rejected. Use `tool` to compose
+SDK operations. Handler tools retain their invocation handles so the core can
+cancel unfinished child calls.
 
 Tool `before`, `after`, and dynamic `needsApproval` hooks accept synchronous values
 or `RestatePromise`s. Metadata exposes application context, run/call IDs, step,
