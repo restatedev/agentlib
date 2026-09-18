@@ -14,7 +14,7 @@ import {
 } from "@restate-agents/core";
 import {mcpTools, type McpToolSet} from "@restate-agents/core/mcp";
 import {programTool} from "@restate-agents/core/program";
-import {exampleModel as model} from "./shared.js";
+import {exampleModel as model} from "../shared.js";
 
 type SessionContext = {sessionKey: string};
 type ActiveTurn = {invocationId: string};

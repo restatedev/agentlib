@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {agent} from "@restate-agents/core";
-import {completedOutput, exampleModel as model} from "./shared.js";
+import {completedOutput, exampleModel as model} from "../shared.js";
 
 const MAX_ITERATIONS = 3;
 const evaluationSchema = z.object({approved: z.boolean(), feedback: z.string().min(1).max(4000)});

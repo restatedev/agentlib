@@ -200,11 +200,13 @@ const [
   {codeReview},
   {racingAgents},
   {regularSdkSupport, supportPolicies},
+  {promiseCodeReview},
 ] = await Promise.all([
-  import("@restate-agents/examples/research-report"),
-  import("@restate-agents/examples/evaluator-optimizer"),
-  import("@restate-agents/examples/racing-agents"),
-  import("@restate-agents/examples/regular-sdk"),
+  import("@restate-agents/examples/coroutine/research-report"),
+  import("@restate-agents/examples/coroutine/evaluator-optimizer"),
+  import("@restate-agents/examples/coroutine/racing-agents"),
+  import("@restate-agents/examples/promise/regular-sdk"),
+  import("@restate-agents/examples/promise/evaluator-optimizer"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -219,6 +221,7 @@ before(
         racingAgents,
         regularSdkSupport,
         supportPolicies,
+        promiseCodeReview,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -308,28 +311,33 @@ void test("a research worker cannot cite a supplied source it has not read", asy
   );
 });
 
-void test("evaluator feedback reaches the next draft and the loop stops on acceptance", async () => {
-  const result = await connect({url: env.baseUrl()})
-    .client(codeReview)
-    .generate({task: "Read the first item safely"});
-  assert.equal(result.status, "accepted");
-  assert.equal(result.iterations, 2);
-  assert.deepEqual(
-    result.reviews.map((review) => review.approved),
-    [false, true],
-  );
-  assert.match(result.code, /items.length/);
-});
+const reviewExamples = [
+  {name: codeReview.name, client: () => connect({url: env.baseUrl()}).client(codeReview)},
+  {
+    name: promiseCodeReview.name,
+    client: () => connect({url: env.baseUrl()}).serviceClient(promiseCodeReview),
+  },
+];
+for (const reviewExample of reviewExamples) {
+  void test(`${reviewExample.name}: evaluator feedback reaches the next draft and stops on acceptance`, async () => {
+    const result = await reviewExample.client().generate({task: "Read the first item safely"});
+    assert.equal(result.status, "accepted");
+    assert.equal(result.iterations, 2);
+    assert.deepEqual(
+      result.reviews.map((review) => review.approved),
+      [false, true],
+    );
+    assert.match(result.code, /items.length/);
+  });
 
-void test("exhausting the evaluator budget retains the last draft and review feedback", async () => {
-  const result = await connect({url: env.baseUrl()})
-    .client(codeReview)
-    .generate({task: "always reject"});
-  assert.equal(result.status, "exhausted");
-  assert.equal(result.iterations, 3);
-  assert.equal(result.reviews.length, 3);
-  assert.match(result.code, /items.length/);
-});
+  void test(`${reviewExample.name}: exhausting the budget retains the last draft and feedback`, async () => {
+    const result = await reviewExample.client().generate({task: "always reject"});
+    assert.equal(result.status, "exhausted");
+    assert.equal(result.iterations, 3);
+    assert.equal(result.reviews.length, 3);
+    assert.match(result.code, /items.length/);
+  });
+}
 
 void test(
   "racing returns the winner only after the losing agent's cleanup",

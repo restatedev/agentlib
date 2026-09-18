@@ -1,5 +1,7 @@
 import {agent, tool, type ToolContext, type Model, type OutputDecision} from "@restate-agents/core";
 import {z} from "zod";
+import type {Context as RestateContext} from "@restatedev/restate-sdk";
+import * as promise from "@restate-agents/promise";
 
 // Compile-only examples verify the public type boundary.
 type TenantContext = {tenant: string};
@@ -29,6 +31,53 @@ a.run("Go");
 // @ts-expect-error Context fields are checked.
 a.run("Go", {context: {tenant: 3}});
 agent({model}).run("Go");
+
+declare const ctx: RestateContext;
+const promiseAgent = promise.agent<TenantContext>({
+  model,
+  tools: {
+    lookup: promise.tool({
+      description: "Lookup",
+      input: z.object({id: z.string()}),
+      before({id}) {
+        if (!id) return "An ID is required";
+      },
+      execute({id}, ctx, metadata: promise.ToolContext<TenantContext>) {
+        // @ts-expect-error Promise metadata does not expose generator operations.
+        metadata.progress(id);
+        return ctx.run("lookup", () => ({id, tenant: metadata.context.tenant}));
+      },
+      after(output, ctx) {
+        return ctx.run("inspect", () => output);
+      },
+    }),
+  },
+});
+void promiseAgent.run(ctx, "Go", {context: {tenant: "a"}});
+// @ts-expect-error Application context remains required by the promise entry point.
+void promiseAgent.run(ctx, "Go");
+// @ts-expect-error Application context fields remain checked.
+void promiseAgent.run(ctx, "Go", {context: {tenant: 3}});
+void promise.agent({model}).run(ctx, "Go");
+promise.tool({
+  description: "Invalid native promise",
+  input: z.object({}),
+  // @ts-expect-error Async wrappers erase RestatePromise's durable scheduling contract.
+  async execute() {
+    return "value";
+  },
+});
+promise.tool({
+  description: "Invalid coroutine hook",
+  input: z.object({}),
+  // @ts-expect-error Promise tool hooks do not accept coroutine operations.
+  *before() {
+    return true;
+  },
+  execute(_, ctx) {
+    return ctx.run("value", () => "value");
+  },
+});
 
 agent({
   model,

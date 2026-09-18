@@ -1,5 +1,5 @@
 // Reimplements the orchestrator-worker pattern from restatedev/ai-examples.
-// Source links and the differences are documented in ../README.md.
+// Source links and the differences are documented in ../../README.md.
 import * as restate from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
@@ -10,7 +10,7 @@ import {
   ToolError,
   type ToolContext,
 } from "@restate-agents/core";
-import {completedOutput, exampleModel as model} from "./shared.js";
+import {completedOutput, exampleModel as model} from "../shared.js";
 
 const sourceSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),

@@ -1,4 +1,5 @@
 export {agent} from "./agent.js";
+export {adopt} from "./adopt.js";
 export {tool, asyncTool, handlerTool, awaitChild, handoff} from "./tool.js";
 export {journaledModel} from "./model.js";
 export {ModelProtocolError, ToolError, GuardrailError, AgentLimitError} from "./errors.js";

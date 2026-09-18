@@ -3,7 +3,7 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {agent} from "@restate-agents/core";
-import {completedOutput, exampleModel as model} from "./shared.js";
+import {completedOutput, exampleModel as model} from "../shared.js";
 
 const candidates = {
   quick: agent({

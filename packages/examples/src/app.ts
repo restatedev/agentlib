@@ -1,9 +1,10 @@
 import {serve} from "@restatedev/restate-sdk";
-import {aiSession} from "./ai-session.js";
-import {researchReport, researchWorker} from "./research-report.js";
-import {codeReview} from "./evaluator-optimizer.js";
-import {racingAgents} from "./racing-agents.js";
-import {regularSdkSupport, supportPolicies} from "./regular-sdk.js";
+import {aiSession} from "./coroutine/ai-session.js";
+import {researchReport, researchWorker} from "./coroutine/research-report.js";
+import {codeReview} from "./coroutine/evaluator-optimizer.js";
+import {racingAgents} from "./coroutine/racing-agents.js";
+import {regularSdkSupport, supportPolicies} from "./promise/regular-sdk.js";
+import {promiseCodeReview} from "./promise/evaluator-optimizer.js";
 
 await serve({
   services: [
@@ -14,6 +15,7 @@ await serve({
     racingAgents,
     regularSdkSupport,
     supportPolicies,
+    promiseCodeReview,
   ],
   port: 9080,
 });

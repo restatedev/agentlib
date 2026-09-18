@@ -13,8 +13,10 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "check": "pnpm build && pnpm test && pnpm test:integration",
-    "dev": "pnpm --filter @restate-agents/core compile && pnpm --filter @restate-agents/examples dev",
-    "start": "pnpm --filter @restate-agents/examples start"
+    "dev": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev",
+    "start": "pnpm --filter @restate-agents/examples start",
+    "dev:coroutine": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev:coroutine",
+    "dev:promise": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev:promise"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

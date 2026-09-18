@@ -1,19 +1,24 @@
 # Agent examples
 
-Each example owns its Restate handlers and embeds `@restate-agents/core` operations.
-The SDK does not register those services. All examples run in the same endpoint.
+Each example owns its Restate handlers. The two sets use different entry points:
+
+- [Coroutine examples](src/coroutine): `@restate-agents/core`, generator tools, and `yield* agent.run(...)`.
+- [Promise examples](src/promise): `@restate-agents/promise`, regular SDK tools, and `await agent.run(ctx, ...)`.
+
+Each set has its own endpoint; `pnpm dev` also serves both sets together.
 
 ## Choose an example
 
 Read the examples in this order to introduce one orchestration pattern at a time:
 
-| Example                                   | Main lesson                                         | Follow in the source                                                    |
-| ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
-| [Regular SDK](src/regular-sdk.ts)         | Embed an agent in an ordinary async handler         | Load history → run agent with tools → save history and status           |
-| [Code review](src/evaluator-optimizer.ts) | Compose sequential runs with typed outputs          | Draft → review → feedback → next draft, with a three-iteration limit    |
-| [Racing agents](src/racing-agents.ts)     | Compose concurrent runs in one invocation           | Spawn → first successful completion → interrupt and join peers          |
-| [Research report](src/research-report.ts) | Distribute work across child invocations            | Plan → parallel worker RPCs → guarded findings → synthesis              |
-| [Support session](src/ai-session.ts)      | Let the application own a conversation and controls | Persist history → run → publish updates → resolve approvals or steering |
+| Example                                              | Main lesson                                         | Follow in the source                                                                |
+| ---------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [Promise support](src/promise/regular-sdk.ts)        | Embed an agent in an ordinary async handler         | Load history → run agent with tools → save history and status                       |
+| [Promise review](src/promise/evaluator-optimizer.ts) | Compose sequential runs in regular SDK handlers     | Typed drafts and reviews with `await`, using the same loop as the coroutine version |
+| [Code review](src/coroutine/evaluator-optimizer.ts)  | Compose sequential runs with typed outputs          | Draft → review → feedback → next draft, with a three-iteration limit                |
+| [Racing agents](src/coroutine/racing-agents.ts)      | Compose concurrent runs in one invocation           | Spawn → first successful completion → interrupt and join peers                      |
+| [Research report](src/coroutine/research-report.ts)  | Distribute work across child invocations            | Plan → parallel worker RPCs → guarded findings → synthesis                          |
+| [Support session](src/coroutine/ai-session.ts)       | Let the application own a conversation and controls | Persist history → run → publish updates → resolve approvals or steering             |
 
 A **run** completes one task; a **step** is one planning model call inside that
 run. The evaluator starts fresh runs for successive drafts. A handoff in the
@@ -32,7 +37,9 @@ From the workspace root, with a Restate server running:
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
 export AGENT_MODEL=gpt-5.6-luna
-pnpm dev
+pnpm dev:promise    # Support tools and code review
+# Or: pnpm dev:coroutine
+# Or: pnpm dev      # Both sets
 ```
 
 In another terminal, register or rediscover the endpoint:
@@ -63,14 +70,20 @@ adapter or gateway.
 
 ## Regular SDK: before, agent, after
 
-[regular-sdk.ts](src/regular-sdk.ts) uses a normal `restate.ObjectContext` handler.
+[regular-sdk.ts](src/promise/regular-sdk.ts) uses a normal `restate.ObjectContext` handler.
 It loads history with `await ctx.get(...)`, awaits the agent through the public
-coroutine SDK `execute(ctx, operation)`, then saves history and the run status
-with `ctx.set(...)`.
+`@restate-agents/promise` entry point, then saves history and the run status with
+`ctx.set(...)`:
 
-The agent has two tools: `lookupTicket` journals a demo lookup with `asyncTool`,
-and `refundPolicy` calls a regular Restate service through `handlerTool`. Both
-services are registered by `pnpm dev`.
+```ts
+const result = await support.run(ctx, input.message, {messages});
+```
+
+The agent has two tools: `lookupTicket` returns `ctx.run(...)` from `tool`, and
+`refundPolicy` returns `ctx.serviceClient(supportPolicies).refundPolicy()` from
+`handlerTool`. Both callbacks receive the current handler's `ctx`; `handlerTool`
+also cancels an unfinished child call when interrupted. Both services are
+registered by `pnpm dev`.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/RegularSdkSupport/bob/ask" \
@@ -81,12 +94,20 @@ A later call with the same key reuses the saved conversation. A stopped or
 interrupted run saves its actual status; a thrown failure skips the following
 state writes and propagates to Restate.
 
-This example uses the existing core tools. Custom tool callbacks returning
-`RestatePromise` still require a public adoption function in the coroutine SDK.
+Tool callbacks return a `RestatePromise` directly; an `async` wrapper or `.then()`
+produces a native promise and is rejected. The adapter owns coroutine execution
+and binds `ctx` separately for each run. Tool `before`, `after`, and dynamic
+`needsApproval` hooks return synchronous values or `RestatePromise`s. Their
+metadata argument contains application data and call details without coroutine
+operations. Model adapters are shared with core; streaming, conversation
+abstractions, and agent-level coroutine hooks use `@restate-agents/core`.
+
+The adapter uses the local `adopt` backport, so the workspace pins the coroutine
+SDK to 1.17.1 until upstream `internal.adopt` is released.
 
 ## Support session
 
-[ai-session.ts](src/ai-session.ts) demonstrates persisted conversations and
+[ai-session.ts](src/coroutine/ai-session.ts) demonstrates persisted conversations and
 compaction, deferred search, PTC, handoffs, background tools, approvals, steering,
 interruption, and optional MCP. Ticket effects are demonstrations. Its handlers
 expose history, approval, steering, interruption, and run status.
@@ -98,7 +119,7 @@ curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \
 
 ## Research report: orchestrator and workers
 
-[research-report.ts](src/research-report.ts) creates a typed plan of 2–4 questions,
+[research-report.ts](src/coroutine/research-report.ts) creates a typed plan of 2–4 questions,
 starts one `ResearchWorker` RPC per question, waits for the workers concurrently,
 and synthesizes their findings. Sources are provided with the request; workers
 read them through tools. A run-level guard rejects citations to sources the worker
@@ -132,7 +153,7 @@ contents visible to that worker's model; passing it as context alone does not.
 
 ## Code review: evaluator and optimizer
 
-[evaluator-optimizer.ts](src/evaluator-optimizer.ts) generates a TypeScript draft,
+[evaluator-optimizer.ts](src/coroutine/evaluator-optimizer.ts) generates a TypeScript draft,
 evaluates it with a typed `{approved, feedback}` result, and passes the previous
 draft and feedback into the next iteration. It stops after acceptance or three
 iterations. Each stage has a distinct run name for stable event IDs.
@@ -150,9 +171,17 @@ For example, a rejected first draft followed by an approved revision returns
 `status: "accepted"`, `iterations: 2`, and two reviews. Three rejections return
 `status: "exhausted"` with the final draft and all three reviews.
 
+The [promise version](src/promise/evaluator-optimizer.ts) implements the same
+bounded loop with regular SDK handlers and `await agent.run(ctx, ...)`:
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/PromiseCodeReview/generate" \
+  --json '{"task":"Read the first item safely."}'
+```
+
 ## Racing agents
 
-[racing-agents.ts](src/racing-agents.ts) starts two embedded agents concurrently.
+[racing-agents.ts](src/coroutine/racing-agents.ts) starts two embedded agents concurrently.
 One aims for a short answer and the other checks assumptions. `restate.any` returns
 the first successful result. A fast failure or exhausted agent does not win. The
 handler interrupts and joins the losing task before returning, so its cleanup and

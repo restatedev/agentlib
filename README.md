@@ -14,6 +14,7 @@ The [domain glossary](CONTEXT.md) defines runs, sessions, conversations, and lif
 | Package                                         | Purpose                                                                                  |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | [`@restate-agents/core`](packages/core)         | SDK and optional model, MCP, PTC, discovery, search, and telemetry adapters              |
+| [`@restate-agents/promise`](packages/promise)   | Regular SDK agent runs and tools returning Restate promises                              |
 | [`@restate-agents/examples`](packages/examples) | Support session, parallel research, evaluator loop, racing agents, and runnable endpoint |
 | [`@restate-agents/tests`](packages/tests)       | Unit/replay tests, public API type checks, and real Restate integration tests            |
 
@@ -73,10 +74,10 @@ curl localhost:8080/AiSession/example/doTurn/send \
 curl localhost:8080/AiSession/example/status --json 'null'
 ```
 
-The example exposes history, approval, steering, and interruption handlers. Its
+The coroutine support example exposes history, approval, steering, and interruption handlers. Its
 ticket operations are demonstrations; no external tickets are changed. Optional
 MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`. See
-[`ai-session.ts`](packages/examples/src/ai-session.ts) and the
+[`ai-session.ts`](packages/examples/src/coroutine/ai-session.ts) and the
 [example commands](packages/examples/README.md#support-session).
 
 The same endpoint registers three additional examples adapted from
