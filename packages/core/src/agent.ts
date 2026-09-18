@@ -1,10 +1,8 @@
 import {z} from "zod";
-import {CancelledError} from "@restatedev/restate-sdk";
 import {
   allSettled,
-  channel,
+  channel as oneshot,
   handlerRequest,
-  run as journal,
   InterruptedError,
   select,
   signal,
@@ -20,7 +18,6 @@ import {
   ModelProtocolError,
   RunInterrupted,
   ToolCancelled,
-  ToolDenied,
   ToolError,
 } from "./errors.js";
 import type {
@@ -29,18 +26,19 @@ import type {
   AgentOptions,
   AgentRuntime,
   Message,
-  OutputCandidate,
   RunContext,
   RunOptions,
   RunResult,
   ToolCall,
-  ToolContext,
-  ToolInfo,
   ToolResult,
 } from "./types.js";
-import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
+import {createToolCatalog} from "./tool-catalog.js";
+import {createToolExecutor} from "./tool-executor.js";
+import {loadRunHistory} from "./run-history.js";
+import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {streamRun} from "./agent-stream.js";
-import {history, jsonSchema, modelResponse} from "./validation.js";
+import {createMailbox} from "./mailbox.js";
+import {jsonSchema, modelResponse} from "./validation.js";
 import {positiveInteger as limit} from "./limits.js";
 
 type Entry = {call: ToolCall; background: boolean; task: Task<ToolResult>; result?: ToolResult};
@@ -57,25 +55,8 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   const maxOutputChars = limit(options.maxOutputChars ?? 128000, "maxOutputChars");
 
   function* run(input: string, runOptions?: RunOptions<C>): Operation<RunResult<O>> {
-    if (typeof input !== "string" || !input.trim())
-      throw new TypeError("Agent input must be a nonempty string");
-    const conversation = runOptions?.conversation;
-    if (conversation && runOptions?.messages)
-      throw new TypeError("Use either conversation or messages");
-    const snapshot = conversation ? yield* conversation.load() : undefined;
-    let conversationVersion = snapshot?.version ?? 0;
-    const messages = history(snapshot?.messages ?? runOptions?.messages ?? []);
-    let persisted = messages.length;
-    function* save(): Operation<void> {
-      if (conversation && messages.length > persisted) {
-        conversationVersion = yield* conversation.append(
-          messages.slice(persisted),
-          conversationVersion,
-        );
-        persisted = messages.length;
-      }
-    }
-    messages.push({role: "user", content: input});
+    const runHistory = yield* loadRunHistory(input, runOptions);
+    const {messages} = runHistory;
     let active: AgentRuntime<C> = options;
     let current = createToolCatalog(active.tools, runOptions?.tools);
     const context: RunContext<C> = {
@@ -89,13 +70,11 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     const owned = new Set<Task<unknown>>();
     const pending = new Map<string, Entry>();
     const observations: Message[] = [];
-    const steering: string[] = [];
-    let steeringReady = channel<void>();
-    const fatal = channel<void>();
+    const steering = createMailbox<string>();
+    const fatal = oneshot<void>();
     let failure: {error: unknown} | undefined;
     let sequence = 0,
       step = 0,
-      calls = 0,
       revision = 0;
     let batch: Entry[] | undefined;
     let watcher: Task<void> | undefined;
@@ -138,9 +117,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       revision++;
     }
     function* drainSteering(): Operation<void> {
-      const updates = steering.splice(0);
-      steeringReady = channel<void>();
-      for (const message of updates) {
+      for (const message of steering.drain()) {
         observe({type: "steering", message});
         yield* update({type: "steering", step, message});
       }
@@ -165,7 +142,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     ): Operation<{tag: string; value: unknown}> {
       while (true) {
         const branchesToSelect: Record<string, Future<unknown>> = {
-          ...(watcher ? {steering: steeringReady.receive} : {}),
+          ...(watcher ? {steering: steering.ready} : {}),
           ...Object.fromEntries([...pending].map(([id, e]) => [`pending:${id}`, e.task])),
           ...branches,
         };
@@ -180,124 +157,22 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
         } else return {tag: selected.tag, value};
       }
     }
-    function* executeCall(
-      call: ToolCall,
-      callStep: number,
-      owner: AgentRuntime<C>,
-      registry: ToolCatalog<C>,
-      depth = 0,
-    ): Operation<ToolResult> {
-      if (++calls > maxToolCalls) throw new AgentLimitError("Maximum tool calls exceeded");
-      if (depth > maxToolDepth) throw new AgentLimitError("Maximum nested tool depth exceeded");
-      const definition = registry.registry.get(call.name);
-      if (!definition)
-        return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
-      let nested = 0,
-        approval = 0;
-      let info: ToolInfo = {name: call.name, details: structuredClone(call.input)};
-      const toolContext: ToolContext<C> = {
-        ...context,
-        callId: call.id,
-        toolName: call.name,
-        get info() {
-          return structuredClone(info);
-        },
-        *describe(next) {
-          if (!next || typeof next.name !== "string" || !next.name.trim())
-            throw new TypeError("Tool display name must be a nonempty string");
-          const snapshot: ToolInfo = {
-            name: next.name,
-            ...(next.details === undefined ? {} : {details: jsonSchema.parse(next.details)}),
-          };
-          if (JSON.stringify(snapshot).length > maxOutputChars)
-            throw new AgentLimitError("Tool display information exceeds maxOutputChars");
-          info = snapshot;
-          yield* update({type: "tool-info", step: callStep, callId: call.id, info});
-        },
-        step: callStep,
-        availableTools: () => [...registry.registry.keys()],
-        *searchTools(query) {
-          const selected = yield* journal(async () => registry.search.search(query), {
-            name: `tool-search:${call.id}`,
-            retry: {maxAttempts: 1},
-          });
-          return registry.search.load(selected);
-        },
-        *progress(value) {
-          yield* update({
-            type: "progress",
-            step: callStep,
-            callId: call.id,
-            value: jsonSchema.parse(value),
-          });
-        },
-        *approve(input, question) {
-          const request = {
-            call: {...call, input},
-            signalName: `${context.name}:approval:${call.id}:${approval++}`,
-            ...(question === undefined ? {} : {question}),
-          };
-          yield* update({type: "approval-required", step: callStep, request});
-          if (owner.onHumanApproval)
-            return (yield* owner.onHumanApproval(request, toolContext)) === true;
-          if (options.onHumanApproval)
-            return (yield* options.onHumanApproval(request, toolContext)) === true;
-          return (yield* signal<boolean>(request.signalName)) === true;
-        },
-        *callTool(name, input) {
-          if (registry.registry.get(name)?.handoff)
-            throw new ToolError("Handoffs must be direct model calls");
-          const child = {id: `${call.id}/nested-${nested++}`, name, input: jsonSchema.parse(input)};
-          yield* update({
-            type: "tool-start",
-            step: callStep,
-            call: child,
-            info: {name, details: child.input},
-          });
-          const result = yield* executeCall(child, callStep, owner, registry, depth + 1);
-          yield* update({type: "tool-end", step: callStep, call: child, result});
-          if (result.status === "success") return result.output;
-          if (result.status === "cancelled") throw new ToolCancelled(result.message);
-          throw new ToolError(
-            "message" in result ? result.message : "Unexpected pending nested call",
-            result.status === "error" ? result.code : result.status,
-          );
-        },
-        *cancelOperation(id, reason = "Cancelled by the agent") {
-          const entry = pending.get(id);
-          if (!entry) throw new ToolError(`Unknown pending operation: ${id}`, "unknown_operation");
-          if (entry.result) return false;
-          entry.task.interrupt(new ToolCancelled(reason));
-          const result = yield* entry.task;
-          return result.status === "cancelled";
-        },
-      };
-      try {
-        const reason = options.beforeTool
-          ? denial(yield* options.beforeTool(structuredClone(call), toolContext))
-          : undefined;
-        if (reason !== undefined) throw new ToolDenied(reason);
-        if (owner !== options && owner.beforeTool) {
-          const denied = denial(yield* owner.beforeTool(structuredClone(call), toolContext));
-          if (denied !== undefined) throw new ToolDenied(denied);
-        }
-        let output = yield* definition.execute(call.input, toolContext);
-        if (owner !== options && owner.afterTool)
-          output = yield* owner.afterTool(output, toolContext);
-        if (options.afterTool) output = yield* options.afterTool(output, toolContext);
-        output = jsonSchema.parse(output);
-        if (JSON.stringify(output).length > maxOutputChars)
-          throw new ToolError("Tool output exceeds maxOutputChars", "output_limit");
-        return {status: "success", output};
-      } catch (error) {
-        if (error instanceof RunInterrupted || error instanceof ToolCancelled)
-          return {status: "cancelled", message: error.message};
-        if (error instanceof ToolDenied) return {status: "denied", message: error.message};
-        if (error instanceof ToolError)
-          return {status: "error", code: error.code, message: error.message};
-        throw error;
-      }
-    }
+    const toolExecutor = createToolExecutor({
+      root: options,
+      context,
+      maxToolCalls,
+      maxToolDepth,
+      maxOutputChars,
+      update,
+      *cancelOperation(id, reason = "Cancelled by the agent") {
+        const entry = pending.get(id);
+        if (!entry) throw new ToolError(`Unknown pending operation: ${id}`, "unknown_operation");
+        if (entry.result) return false;
+        entry.task.interrupt(new ToolCancelled(reason));
+        const result = yield* entry.task;
+        return result.status === "cancelled";
+      },
+    });
     function start(call: ToolCall): Entry {
       const callStep = step;
       const owner = active;
@@ -309,7 +184,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           call,
           info: {name: call.name, details: call.input},
         });
-        const result = yield* executeCall(call, callStep, owner, registry);
+        const result = yield* toolExecutor.execute(call, callStep, owner, registry);
         yield* update({type: "tool-end", step: callStep, call, result});
         entry.result = result;
         return result;
@@ -351,69 +226,14 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       flush();
     }
     function* finish(result: RunResult<O>): Operation<RunResult<O> | undefined> {
-      if (result.status !== "completed" && options.finalize) {
-        const request = {
-          messages: [
-            ...messages,
-            {
-              role: "user" as const,
-              content: `The run stopped: ${result.reason}. Summarize completed results and unresolved work. Do not claim cancelled work succeeded. No tools are available.`,
-            },
-          ],
-          tools: [],
-        };
-        let text: string;
-        try {
-          const final = modelResponse(yield* options.finalize(request));
-          if (final.type !== "final")
-            throw new ModelProtocolError("Finalization must not request tools");
-          text = final.text;
-        } catch (error) {
-          if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
-          text = `The run stopped (${result.reason}); a final summary could not be generated.`;
-        }
-        result = {...result, output: text};
-      }
+      result = yield* summarizeStoppedRun(result, options.finalize);
       const beforeGuard = revision;
       if (options.afterRun) {
-        // Policies see the candidate, but it is not part of committed history.
-        const candidate = structuredClone(result);
-        if (candidate.output !== undefined)
-          candidate.messages.push({
-            role: "assistant",
-            content:
-              typeof candidate.output === "string"
-                ? candidate.output
-                : JSON.stringify(candidate.output),
-          });
-        // The clone gives untyped policies isolation; the public view is deeply readonly.
-        const guarded = track(
-          options.afterRun(candidate as unknown as OutputCandidate<O>, context),
-        );
+        const guarded = track(options.afterRun(createOutputCandidate(result), context));
         yield* ready({guard: guarded});
-        const decision = yield* guarded;
-        if (decision !== undefined) {
-          if (
-            decision === null ||
-            typeof decision !== "object" ||
-            !Object.hasOwn(decision, "output") ||
-            Reflect.ownKeys(decision).some((key) => key !== "output")
-          )
-            throw new GuardrailError(
-              "afterRun must return nothing or an object containing only output",
-            );
-          if (result.status === "completed") {
-            // The root output schema (or text contract) validates this below.
-            result = {...result, output: decision.output as O};
-          } else {
-            const summary: unknown = decision.output;
-            if (summary !== undefined && typeof summary !== "string")
-              throw new GuardrailError("A stopped or interrupted output must be a text summary");
-            result = {...result, output: summary};
-          }
-        }
+        result = applyOutputDecision(result, yield* guarded);
       }
-      if (result.status === "completed" && (steering.length || revision !== beforeGuard)) {
+      if (result.status === "completed" && (steering.size || revision !== beforeGuard)) {
         // Steering may arrive while a generator output policy is awaiting I/O.
         // The candidate has not been published; replan against the new input.
         yield* drainSteering();
@@ -442,7 +262,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
         });
       }
       result = {...result, messages: structuredClone(messages)};
-      yield* save();
+      yield* runHistory.save();
       yield* update({
         type: "run-end",
         step,
@@ -457,21 +277,12 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           ? denial(yield* options.beforeRun(structuredClone(messages), context))
           : undefined;
         if (rejected !== undefined) throw new GuardrailError(rejected);
-        if (conversation?.compact) {
-          yield* conversation.compact();
-          const compacted = yield* conversation.load();
-          messages.splice(0, messages.length, ...history(compacted.messages), {
-            role: "user",
-            content: input,
-          });
-          persisted = compacted.messages.length;
-          conversationVersion = compacted.version;
-        }
+        yield* runHistory.compact();
         for (step = 1; step <= maxSteps; step++) {
           yield* drainSteering();
           collect();
           flush();
-          yield* save();
+          yield* runHistory.save();
           const instructions =
             typeof active.instructions === "function"
               ? yield* active.instructions(context)
@@ -550,8 +361,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           const transfers = action.calls.filter((call) => current.registry.get(call.name)?.handoff);
           if (transfers.length > 1)
             throw new ModelProtocolError("Only one handoff is allowed per batch");
-          if (calls + action.calls.length > maxToolCalls)
-            throw new AgentLimitError("Maximum tool calls exceeded");
+          toolExecutor.assertCapacity(action.calls.length);
           for (const call of action.calls) {
             if (usedIds.has(call.id))
               throw new ModelProtocolError(`Duplicate tool-call ID: ${call.id}`);
@@ -626,8 +436,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
             const message = yield* steeringSource();
             if (typeof message !== "string" || !message.trim())
               throw new TypeError("Steering must be a nonempty string");
-            steering.push(message);
-            yield* steeringReady.send();
+            yield* steering.push(message);
           }
         })(),
       );

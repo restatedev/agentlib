@@ -8,6 +8,7 @@ import {z} from "zod";
 import {
   agent,
   asyncTool,
+  handoff,
   handlerTool,
   LazyStateConversation,
   sleepTool,
@@ -53,6 +54,134 @@ const gateway = r.service({
 const runner = r.service({
   name: "SdkHarness",
   handlers: {
+    *streamFailure() {
+      const fail = r.channel<void>();
+      const stream = yield* agent({
+        *model() {
+          yield* fail.receive;
+          yield* r.sleep(5);
+          throw new TerminalError("expected producer failure");
+        },
+      }).stream("go");
+      const first = yield* stream.next();
+      yield* fail.send();
+      try {
+        yield* stream.next();
+        return {first, error: "Expected the next read to throw"};
+      } catch (error) {
+        return {first, error: String(error)};
+      }
+    },
+    *steeringBursts() {
+      const steering = r.invocation(r.handlerRequest().id).signal<string>("steering");
+      const steered = r.channel<void>();
+      const updates: AgentUpdate[] = [];
+      const result = yield* agent({
+        *model(request) {
+          if (request.step === 1) {
+            steering.resolve("first");
+            steering.resolve("second");
+            yield* steered.receive;
+            return {type: "final", text: "stale"};
+          }
+          return final;
+        },
+        *onUpdate(update) {
+          updates.push(update);
+          if (update.type === "steering" && update.message === "first") {
+            // Another arrival while the previous batch is being processed.
+            steering.resolve("third");
+            yield* r.sleep(5);
+          }
+          if (update.type === "steering" && update.message === "third") yield* steered.send();
+        },
+      }).run("go", {steeringSignal: "steering"});
+      return {result, updates};
+    },
+    *streamBursts() {
+      const buffered = r.channel<void>();
+      const resume = r.channel<void>();
+      const stream = yield* agent({
+        tools: {
+          report: tool({
+            ...base,
+            *execute(_, context) {
+              yield* context.progress(1);
+              yield* context.progress(2);
+              yield* buffered.send();
+              yield* resume.receive;
+              yield* r.sleep(5);
+              yield* context.progress(3);
+              return "reported";
+            },
+          }),
+        },
+        *model(request) {
+          return request.step === 1
+            ? {type: "tool_calls", calls: [{id: "report", name: "report", input: {}}]}
+            : final;
+        },
+      }).stream("go");
+      // Let the producer buffer several updates before the first read.
+      yield* buffered.receive;
+      const updates: AgentUpdate[] = [];
+      while (true) {
+        const next = yield* stream.next();
+        if (next.done) break;
+        updates.push(next.value);
+        // The queue is empty here; the next update must wake a fresh waiter.
+        if (next.value.type === "progress" && next.value.value === 2) yield* resume.send();
+      }
+      return {updates, result: yield* stream.result};
+    },
+    *toolLimits(limit: "calls" | "depth") {
+      const executed: string[] = [];
+      const write = asyncTool({
+        ...base,
+        async execute() {
+          effects.set(`limit-${limit}`, (effects.get(`limit-${limit}`) ?? 0) + 1);
+          return "written";
+        },
+      });
+      const specialist = agent({
+        tools: {write},
+        *model() {
+          return {type: "tool_calls", calls: [{id: "write", name: "write", input: {}}]};
+        },
+      });
+      const a = agent({
+        maxToolCalls: 3,
+        maxToolDepth: 1,
+        tools: {
+          write,
+          transfer: handoff(specialist),
+          outer: tool({
+            ...base,
+            *execute(_, context) {
+              executed.push("outer");
+              return yield* context.callTool("nested", {});
+            },
+          }),
+          nested: tool({
+            ...base,
+            *execute(_, context) {
+              executed.push("nested");
+              return limit === "depth" ? yield* context.callTool("write", {}) : "done";
+            },
+          }),
+        },
+        *model(request) {
+          const name = request.step === 1 ? "outer" : "transfer";
+          return {type: "tool_calls", calls: [{id: name, name, input: {}}]};
+        },
+      });
+      try {
+        yield* a.run("go");
+        return {executed, error: "Expected a tool limit failure"};
+      } catch (error) {
+        return {executed, error: String(error)};
+      }
+    },
     *toolInfo() {
       const updates: AgentUpdate[] = [];
       const result = yield* agent({
@@ -317,6 +446,72 @@ before(
 after(async () => {
   await env?.stop();
 });
+void test(
+  "native always-replay: producer failure wakes an empty stream reader",
+  {timeout: 20000},
+  async () => {
+    const {first, error} = await connect({url: env.baseUrl()}).client(runner).streamFailure();
+    assert.equal(first.done, false);
+    assert.equal(first.value?.type, "step-start");
+    assert.match(error, /expected producer failure/);
+  },
+);
+void test(
+  "native always-replay: steering retains bursts and arrivals during draining",
+  {timeout: 20000},
+  async () => {
+    const {result, updates} = await connect({url: env.baseUrl()}).client(runner).steeringBursts();
+    assert.deepEqual(
+      updates.filter((update) => update.type === "steering").map((update) => update.message),
+      ["first", "second", "third"],
+    );
+    assert.deepEqual(
+      result.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+      [
+        "go",
+        '{"source":"agent-runtime","type":"steering","message":"first"}',
+        '{"source":"agent-runtime","type":"steering","message":"second"}',
+        '{"source":"agent-runtime","type":"steering","message":"third"}',
+      ],
+    );
+    assert.equal(result.output, "done");
+    assert.ok(
+      !result.messages.some(
+        (message) => message.role === "assistant" && message.content === "stale",
+      ),
+    );
+  },
+);
+void test(
+  "native always-replay: stream retains bursts and wakes again after draining",
+  {timeout: 20000},
+  async () => {
+    const {updates, result} = await connect({url: env.baseUrl()}).client(runner).streamBursts();
+    assert.deepEqual(
+      updates.filter((update) => update.type === "progress").map((update) => update.value),
+      [1, 2, 3],
+    );
+    assert.deepEqual(
+      updates.map((update) => update.sequence),
+      [1, 2, 3, 4, 5, 6, 7, 8],
+    );
+    assert.equal(updates.at(-1)?.type, "run-end");
+    assert.equal(result.status, "completed");
+  },
+);
+for (const limit of ["calls", "depth"] as const) {
+  void test(`native always-replay: shared tool ${limit} limit`, {timeout: 20000}, async () => {
+    const result = await connect({url: env.baseUrl()}).client(runner).toolLimits(limit);
+    assert.deepEqual(result.executed, ["outer", "nested"]);
+    assert.match(
+      result.error,
+      limit === "calls" ? /Maximum tool calls exceeded/ : /Maximum nested tool depth exceeded/,
+    );
+    assert.equal(effects.get(`limit-${limit}`) ?? 0, 0);
+  });
+}
 for (const scenario of [
   "parallel",
   "approval",
