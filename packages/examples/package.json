@@ -20,21 +20,25 @@
       "types": "./dist/gensdk/04_structured_output.d.ts",
       "import": "./dist/gensdk/04_structured_output.js"
     },
+    "./gensdk/human-approval": {
+      "types": "./dist/gensdk/06_human_approval.d.ts",
+      "import": "./dist/gensdk/06_human_approval.js"
+    },
     "./gensdk/session": {
-      "types": "./dist/gensdk/08_support_session.d.ts",
-      "import": "./dist/gensdk/08_support_session.js"
+      "types": "./dist/gensdk/09_support_session.d.ts",
+      "import": "./dist/gensdk/09_support_session.js"
     },
     "./gensdk/research-report": {
-      "types": "./dist/gensdk/07_research_report.d.ts",
-      "import": "./dist/gensdk/07_research_report.js"
+      "types": "./dist/gensdk/08_research_report.d.ts",
+      "import": "./dist/gensdk/08_research_report.js"
     },
     "./gensdk/evaluator-optimizer": {
       "types": "./dist/gensdk/05_evaluator_optimizer.d.ts",
       "import": "./dist/gensdk/05_evaluator_optimizer.js"
     },
     "./gensdk/racing-agents": {
-      "types": "./dist/gensdk/06_racing_agents.d.ts",
-      "import": "./dist/gensdk/06_racing_agents.js"
+      "types": "./dist/gensdk/07_racing_agents.d.ts",
+      "import": "./dist/gensdk/07_racing_agents.js"
     },
     "./promise/hello": {
       "types": "./dist/promise/01_hello.d.ts",

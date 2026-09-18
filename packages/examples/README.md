@@ -18,16 +18,17 @@ the endpoint after changing a schema so Restate receives the updated defaults.
 String bodies use `.meta({default: ...})` to prefill the editor while keeping
 the request body required; object fields use `.default(...)`.
 
-| Lesson | New concept                               | gensdk source                                                     | Promise source                                                     |
-| ------ | ----------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 01     | One agent, one request                    | [01_hello.ts](src/gensdk/01_hello.ts)                             | [01_hello.ts](src/promise/01_hello.ts)                             |
-| 02     | A tool with validated arguments           | [02_tools.ts](src/gensdk/02_tools.ts)                             | [02_tools.ts](src/promise/02_tools.ts)                             |
-| 03     | Conversation history between requests     | [03_conversation.ts](src/gensdk/03_conversation.ts)               | [03_conversation.ts](src/promise/03_conversation.ts)               |
-| 04     | Validated, typed output                   | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     | [04_structured_output.ts](src/promise/04_structured_output.ts)     |
-| 05     | A bounded draft-and-review loop           | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) | [05_evaluator_optimizer.ts](src/promise/05_evaluator_optimizer.ts) |
-| 06     | Concurrent agents / support integration   | [06_racing_agents.ts](src/gensdk/06_racing_agents.ts)             | [06_support_session.ts](src/promise/06_support_session.ts)         |
-| 07     | Parallel worker RPCs and synthesis        | [07_research_report.ts](src/gensdk/07_research_report.ts)         | —                                                                  |
-| 08     | Approvals, handoffs, and session controls | [08_support_session.ts](src/gensdk/08_support_session.ts)         | —                                                                  |
+| Lesson | New concept                           | gensdk source                                                     | Promise source                                                     |
+| ------ | ------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 01     | One agent, one request                | [01_hello.ts](src/gensdk/01_hello.ts)                             | [01_hello.ts](src/promise/01_hello.ts)                             |
+| 02     | A tool with validated arguments       | [02_tools.ts](src/gensdk/02_tools.ts)                             | [02_tools.ts](src/promise/02_tools.ts)                             |
+| 03     | Conversation history between requests | [03_conversation.ts](src/gensdk/03_conversation.ts)               | [03_conversation.ts](src/promise/03_conversation.ts)               |
+| 04     | Validated, typed output               | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     | [04_structured_output.ts](src/promise/04_structured_output.ts)     |
+| 05     | A bounded draft-and-review loop       | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) | [05_evaluator_optimizer.ts](src/promise/05_evaluator_optimizer.ts) |
+| 06     | Human approval / support integration  | [06_human_approval.ts](src/gensdk/06_human_approval.ts)           | [06_support_session.ts](src/promise/06_support_session.ts)         |
+| 07     | Race concurrent agents                | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             | —                                                                  |
+| 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/gensdk/08_research_report.ts)         | —                                                                  |
+| 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         | —                                                                  |
 
 ## Start
 
@@ -150,6 +151,55 @@ A **run** completes one task; a **step** is one planning model call inside that
 run. This loop starts fresh runs for successive drafts. See the
 [glossary](../../CONTEXT.md) for the lifecycle terms.
 
+## gensdk 06 — Wait for human approval
+
+[06_human_approval.ts](src/gensdk/06_human_approval.ts) adds `needsApproval: true`
+to one tool. `closeTicket` records the last closed demo ticket in object state,
+so you can see whether it executed. No external ticketing system is involved.
+
+Start a request in one terminal:
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/ask" \
+  --json '"Close ticket T-42 after I approve it."'
+```
+
+This request waits. Before executing the tool, core emits `approval-required`
+and waits on a durable signal. The lesson's `onUpdate` callback saves the request
+in object state. In a second terminal, inspect it:
+
+```sh
+curl --globoff --request POST "$RESTATE_CALL_URL/TicketApproval/bob/status"
+```
+
+`approvals` contains the proposed tool name and arguments, plus `invocationId`
+and `signalName`. `lastClosedTicket` is initially `null`. Copy both identifiers
+from the same approval request and submit a decision:
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/approve" --json '{
+  "invocationId": "<copy from status>",
+  "signalName": "<copy from the same request>",
+  "approved": true
+}'
+```
+
+Approval resumes the waiting tool, which records `T-42` in state. The original
+`ask` request returns only the agent's reply. To try rejection, start a request
+under another key and submit `"approved": false`: the tool is skipped and the
+agent receives a denied result. `approve` returns `true` when it sends the
+decision, including a rejection, and `false` for an unknown or stale request.
+
+`status` and `approve` are shared handlers, so they run while the exclusive
+`ask` handler is waiting. Both identifiers are checked to prevent an old
+decision from authorizing a later run. Pending requests are removed after
+their tools finish and cleared when the run exits. The SDK has no default
+approval timeout; this lesson waits until a decision or invocation cancellation.
+
+This lesson uses gensdk's update hook. The promise entry point supports the
+tool's `needsApproval` option but does not yet expose the approval/update hooks
+needed for this application flow.
+
 ## Promise 06 — Put tools and history together
 
 The promise support lesson combines lessons 02 and 03, then adds a guard and a
@@ -171,7 +221,7 @@ values or `RestatePromise`s. Model adapters are shared with core; streaming,
 conversation abstractions, and agent-level generator hooks use
 `@restate-agents/core`.
 
-## gensdk 06 — Race concurrent agents
+## gensdk 07 — Race concurrent agents
 
 Spawn two agents and use `restate.any` to take the first successful answer. An
 error or exhausted run cannot win. Interrupt and join the other task so its
@@ -186,7 +236,7 @@ The response is the winning answer as a string. Both agents start, so the patter
 consume more tokens than a single run. They share a model with different
 instructions; change their `model` fields to compare providers.
 
-## gensdk 07 — Delegate to parallel workers
+## gensdk 08 — Delegate to parallel workers
 
 The planner returns 2–4 questions. Start a `ResearchWorker` RPC for each, await
 them concurrently, and synthesize the findings. Each worker gets its own source
@@ -215,7 +265,7 @@ The response is the final report as a string. Worker findings remain internal. T
 supplied documents and does not browse the web. Citation IDs are checked against
 tool reads; factual quality and final prose still depend on the model.
 
-## gensdk 08 — Build a controlled support session
+## gensdk 09 — Build a controlled support session
 
 The final lesson combines persisted conversations and compaction, deferred tool
 search, programmatic tool calls, handoffs, background tools, approvals, steering,
@@ -324,7 +374,8 @@ commit `60d1eda2e5f3aae96db2efeba498e52367a01648`:
 `pnpm test:integration` registers these exported services with the official
 `RestateTestEnvironment` and a real `RestateContainer().alwaysReplay()`. Tests
 replace the model adapter import with fixture models using Node's module mocking.
-They verify the introductory lessons, conversation isolation, parallel RPC execution, committed effects occurring once,
+They verify the introductory lessons, approval and denial before effects, rejection of stale decisions,
+conversation isolation, parallel RPC execution, committed effects occurring once,
 feedback propagation, bounded exhaustion, first-success racing, and loser cleanup.
 The tests need Docker and make no paid model calls.
 

@@ -1,4 +1,4 @@
-// 07: Distribute research across parallel child invocations, then synthesize their findings.
+// 08: Distribute research across parallel child invocations, then synthesize their findings.
 // Reimplements the orchestrator-worker pattern from restatedev/ai-examples.
 // Source links and the differences are documented in ../../README.md.
 import * as restate from "@restatedev/restate-sdk-gen";

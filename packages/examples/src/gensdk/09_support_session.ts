@@ -1,4 +1,4 @@
-// 08: Combine tools, handoffs, approvals, and controls in an application-owned session.
+// 09: Combine tools, handoffs, approvals, and controls in an application-owned session.
 import * as restate from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
