@@ -100,12 +100,14 @@ const runner = r.service({
               modelCleaned = true;
             }
           }
-          if (scenario === "steering" && request.step === 1) {
+          if ((scenario === "steering" || scenario === "steering-tools") && request.step === 1) {
             r.invocation(r.handlerRequest().id).signal("steering").resolve("new requirement");
             yield* r.sleep(10);
-            return {type: "final", text: "stale"};
+            return scenario === "steering-tools"
+              ? {type: "tool_calls", calls: [{id: "stale-write", name: "write", input: {}}]}
+              : {type: "final", text: "stale"};
           }
-          if (scenario === "steering") {
+          if (scenario === "steering" || scenario === "steering-tools") {
             assert.match(JSON.stringify(request.messages), /new requirement/);
             return final;
           }
@@ -141,6 +143,8 @@ const runner = r.service({
         },
         *onUpdate(event) {
           updates.push(event.type);
+          if (scenario === "late-interrupt" && event.type === "run-end")
+            r.invocation(r.handlerRequest().id).signal("interrupt").resolve("after acceptance");
           if (event.type === "approval-required")
             r.invocation(r.handlerRequest().id).signal(event.request.signalName).resolve(true);
           if (scenario === "rpc-cancel" && event.type === "tool-start") {
@@ -202,6 +206,24 @@ const runner = r.service({
 const session = r.object({
   name: "SdkConversation",
   handlers: {
+    *interruptGuard() {
+      const conversation = new LazyStateConversation();
+      const result = yield* agent({
+        *model(): r.Operation<ModelResponse> {
+          return {type: "final", text: "unapproved candidate"};
+        },
+        *afterRun(result) {
+          if (result.status === "completed") {
+            r.invocation(r.handlerRequest().id)
+              .signal("interrupt")
+              .resolve("stop before publication");
+            yield* r.sleep(60000);
+          }
+          return result;
+        },
+      }).run("go", {conversation, interruptSignal: "interrupt"});
+      return {result, history: yield* conversation.page()};
+    },
     *turn(input: string) {
       const conversation = new LazyStateConversation({
         compaction: {
@@ -250,7 +272,9 @@ for (const scenario of [
   "parallel",
   "approval",
   "steering",
+  "steering-tools",
   "interrupt",
+  "late-interrupt",
   "failure",
   "program",
   "rpc-cancel",
@@ -268,6 +292,7 @@ for (const scenario of [
     );
     if (scenario === "interrupt") assert.equal(result.modelCleaned, true);
     if (scenario === "parallel" || scenario === "program") assert.equal(effects.get(scenario), 1);
+    if (scenario === "steering-tools") assert.equal(effects.get(scenario) ?? 0, 0);
     if (scenario === "parallel")
       assert.match(JSON.stringify(result.result.messages), /background-tool-result/);
     if (scenario === "steering")
@@ -312,6 +337,19 @@ void test("the embeddable session example exposes shared controls without model 
   assert.equal(await client.interrupt("stop"), false);
   assert.equal(await client.approve({signalName: "unknown", approved: true}), false);
 });
+
+void test(
+  "native interrupted output guard never commits its candidate",
+  {timeout: 20000},
+  async () => {
+    const response = await connect({url: env.baseUrl()})
+      .client(session, "guard-interruption")
+      .interruptGuard();
+    assert.equal(response.result.status, "interrupted");
+    assert.doesNotMatch(JSON.stringify(response), /unapproved candidate/);
+    assert.deepEqual(response.history.messages, [{role: "user", content: "go"}]);
+  },
+);
 
 void test(
   "native Restate discovery invokes the same snapshotted handler",

@@ -9,6 +9,37 @@ import {otelUpdates} from "@restate-agents/core/telemetry";
 import {runHandler} from "./replay-harness.mjs";
 const final: ModelResponse = {type: "final", text: "done"};
 
+void test("discovered tool names are data, including JavaScript prototype property names", async () => {
+  const names = ["__proto__", "constructor", "toString"];
+  const response = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        const catalog = yield* restateTools({
+          adminUrl: "https://fixture.test",
+          fetch: async () =>
+            Response.json({
+              services: [
+                {
+                  name: "Tools",
+                  ty: "Service",
+                  handlers: names.map((name) => ({
+                    name,
+                    metadata: {"restate.dev/agent": name},
+                  })),
+                },
+              ],
+            }),
+        });
+        assert.equal(Object.getPrototypeOf(catalog.tools), Object.prototype);
+        assert.ok(Object.hasOwn(catalog.tools, "__proto__"));
+        return Object.keys(catalog.tools).sort();
+      })(),
+    ),
+  );
+  assert.deepEqual(response.output, [...names].sort());
+});
+
 void test("Restate discovery filters permissions, rewrites nested refs, and snapshots catalogs", async () => {
   let requests = 0;
   const handler = (ctx: Context) =>

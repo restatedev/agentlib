@@ -53,6 +53,12 @@ and output policies replace the candidate in stored history.
 approvals, steering, interruption, child cancellation, background results, PTC,
 gateways, discovery, persisted compaction, and the example's shared controls.
 
+The [self-review](self-review.md) records corrected lifecycle, catalog, and adapter
+defects. Additional [examples](../packages/examples/README.md) cover parallel research
+workers, evaluator-optimizer loops, and first-success racing. Their real-server tests
+verify parallel dispatch, replayed effects, typed decisions, bounded exhaustion,
+source-read policies, and cancellation cleanup.
+
 Live provider/MCP credentials, OAuth endpoints, public transcript projection,
 SSE/WebSocket delivery, exporter configuration, and host authorization belong to
 the embedding application. The implemented hooks support these integrations;

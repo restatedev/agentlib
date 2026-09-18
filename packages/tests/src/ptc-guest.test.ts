@@ -4,6 +4,15 @@ import test from "node:test";
 import {type Context} from "@restatedev/restate-sdk";
 import {Guest, ProgramError, type Outcome, type Request} from "../../core/src/ptc/guest.js";
 import {executeWithTools as executeProgram} from "./ptc-adapter.js";
+
+void test("invalid guest budgets fail before allocating a VM", () => {
+  for (const key of ["maxInterruptChecks", "maxJobsPerDrain", "maxToolCalls"] as const) {
+    for (const value of [NaN, Infinity, 0, -1, 1.5]) {
+      assert.throws(() => new Guest("async () => null", [], {[key]: value}), TypeError);
+    }
+  }
+});
+
 const demoProgram = `async tools => {
   const completionOrder = [];
   const branches = ["a", "b"].map(async key => {

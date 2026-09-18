@@ -98,10 +98,19 @@ Provider-executed tools are rejected: tools must pass through the Restate dispat
 Truncation, refusal, malformed calls, duplicate IDs, and ambiguous batches fail
 before tools dispatch. No implicit fallback model is chosen.
 
+GPT-5.6 Chat Completions requests with tools default to `reasoning_effort: "none"`
+to avoid the default Luna model's tool/reasoning compatibility error. Explicit
+`settings.reasoning_effort` values are preserved. Reasoning with Luna's tools requires
+the Responses API; this adapter uses Chat Completions. Permanent OpenAI request/authentication
+errors fail immediately; transport failures, rate limits, and server errors retain
+the configured Restate retry policy.
+
 Pass `output: z.object({...})` to request typed structured output. Invalid final
 candidates produce repair observations and consume the existing step budget.
-The final value is validated again after output policies. JSON-compatible schemas
-and synchronous validation are required; put asynchronous checks in generators.
+The final value is validated again after output policies. Schemas must be representable
+as JSON Schema and use synchronous validation. Output transforms are rejected when
+defining the agent because they could change the value twice; put normalization
+in `afterRun` and asynchronous checks in generators.
 
 ## Tool execution, policies, and approvals
 
@@ -114,10 +123,13 @@ Every direct or nested tool call uses the same dispatcher:
 
 A policy returns `true`/`undefined` to allow, or `false`/a reason string to deny.
 Tool denials become observations the model can handle. `beforeRun` runs before
-compaction or inference; `beforeStep` sees each request; `afterRun` can reject or
-rewrite the final result. The runtime owns protocol history and stores the guarded
-answer. Steering received while an asynchronous output policy runs triggers
-replanning before that candidate is published.
+compaction or inference; root and active-agent `beforeStep` policies see each request.
+`afterRun` can reject or rewrite output. Status, step count, stop reason, and history
+belong to the runtime; changing lifecycle metadata is rejected. The candidate stays
+outside persisted history until the output policy accepts it. Steering received while
+an asynchronous output policy runs triggers replanning before publication. A late
+application interruption after acceptance does not revoke that completed result;
+native Restate invocation cancellation still propagates.
 
 `tool({... *execute() {...}})` composes directly with Restate state, sleeps,
 signals, calls, and spawned tasks. Put ordinary network I/O in `restate.run`.
@@ -149,13 +161,13 @@ protocol acknowledgment. Its eventual result arrives as a separate runtime
 observation. The run cannot declare completion while work remains pending. This
 prevents background results and approvals from being silently abandoned.
 
-| Control                         | Behavior                                                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `steeringSignal`                | Repeated string signals add instructions to the running task. A stale model answer is discarded; completed tool effects are retained. |
-| `interruptSignal`               | One string signal stops planning, interrupts current work, joins cleanup, and returns `status: "interrupted"`.                        |
-| `cancelOperationTool()`         | Cancels one pending operation while allowing the run to continue.                                                                     |
-| Restate invocation cancellation | Propagates cancellation; it is not converted into successful completion.                                                              |
-| `stream.close()`                | Interrupts and joins the streamed run.                                                                                                |
+| Control                         | Behavior                                                                                                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `steeringSignal`                | Repeated string signals update the running task. Stale answers and tool plans are discarded before dispatch; effects of already-started tools are retained. |
+| `interruptSignal`               | One string signal stops planning, interrupts current work, joins cleanup, and returns `status: "interrupted"`.                                              |
+| `cancelOperationTool()`         | Cancels one pending operation while allowing the run to continue.                                                                                           |
+| Restate invocation cancellation | Propagates cancellation; it is not converted into successful completion.                                                                                    |
+| `stream.close()`                | Interrupts and joins the streamed run.                                                                                                                      |
 
 Alternatively supply `controls: {steering: () => future, interrupt: future}` to
 compose with your own Restate futures. Built-in durable helpers include
@@ -170,7 +182,7 @@ it is separate from the planning budget. A failed summary returns honest fallbac
 text. Native invocation cancellation still propagates.
 
 `handoff(specialist)` is a foreground tool that switches model, instructions, and
-catalog after its batch settles. History, context, root tool policies, final output
+catalog after its batch settles. History, context, root step/tool policies, final output
 policy, and budgets continue. Existing background tasks keep their launching
 catalog. Run-specific tools are not implicitly copied into the specialist.
 Nested/programmatic handoffs are rejected. The root owns run-level policies;
@@ -295,7 +307,7 @@ Set `OPENAI_API_KEY` and optionally `AGENT_MODEL` before invoking a model-backed
 pnpm typecheck
 pnpm test
 pnpm build
-ppnpm test:integration   # requires a running Docker daemon; temporary Restate container
+pnpm test:integration   # requires a running Docker daemon; temporary Restate container
 pnpm dev
 # Register/rediscover http://localhost:9080 with your Restate server.
 curl localhost:8080/AiSession/example/doTurn/send --json '{"message":"Find ticket A and ask the specialist to close it"}'
@@ -311,6 +323,11 @@ The suites exercise real coroutine scheduling, complete/partial journals, mock
 provider/MCP protocols, and an actual Restate server with forced replay. They make
 no paid model or remote MCP calls. Provider credentials, real server compatibility,
 and the host's authorization/delivery setup require deployment-specific validation.
+
+The [examples guide](../packages/examples/README.md) also covers a research report
+with parallel RPC workers, a typed evaluator-optimizer loop, and racing agents
+with cancellation cleanup. Their factories accept a `Model` for credential-free
+testing; the default exports use the shared example model.
 
 Completed journaled effects are reused on replay. An external effect can repeat
 if its result was not committed: use stable idempotency keys for mutations. Keep

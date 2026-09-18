@@ -28,25 +28,20 @@ import type {
   AgentEvent,
   AgentOptions,
   AgentRuntime,
-  AgentUpdate,
   Message,
   RunContext,
   RunOptions,
   RunResult,
-  Tool,
   ToolCall,
   ToolContext,
   ToolResult,
 } from "./types.js";
-import {createToolSearch} from "./tool-search.js";
+import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
+import {streamRun} from "./agent-stream.js";
 import {history, jsonSchema, modelResponse} from "./validation.js";
+import {positiveInteger as limit} from "./limits.js";
 
-function limit(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value < 1)
-    throw new TypeError(`${name} must be a positive safe integer`);
-  return value;
-}
-type Entry = {call: ToolCall; step: number; task: Task<ToolResult>; result?: ToolResult};
+type Entry = {call: ToolCall; background: boolean; task: Task<ToolResult>; result?: ToolResult};
 
 /** Embeddable task loop. Definitions are reusable; every mutable object is run-local. */
 export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): Agent<C, O> {
@@ -54,7 +49,9 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   const maxToolCalls = limit(options.maxToolCalls ?? 128, "maxToolCalls");
   const maxToolDepth = limit(options.maxToolDepth ?? 16, "maxToolDepth");
   const maxOutputTokens = limit(options.maxOutputTokens ?? 4096, "maxOutputTokens");
-  const outputSchema = options.output ? z.toJSONSchema(options.output, {io: "input"}) : undefined;
+  // Output policies receive parsed values and validation runs again afterward.
+  // Requiring a representable output schema rejects transforms that would run twice.
+  const outputSchema = options.output ? z.toJSONSchema(options.output) : undefined;
   const maxOutputChars = limit(options.maxOutputChars ?? 128000, "maxOutputChars");
 
   function* run(input: string, runOptions?: RunOptions<C>): Operation<RunResult<O>> {
@@ -78,33 +75,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     }
     messages.push({role: "user", content: input});
     let active: AgentRuntime<C> = options;
-    function catalog(definition: AgentRuntime<C>, extra: Record<string, Tool<C>> = {}) {
-      const registry = new Map(Object.entries(definition.tools ?? {}));
-      for (const [name, tool] of Object.entries(extra)) {
-        if (registry.has(name)) throw new TypeError(`Duplicate tool name: ${name}`);
-        registry.set(name, tool);
-      }
-      const manifests = [...registry].map(([name, tool]) => {
-        if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) throw new TypeError(`Invalid tool name: ${name}`);
-        if (tool.handoff && tool.background)
-          throw new TypeError(`Handoff tool must be foreground: ${name}`);
-        return {
-          name,
-          description: tool.description,
-          inputSchema: structuredClone(tool.inputSchema),
-        };
-      });
-      return {
-        registry,
-        manifests,
-        hasSearch: [...registry.values()].some((t) => t.search),
-        search: createToolSearch(
-          manifests.filter((m) => !registry.get(m.name)?.search),
-          new Map([...registry].map(([name, t]) => [name, t.provider ?? "builtin"])),
-        ),
-      };
-    }
-    let current = catalog(active, runOptions?.tools);
+    let current = createToolCatalog(active.tools, runOptions?.tools);
     const context: RunContext<C> = {
       context: runOptions?.context as C,
       invocationId: handlerRequest().id,
@@ -211,7 +182,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       call: ToolCall,
       callStep: number,
       owner: AgentRuntime<C>,
-      registry: typeof current,
+      registry: ToolCatalog<C>,
       depth = 0,
     ): Operation<ToolResult> {
       if (++calls > maxToolCalls) throw new AgentLimitError("Maximum tool calls exceeded");
@@ -305,19 +276,21 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       }
     }
     function start(call: ToolCall): Entry {
-      const callStep = step,
-        owner = active,
-        registry = current;
-      const entry = {call, step: callStep} as Entry;
-      entry.task = track(
-        (function* () {
-          yield* update({type: "tool-start", step: callStep, call});
-          const result = yield* executeCall(call, callStep, owner, registry);
-          yield* update({type: "tool-end", step: callStep, call, result});
-          entry.result = result;
-          return result;
-        })(),
-      );
+      const callStep = step;
+      const owner = active;
+      const registry = current;
+      function* invokeTool(): Operation<ToolResult> {
+        yield* update({type: "tool-start", step: callStep, call});
+        const result = yield* executeCall(call, callStep, owner, registry);
+        yield* update({type: "tool-end", step: callStep, call, result});
+        entry.result = result;
+        return result;
+      }
+      const entry: Entry = {
+        call,
+        background: registry.registry.get(call.name)?.background ?? false,
+        task: track(invokeTool()),
+      };
       return entry;
     }
     function commitBatch(reason?: string) {
@@ -327,7 +300,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           role: "tool",
           callId: entry.call.id,
           name: entry.call.name,
-          result: current.registry.get(entry.call.name)?.background
+          result: entry.background
             ? {status: "pending", operationId: entry.call.id}
             : (entry.result ?? {status: "cancelled", message: reason ?? "Run stopped"}),
         })),
@@ -372,17 +345,35 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           text = `The run stopped (${result.reason}); a final summary could not be generated.`;
         }
         result = {...result, output: text};
-        messages.push({role: "assistant", content: text});
       }
       const beforeGuard = revision;
       if (options.afterRun) {
-        const guarded = track(options.afterRun(structuredClone(result), context));
-        result = (yield* ready({guard: guarded})).value as RunResult<O>;
+        // Policies see the candidate, but it is not part of committed history.
+        const candidate = structuredClone(result);
+        if (candidate.output !== undefined)
+          candidate.messages.push({
+            role: "assistant",
+            content:
+              typeof candidate.output === "string"
+                ? candidate.output
+                : JSON.stringify(candidate.output),
+          });
+        const guarded = track(options.afterRun(candidate, context));
+        yield* ready({guard: guarded});
+        const next = yield* guarded;
+        if (
+          next.status !== result.status ||
+          next.steps !== result.steps ||
+          ("reason" in result && (!("reason" in next) || next.reason !== result.reason))
+        )
+          throw new GuardrailError(
+            "afterRun may rewrite output, but not run status, steps, or reason",
+          );
+        result = next;
       }
       if (result.status === "completed" && (steering.length || revision !== beforeGuard)) {
         // Steering may arrive while a generator output policy is awaiting I/O.
-        // The candidate has not been published; remove it before replanning.
-        messages.pop();
+        // The candidate has not been published; replan against the new input.
         yield* drainSteering();
         flush();
         return undefined;
@@ -394,12 +385,16 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       const output = result.output === undefined ? undefined : jsonSchema.parse(result.output);
       if (output !== undefined && JSON.stringify(output).length > maxOutputChars)
         throw new AgentLimitError("Final output exceeds maxOutputChars");
-      // Future turns must see the same guarded answer returned to the caller.
-      // Hooks can rewrite output, but the runtime owns protocol history.
+      // From this point the answer is accepted. A late application interrupt
+      // must not turn publication/cleanup into a second finalization attempt.
+      stopping = true;
+      // Commit only the accepted output. An interrupted policy cannot leak its
+      // candidate, and policy-provided stopped summaries get their own message.
       if (output !== undefined) {
-        const last = messages.at(-1);
-        if (last?.role === "assistant" && !last.calls?.length)
-          last.content = typeof output === "string" ? output : JSON.stringify(output);
+        messages.push({
+          role: "assistant",
+          content: typeof output === "string" ? output : JSON.stringify(output),
+        });
       }
       result = {...result, messages: structuredClone(messages)};
       yield* save();
@@ -442,19 +437,16 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
             maxOutputTokens,
             step,
             messages: structuredClone(messages),
-            tools: structuredClone(
-              current.manifests.filter(
-                (t) =>
-                  !current.hasSearch ||
-                  !current.registry.get(t.name)?.deferred ||
-                  current.search.loaded.has(t.name),
-              ),
-            ),
+            tools: current.visibleManifests(),
           };
-          const blocked = active.beforeStep
-            ? denial(yield* active.beforeStep(request, context))
+          const blocked = options.beforeStep
+            ? denial(yield* options.beforeStep(request, context))
             : undefined;
           if (blocked !== undefined) throw new GuardrailError(blocked);
+          if (active !== options && active.beforeStep) {
+            const blocked = denial(yield* active.beforeStep(request, context));
+            if (blocked !== undefined) throw new GuardrailError(blocked);
+          }
           yield* update({type: "step-start", step});
           const atRequest = revision;
           const modelTask = track(active.model(request));
@@ -467,9 +459,14 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
             yield* update({type: "model-chunk", step, chunk});
           if ((action.text?.length ?? 0) > maxOutputChars)
             throw new AgentLimitError("Model output exceeds maxOutputChars");
+          // A new steering message or background outcome invalidates the whole
+          // plan, including calls that would cause side effects. Already-started
+          // tool batches are allowed to settle and retain their results.
+          yield* drainSteering();
+          collect();
+          if (revision !== atRequest) continue;
           if (action.type === "final") {
             flush();
-            if (revision !== atRequest) continue; // Discard a stale answer after steering/completion.
             if (pending.size) {
               if (step < maxSteps) yield* ready({});
               continue;
@@ -501,7 +498,6 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
               if (action.validationError) throw new ModelProtocolError(action.validationError);
               output = action.text as O;
             }
-            messages.push({role: "assistant", content: action.text});
             const finished = yield* finish({status: "completed", output, steps: step, messages});
             if (finished) return finished;
             continue;
@@ -524,8 +520,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           batch = action.calls.map(start);
           const foreground = new Map<string, Future<unknown>>();
           for (const entry of batch) {
-            if (current.registry.get(entry.call.name)?.background)
-              pending.set(entry.call.id, entry);
+            if (entry.background) pending.set(entry.call.id, entry);
             else foreground.set(`tool:${entry.call.id}`, entry.task);
           }
           for (const entry of batch)
@@ -549,7 +544,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
           if (transferred) {
             const from = active.name ?? "agent";
             active = current.registry.get(transfer.name)!.handoff!();
-            current = catalog(active);
+            current = createToolCatalog(active.tools);
             yield* update({type: "handoff", step, from, to: active.name ?? "agent"});
           }
         }
@@ -630,43 +625,15 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       input: string,
       runOptions?: RunOptions<C>,
     ): Operation<import("./types.js").AgentStream<O>> {
-      const queue: AgentUpdate[] = [];
-      let ready = channel<void>(),
-        done = false;
-      const result = spawn(
-        (function* () {
-          try {
-            return yield* run(input, {
-              ...runOptions,
-              *onUpdate(event, context) {
-                if (runOptions?.onUpdate) yield* runOptions.onUpdate(event, context);
-                if (queue.length >= 4096)
-                  throw new AgentLimitError("Stream buffer full; consume next() while running");
-                queue.push(event);
-                yield* ready.send();
-              },
-            } as RunOptions<C>);
-          } finally {
-            done = true;
-            yield* ready.send();
-          }
-        })(),
+      return yield* streamRun((emit) =>
+        run(input, {
+          ...runOptions,
+          *onUpdate(event, context) {
+            if (runOptions?.onUpdate) yield* runOptions.onUpdate(structuredClone(event), context);
+            yield* emit(event);
+          },
+        } as RunOptions<C>),
       );
-      return {
-        result,
-        *next() {
-          while (!queue.length && !done) yield* ready.receive;
-          const value = queue.shift();
-          if (!queue.length) ready = channel<void>();
-          if (value) return {done: false, value};
-          yield* result;
-          return {done: true, value: undefined};
-        },
-        *close() {
-          result.interrupt(new InterruptedError("Agent stream closed"));
-          yield* allSettled([result]);
-        },
-      };
     },
   };
 }

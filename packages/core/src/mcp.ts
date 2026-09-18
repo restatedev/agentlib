@@ -13,6 +13,7 @@ import {z} from "zod";
 import {ToolError} from "./errors.js";
 import {tool} from "./tool.js";
 import type {Tool} from "./types.js";
+import {positiveInteger} from "./limits.js";
 
 export type McpOptions = {
   url: string;
@@ -46,7 +47,7 @@ export function* mcpTools<C = unknown>(
 }> {
   if (!/^[a-zA-Z0-9_-]{1,24}$/.test(options.namespace))
     throw new TerminalError("Invalid MCP namespace");
-  const timeout = options.timeoutMs ?? 60000;
+  const timeout = positiveInteger(options.timeoutMs ?? 60000, "timeoutMs");
   const endpoint = new URL(options.url);
   if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password)
     throw new TerminalError("MCP requires an HTTP(S) URL without embedded credentials");
@@ -139,54 +140,57 @@ export function* mcpTools<C = unknown>(
       await client.close();
     }
   });
-  const tools: Record<string, Tool<C>> = {};
+  const tools = new Map<string, Tool<C>>();
   for (const definition of catalog.tools) {
     if (options.allow && !options.allow(definition.name)) continue;
     const original = `${options.namespace}_${definition.name}`;
     const name = /^[a-zA-Z0-9_-]{1,64}$/.test(original)
       ? original
       : `${original.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 51)}_${createHash("sha256").update(original).digest("hex").slice(0, 12)}`;
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name) || Object.hasOwn(tools, name))
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name) || tools.has(name))
       throw new TerminalError(`Invalid or duplicate MCP tool name: ${name}`);
     if (JSON.stringify(definition.inputSchema).length > 64000)
       throw new TerminalError("MCP input schema too large");
-    tools[name] = tool({
-      description: definition.description?.slice(0, 4000) ?? `Call ${definition.name}`,
-      provider: options.namespace,
-      deferred: options.deferred ?? true,
-      input: z.fromJSONSchema(definition.inputSchema as Parameters<typeof z.fromJSONSchema>[0]),
-      *execute(input, context) {
-        const result = yield* authorized(`mcp-${name}`, async (token, signal) => {
-          const {client} = await connect(token, signal, catalog.session, catalog.prior);
-          try {
-            return await client.callTool(
-              {
-                name: definition.name,
-                arguments: input as Record<string, unknown>,
-              },
-              {
-                signal,
-                timeout,
-                maxTotalTimeout: timeout,
-                toolDefinition: definition,
-                headers: {
-                  "Idempotency-Key": `${context.invocationId}:${context.name}:${context.callId}`,
+    tools.set(
+      name,
+      tool({
+        description: definition.description?.slice(0, 4000) ?? `Call ${definition.name}`,
+        provider: options.namespace,
+        deferred: options.deferred ?? true,
+        input: z.fromJSONSchema(definition.inputSchema as Parameters<typeof z.fromJSONSchema>[0]),
+        *execute(input, context) {
+          const result = yield* authorized(`mcp-${name}`, async (token, signal) => {
+            const {client} = await connect(token, signal, catalog.session, catalog.prior);
+            try {
+              return await client.callTool(
+                {
+                  name: definition.name,
+                  arguments: input as Record<string, unknown>,
                 },
-              },
-            );
-          } finally {
-            await client.close();
-          }
-        });
-        if (JSON.stringify(result).length > 128000)
-          throw new ToolError("MCP result exceeds 128000 characters", "output_limit");
-        if (result.isError) throw new ToolError(JSON.stringify(result));
-        return JSON.parse(JSON.stringify(result));
-      },
-    });
+                {
+                  signal,
+                  timeout,
+                  maxTotalTimeout: timeout,
+                  toolDefinition: definition,
+                  headers: {
+                    "Idempotency-Key": `${context.invocationId}:${context.name}:${context.callId}`,
+                  },
+                },
+              );
+            } finally {
+              await client.close();
+            }
+          });
+          if (JSON.stringify(result).length > 128000)
+            throw new ToolError("MCP result exceeds 128000 characters", "output_limit");
+          if (result.isError) throw new ToolError(JSON.stringify(result));
+          return JSON.parse(JSON.stringify(result));
+        },
+      }),
+    );
   }
   return {
-    tools,
+    tools: Object.fromEntries(tools),
     *close() {
       if (!catalog.session.id) return;
       yield* authorized(`mcp-${options.namespace}-close`, async (token, signal) => {

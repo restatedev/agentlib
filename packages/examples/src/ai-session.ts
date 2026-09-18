@@ -11,12 +11,11 @@ import {
   type AgentUpdate,
   type ApprovalRequest,
 } from "@restate-agents/core";
-import {openAIModel} from "@restate-agents/core/openai";
 import {mcpTools} from "@restate-agents/core/mcp";
 import {programTool} from "@restate-agents/core/program";
+import {exampleModel as model} from "./shared.js";
 
 type SessionContext = {sessionKey: string};
-const model = openAIModel({model: process.env.AGENT_MODEL ?? "gpt-5.6-luna"});
 const lookupTicket = tool({
   description:
     "Look up a demo support ticket. This example does not connect to a ticketing system.",

@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import {TerminalError} from "@restatedev/restate-sdk";
 import type {
   ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
@@ -12,6 +13,8 @@ export type OpenAIModelOptions = {
   model: string;
   client?: OpenAI;
   retry?: RetryOptions;
+  /** GPT-5.6 Chat Completions tool requests default to reasoning_effort: "none".
+   * Explicit settings are preserved; use Responses for reasoning with tools. */
   settings?: Pick<
     ChatCompletionCreateParamsNonStreaming,
     "temperature" | "max_completion_tokens" | "reasoning_effort" | "verbosity" | "service_tier"
@@ -27,31 +30,53 @@ export function openAIModel(options: OpenAIModelOptions): Model {
   return journaledModel(
     async (request, {signal}) => {
       client ??= new OpenAI();
-      const completion = await client.chat.completions.create(
-        {
-          ...parameters,
-          model,
-          max_completion_tokens: parameters.max_completion_tokens ?? request.maxOutputTokens,
-          ...(request.outputSchema
-            ? {
-                response_format: {
-                  type: "json_schema" as const,
-                  json_schema: {name: "agent_output", schema: request.outputSchema, strict: false},
-                },
-              }
-            : {}),
-          messages: render(request),
-          ...(request.tools.length
-            ? {
-                tools: request.tools.map(({name, description, inputSchema}) => ({
-                  type: "function" as const,
-                  function: {name, description, parameters: inputSchema, strict: false},
-                })),
-              }
-            : {}),
-        },
-        {signal, maxRetries: 0},
-      ); // Restate owns retries; avoid stacked retry loops.
+      const completion = await client.chat.completions
+        .create(
+          {
+            ...parameters,
+            model,
+            ...(request.tools.length && /^gpt-5\.6(?:$|-)/.test(model)
+              ? {reasoning_effort: parameters.reasoning_effort ?? "none"}
+              : {}),
+            max_completion_tokens: parameters.max_completion_tokens ?? request.maxOutputTokens,
+            ...(request.outputSchema
+              ? {
+                  response_format: {
+                    type: "json_schema" as const,
+                    json_schema: {
+                      name: "agent_output",
+                      schema: request.outputSchema,
+                      strict: false,
+                    },
+                  },
+                }
+              : {}),
+            messages: render(request),
+            ...(request.tools.length
+              ? {
+                  tools: request.tools.map(({name, description, inputSchema}) => ({
+                    type: "function" as const,
+                    function: {name, description, parameters: inputSchema, strict: false},
+                  })),
+                }
+              : {}),
+          },
+          {signal, maxRetries: 0},
+        )
+        .catch((error: unknown) => {
+          // Restate owns retries, but invalid requests/credentials do not improve
+          // on retry. Keep connection failures, rate limits and server errors retryable.
+          if (
+            error instanceof OpenAI.APIError &&
+            error.status !== undefined &&
+            error.status >= 400 &&
+            error.status < 500 &&
+            ![408, 409, 429].includes(error.status)
+          ) {
+            throw new TerminalError(error.message);
+          }
+          throw error;
+        });
 
       const choice = completion.choices[0];
       if (!choice || !["stop", "tool_calls"].includes(choice.finish_reason)) {

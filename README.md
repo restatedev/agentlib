@@ -11,11 +11,11 @@ See the [embedding guide](docs/embedded-sdk.md) and [feature coverage](docs/sdk-
 
 ## Workspace
 
-| Package                                         | Purpose                                                                       |
-| ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`@restate-agents/core`](packages/core)         | SDK and optional model, MCP, PTC, discovery, search, and telemetry adapters   |
-| [`@restate-agents/examples`](packages/examples) | Application-owned `AiSession` Virtual Object and runnable endpoint            |
-| [`@restate-agents/tests`](packages/tests)       | Unit/replay tests, public API type checks, and real Restate integration tests |
+| Package                                         | Purpose                                                                                  |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [`@restate-agents/core`](packages/core)         | SDK and optional model, MCP, PTC, discovery, search, and telemetry adapters              |
+| [`@restate-agents/examples`](packages/examples) | Support session, parallel research, evaluator loop, racing agents, and runnable endpoint |
+| [`@restate-agents/tests`](packages/tests)       | Unit/replay tests, public API type checks, and real Restate integration tests            |
 
 The workspace uses **pnpm 11.19.0** and **TypeScript 7.0.2**, the latest stable
 TypeScript release verified against the registry on 2026-09-18. Packages are private;
@@ -59,7 +59,7 @@ child-call cancellation, PTC, gateways, discovery, and persisted compaction.
 Provider and MCP fixtures need no paid credentials. The in-process journal harness
 is retained for targeted protocol regression tests.
 
-## Run the example
+## Run the examples
 
 Start a Restate server, then:
 
@@ -78,3 +78,20 @@ ticket operations are demonstrations; no external tickets are changed. Optional
 MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`. See
 [`ai-session.ts`](packages/examples/src/ai-session.ts) and the
 [control examples](docs/embedded-sdk.md#runnable-examples-and-validation).
+
+The same endpoint registers three additional examples adapted from
+[Restate's AI examples](https://github.com/restatedev/ai-examples):
+
+| Example                   | What it demonstrates                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ResearchReport/generate` | Structured planning, parallel worker RPCs, context-backed source tools, citation guards, synthesis |
+| `CodeReview/generate`     | Typed generation and evaluation, feedback across iterations, bounded work, explicit exhaustion     |
+| `RacingAgents/answer`     | Concurrent embedded runs, first successful answer, cancellation and cleanup of the loser           |
+
+See the [example commands and source references](packages/examples/README.md).
+The [self-review](docs/self-review.md) records corrected defects and design decisions.
+
+The Chat Completions adapter sends `reasoning_effort: "none"` by default for GPT-5.6
+requests with tools, avoiding the model's tool/reasoning compatibility error.
+After updating the SDK, restart `pnpm dev` (or run `pnpm build` and restart
+`pnpm start`). Rediscover the endpoint to register the new example services.

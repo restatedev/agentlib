@@ -89,6 +89,73 @@ void test("defining the optional adapter does not require credentials", () => {
   assert.equal(typeof openAIModel({model: "test-model"}), "function");
 });
 
+void test("GPT-5.6 tools use a compatible reasoning default without overriding explicit settings", async () => {
+  for (const fixture of [
+    {model: "gpt-5.6-luna", tools: true, expected: "none"},
+    {model: "gpt-5.6-luna-2026-07-09", tools: true, expected: "none"},
+    {model: "gpt-5.6-luna", tools: false, expected: undefined},
+    {model: "test-model", tools: true, expected: undefined},
+    {model: "gpt-5.6-luna", tools: true, explicit: "low" as const, expected: "low"},
+  ]) {
+    let requests = 0;
+    const client = new OpenAI({
+      apiKey: "test-only",
+      fetch: async (_url, init) => {
+        assert.equal(typeof init?.body, "string");
+        const body = JSON.parse(init!.body as string);
+        assert.equal(body.reasoning_effort, fixture.expected);
+        requests++;
+        return Response.json({choices: [{finish_reason: "stop", message: {content: "ready"}}]});
+      },
+    });
+    const model = openAIModel({
+      client,
+      model: fixture.model,
+      settings: {reasoning_effort: fixture.explicit},
+    });
+    await runHandler((ctx) =>
+      execute(
+        ctx,
+        model({
+          messages: [{role: "user", content: "hello"}],
+          tools: fixture.tools
+            ? [{name: "lookup", description: "lookup", inputSchema: {type: "object"}}]
+            : [],
+        }),
+      ),
+    );
+    assert.equal(requests, 1);
+  }
+});
+
+void test("permanent OpenAI errors fail once and replay without HTTP", async () => {
+  let requests = 0;
+  const client = new OpenAI({
+    apiKey: "test-only",
+    fetch: async () => {
+      requests++;
+      return Response.json(
+        {error: {message: "Function tools with reasoning_effort are not supported"}},
+        {status: 400},
+      );
+    },
+  });
+  const a = agent({model: openAIModel({client, model: "gpt-5.6-luna"})});
+  const handler = async (ctx: Parameters<typeof execute>[0]) => {
+    try {
+      return await execute(ctx, a.run("hello"));
+    } catch (error) {
+      return {error: String(error)};
+    }
+  };
+  const live = await runHandler(handler);
+  assert.match(live.output.error, /Function tools/);
+  assert.equal(requests, 1);
+  const replay = await runHandler(handler, {replay: live.journal});
+  assert.deepEqual(replay.output, live.output);
+  assert.equal(requests, 1);
+});
+
 void test(
   "malformed or truncated model responses never execute a tool",
   {timeout: 5000},

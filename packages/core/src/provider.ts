@@ -66,6 +66,21 @@ function messages(request: ModelRequest): ModelMessage[] {
     };
   });
 }
+
+function toolCalls(
+  calls: readonly {
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+    providerExecuted?: boolean;
+  }[],
+): ToolCall[] {
+  return calls.map((call) => {
+    if (call.providerExecuted)
+      throw new ModelProtocolError("Provider-executed tools are not supported by this executor");
+    return {id: call.toolCallId, name: call.toolName, input: jsonSchema.parse(call.input)};
+  });
+}
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */
 export function aiModel(options: ProviderOptions): Model {
   return journaledModel(
@@ -109,13 +124,7 @@ export function aiModel(options: ProviderOptions): Model {
             finishReason = await result.finishReason;
             finished(finishReason);
             text = await result.text;
-            calls = (await result.toolCalls).map((c) => {
-              if (c.providerExecuted)
-                throw new ModelProtocolError(
-                  "Provider-executed tools are not supported by this executor",
-                );
-              return {id: c.toolCallId, name: c.toolName, input: jsonSchema.parse(c.input)};
-            });
+            calls = toolCalls(await result.toolCalls);
             output = request.outputSchema && !calls.length ? await result.output : undefined;
             await options.onChunk?.({type: "finish"}, info);
           } else {
@@ -123,13 +132,7 @@ export function aiModel(options: ProviderOptions): Model {
             finishReason = result.finishReason;
             finished(finishReason);
             text = result.text;
-            calls = result.toolCalls.map((c) => {
-              if (c.providerExecuted)
-                throw new ModelProtocolError(
-                  "Provider-executed tools are not supported by this executor",
-                );
-              return {id: c.toolCallId, name: c.toolName, input: jsonSchema.parse(c.input)};
-            });
+            calls = toolCalls(result.toolCalls);
             output = request.outputSchema && !calls.length ? result.output : undefined;
           }
           if (finishReason === "tool-calls" && !calls.length)

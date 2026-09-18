@@ -117,6 +117,7 @@ export type RunOptions<Context> = {
   tools?: Record<string, Tool<Context>>;
 } & (undefined extends Context ? {context?: Context} : {context: Context});
 export type AgentOptions<Context, Output = string> = {
+  /** JSON-Schema-representable output validation; transforms are not supported. */
   output?: z.ZodType<Output>;
   maxOutputTokens?: number;
   name?: string;
@@ -135,6 +136,7 @@ export type AgentOptions<Context, Output = string> = {
   beforeStep?(request: ModelRequest, context: RunContext<Context>): Operation<GuardrailResult>;
   beforeTool?(call: ToolCall, context: ToolContext<Context>): Operation<GuardrailResult>;
   afterTool?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
+  /** May reject or rewrite output. Status, steps, reason and history belong to the runtime. */
   afterRun?(result: RunResult<Output>, context: RunContext<Context>): Operation<RunResult<Output>>;
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
   onUpdate?: UpdateHandler<Context>;

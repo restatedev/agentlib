@@ -7,6 +7,18 @@
     "./session": {
       "types": "./dist/ai-session.d.ts",
       "import": "./dist/ai-session.js"
+    },
+    "./research-report": {
+      "types": "./dist/research-report.d.ts",
+      "import": "./dist/research-report.js"
+    },
+    "./evaluator-optimizer": {
+      "types": "./dist/evaluator-optimizer.d.ts",
+      "import": "./dist/evaluator-optimizer.js"
+    },
+    "./racing-agents": {
+      "types": "./dist/racing-agents.d.ts",
+      "import": "./dist/racing-agents.js"
     }
   },
   "scripts": {

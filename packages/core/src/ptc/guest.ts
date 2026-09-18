@@ -1,6 +1,7 @@
 // Adapted from the deterministic QuickJS handoff. Only the host scheduler may
 // deliver tool completions; asynchronous tool bodies never touch this runtime.
 import variant from "@jitl/quickjs-singlefile-cjs-release-sync";
+import {positiveInteger} from "../limits.js";
 import {
   newQuickJSWASMModuleFromVariant,
   type QuickJSContext,
@@ -45,13 +46,18 @@ export class Guest {
   constructor(source: string, toolNames: string[], limits: GuestLimits = {}) {
     if (source.length > MAX_SOURCE_LENGTH)
       throw new ProgramError("Program source exceeds 64,000 characters");
-    this.maxJobsPerDrain = limits.maxJobsPerDrain ?? 10_000;
+    this.maxJobsPerDrain = positiveInteger(limits.maxJobsPerDrain ?? 10_000, "maxJobsPerDrain");
+    const maxInterruptChecks = positiveInteger(
+      limits.maxInterruptChecks ?? 10_000,
+      "maxInterruptChecks",
+    );
+    const maxToolCalls = positiveInteger(limits.maxToolCalls ?? 128, "maxToolCalls");
     this.rt = engine.newRuntime();
     this.rt.setMemoryLimit(32 * 1024 * 1024);
     this.rt.setMaxStackSize(512 * 1024);
     let interruptChecks = 0;
     this.rt.setInterruptHandler(() => {
-      if (++interruptChecks > (limits.maxInterruptChecks ?? 10_000)) this.budgetExceeded = true;
+      if (++interruptChecks > maxInterruptChecks) this.budgetExceeded = true;
       return this.budgetExceeded;
     });
     try {
@@ -86,7 +92,7 @@ export class Guest {
         let snapshot = '{"status":"pending"}';
         const tools = Object.freeze(Object.assign(Object.create(null), Object.fromEntries(
           ${JSON.stringify(toolNames)}.map(name => [name, (...args) => new NativePromise((resolve, reject) => {
-            if (sequence >= ${limits.maxToolCalls ?? 128}) throw new GuestError("Program tool-call limit exceeded (128 calls)");
+            if (sequence >= ${maxToolCalls}) throw new GuestError("Program tool-call limit exceeded (${maxToolCalls} calls)");
             const id = "call-" + sequence++;
             const encoded = stringify(args);
             set(id, {resolve, reject});

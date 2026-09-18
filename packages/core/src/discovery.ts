@@ -69,14 +69,17 @@ export function* restateTools<C = unknown>(
     },
     {name: "discover-restate-tools", retry: {maxAttempts: 3}},
   );
-  const reserved = new Set(options.reservedNames ?? []),
-    tools: Record<string, Tool<C>> = {},
-    warnings: string[] = [];
+  const reserved = new Set(options.reservedNames ?? []);
+  const tools = new Map<string, Tool<C>>();
+  const warnings: string[] = [];
   const handlers = catalog.services
     .flatMap((service) => service.handlers.map((handler) => ({service, handler})))
-    .sort((a, b) =>
-      `${a.service.name}/${a.handler.name}`.localeCompare(`${b.service.name}/${b.handler.name}`),
-    );
+    .sort((a, b) => {
+      // Catalog ordering must not depend on the endpoint machine's locale.
+      const left = `${a.service.name}/${a.handler.name}`;
+      const right = `${b.service.name}/${b.handler.name}`;
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
   for (const {service, handler} of handlers) {
     const name = handler.metadata["restate.dev/agent"]?.trim();
     if (!name) continue;
@@ -125,7 +128,7 @@ export function* restateTools<C = unknown>(
         ...(acceptsInput ? {input: valueSchema} : {}),
       })
       .strict();
-    tools[name] = {
+    tools.set(name, {
       ...tool({
         description: handler.documentation?.trim() || `Call ${target.service}/${target.handler}`,
         input,
@@ -146,8 +149,8 @@ export function* restateTools<C = unknown>(
         },
       }),
       inputSchema: schema,
-    };
+    });
     reserved.add(name);
   }
-  return {tools, warnings};
+  return {tools: Object.fromEntries(tools), warnings};
 }
