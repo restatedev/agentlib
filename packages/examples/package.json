@@ -40,6 +40,10 @@
       "types": "./dist/gensdk/07_racing_agents.d.ts",
       "import": "./dist/gensdk/07_racing_agents.js"
     },
+    "./gensdk/service-tool": {
+      "types": "./dist/gensdk/10_service_tool.d.ts",
+      "import": "./dist/gensdk/10_service_tool.js"
+    },
     "./promise/hello": {
       "types": "./dist/promise/01_hello.d.ts",
       "import": "./dist/promise/01_hello.js"
@@ -67,6 +71,10 @@
     "./promise/evaluator-optimizer": {
       "types": "./dist/promise/05_evaluator_optimizer.d.ts",
       "import": "./dist/promise/05_evaluator_optimizer.js"
+    },
+    "./promise/service-tool": {
+      "types": "./dist/promise/08_service_tool.d.ts",
+      "import": "./dist/promise/08_service_tool.js"
     }
   },
   "scripts": {
@@ -80,8 +88,8 @@
   "dependencies": {
     "@restate-agents/core": "workspace:*",
     "@restate-agents/promise": "workspace:*",
-    "@restatedev/restate-sdk": "^1.17.1",
-    "@restatedev/restate-sdk-gen": "1.17.1",
+    "@restatedev/restate-sdk": "^1.17.2",
+    "@restatedev/restate-sdk-gen": "1.17.2",
     "zod": "^4.6.5"
   }
 }

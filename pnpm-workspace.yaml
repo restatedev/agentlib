@@ -5,3 +5,8 @@ allowBuilds:
   esbuild: false
 minimumReleaseAgeExclude:
   - openai@7.17.0
+  - "@restatedev/restate-sdk-clients@1.17.2"
+  - "@restatedev/restate-sdk-core@1.17.2"
+  - "@restatedev/restate-sdk-gen@1.17.2"
+  - "@restatedev/restate-sdk-testcontainers@1.17.2"
+  - "@restatedev/restate-sdk@1.17.2"

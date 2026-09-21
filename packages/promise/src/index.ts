@@ -1,5 +1,7 @@
 export {agent} from "./agent.js";
 export {tool, asyncTool, handlerTool} from "./tool.js";
+export {serviceTool} from "./service-tool.js";
+export type {ServiceToolOptions, KeyArg} from "@restate-agents/core";
 export type {
   Agent,
   AgentOptions,

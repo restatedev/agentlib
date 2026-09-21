@@ -42,11 +42,11 @@ importers:
         specifier: 1.9.0
         version: 1.9.0
       '@restatedev/restate-sdk':
-        specifier: ^1.17.1
-        version: 1.17.1
+        specifier: ^1.17.2
+        version: 1.17.2
       '@restatedev/restate-sdk-gen':
-        specifier: 1.17.1
-        version: 1.17.1(@restatedev/restate-sdk@1.17.1)
+        specifier: 1.17.2
+        version: 1.17.2(@restatedev/restate-sdk@1.17.2)
       ai:
         specifier: 7.0.26
         version: 7.0.26(zod@4.6.5)
@@ -72,11 +72,11 @@ importers:
         specifier: workspace:*
         version: link:../promise
       '@restatedev/restate-sdk':
-        specifier: ^1.17.1
-        version: 1.17.1
+        specifier: ^1.17.2
+        version: 1.17.2
       '@restatedev/restate-sdk-gen':
-        specifier: 1.17.1
-        version: 1.17.1(@restatedev/restate-sdk@1.17.1)
+        specifier: 1.17.2
+        version: 1.17.2(@restatedev/restate-sdk@1.17.2)
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -87,11 +87,11 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@restatedev/restate-sdk':
-        specifier: ^1.17.1
-        version: 1.17.1
+        specifier: ^1.17.2
+        version: 1.17.2
       '@restatedev/restate-sdk-gen':
-        specifier: 1.17.1
-        version: 1.17.1(@restatedev/restate-sdk@1.17.1)
+        specifier: 1.17.2
+        version: 1.17.2(@restatedev/restate-sdk@1.17.2)
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -111,17 +111,17 @@ importers:
         specifier: workspace:*
         version: link:../promise
       '@restatedev/restate-sdk':
-        specifier: ^1.17.1
-        version: 1.17.1
+        specifier: ^1.17.2
+        version: 1.17.2
       '@restatedev/restate-sdk-clients':
-        specifier: 1.17.1
-        version: 1.17.1
+        specifier: 1.17.2
+        version: 1.17.2
       '@restatedev/restate-sdk-gen':
-        specifier: 1.17.1
-        version: 1.17.1(@restatedev/restate-sdk@1.17.1)
+        specifier: 1.17.2
+        version: 1.17.2(@restatedev/restate-sdk@1.17.2)
       '@restatedev/restate-sdk-testcontainers':
-        specifier: 1.17.1
-        version: 1.17.1(supports-color@7.2.0)
+        specifier: 1.17.2
+        version: 1.17.2(supports-color@7.2.0)
       ai:
         specifier: 7.0.26
         version: 7.0.26(zod@4.6.5)
@@ -312,8 +312,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@grpc/grpc-js@1.14.4':
-    resolution: {integrity: sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ==}
+  '@grpc/grpc-js@1.14.5':
+    resolution: {integrity: sha512-7VZM+SVdEcUUqSQeNI3zM8Qs/BhQKZndPo2h5VkYkAM8Iz0wJIa8mKV5ekQGqG8UUsnkQ0NMxIxwkIHYvj0qOw==}
     engines: {node: '>=12.10.0'}
 
   '@grpc/proto-loader@0.7.15':
@@ -659,22 +659,22 @@ packages:
   '@protobufjs/utf8@1.1.2':
     resolution: {integrity: sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug==}
 
-  '@restatedev/restate-sdk-clients@1.17.1':
-    resolution: {integrity: sha512-MLCv8BjkaCAU9/9YGNkmGnCGX0nDLd4NrDmVTL3gMQwJKWlBF+bdESbziNiAfMVXGwtmstDSgcIrIJTLygCDWA==}
+  '@restatedev/restate-sdk-clients@1.17.2':
+    resolution: {integrity: sha512-dIhTmxKvW3/ulR121+c4jQD3F5sFchgznKbTHeit5kAY8K2KvhlJgJXomySQqxmypGIX+5kmZPxkR12IPOHuCw==}
 
-  '@restatedev/restate-sdk-core@1.17.1':
-    resolution: {integrity: sha512-PtoEDjhNpSJN3Ql6Lt3mNa73ol7YsO7qKoRQgfDPq/uCofxMDEvZKw0kkIXJHs0nStIqMp4tt1gOVfeUhzd9sw==}
+  '@restatedev/restate-sdk-core@1.17.2':
+    resolution: {integrity: sha512-nq3QexkGkKpNjMHfqs7xhqOwtfO+EYXlp5Oe3L/ig1USocmyrif8EdYk2S9UUp+ybDLdwHb1MGlcXe98i/KM4w==}
 
-  '@restatedev/restate-sdk-gen@1.17.1':
-    resolution: {integrity: sha512-o4H7ZNXY3WhK0jTji8OT3yShunPEvt0S6gylQxBrhIdqSDBW92MOC/JOKMXuYAPhBawtwu7Rchtwiav/Fu7oew==}
+  '@restatedev/restate-sdk-gen@1.17.2':
+    resolution: {integrity: sha512-9bt/Sg2V+Nn3yUENfuqJ002+kosPk2WwxbGFzQTk2PUNsq/65R+/13OhxhM5Z54OpAA0bwU7bQpNZOIehoKqhg==}
     peerDependencies:
       '@restatedev/restate-sdk': ^1.15.0
 
-  '@restatedev/restate-sdk-testcontainers@1.17.1':
-    resolution: {integrity: sha512-73QMcKnU3ChSTwm5fZQiH6HYshpx9SsmEu34p1HlkP57OHcMK5tSUBNlNoEmbIPPC6z62uX3GFB9HlbC3Ihm5Q==}
+  '@restatedev/restate-sdk-testcontainers@1.17.2':
+    resolution: {integrity: sha512-4fan5ml7ehZQzkqIagCnacCO0zZCuIsNPA+mBkflJLdgopYu0ppzuCBJcfebAF1rDrUPRzUg0rszLatNGOye3A==}
 
-  '@restatedev/restate-sdk@1.17.1':
-    resolution: {integrity: sha512-ULI2wjw07RtPzOmYl20w+WklSx+RpaMA6+SjAgJzPEuJwVcUKkQelMeE1saoPE0DOc5i8A8SdGWNooDfi+HUaA==}
+  '@restatedev/restate-sdk@1.17.2':
+    resolution: {integrity: sha512-h1mZqFrkvzWNvTYVPA4WnlqwEzL0eg03//8RV0EGrovjePEDm43ec/PbiN1S7HOP6+6eAhEN7yiLFwUJG9A/yg==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -1065,8 +1065,8 @@ packages:
       supports-color:
         optional: true
 
-  docker-compose@1.4.2:
-    resolution: {integrity: sha512-rPHigTKGaEHpkUmfd69QgaOp+Os5vGJwG/Ry8lcr8W/382AmI+z/D7qoa9BybKIkqNppaIbs8RYeHSevdQjWww==}
+  docker-compose@1.5.0:
+    resolution: {integrity: sha512-O+eD6c63+BJORUWddXA7uAlI6H1KLDPd/aS14k73nXYpFliM48C3xrrKB3sXsR1Fp/rHUZQe7+fJ+QA7+jepyw==}
     engines: {node: '>= 6.0.0'}
 
   docker-modem@5.0.7:
@@ -1650,7 +1650,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@grpc/grpc-js@1.14.4':
+  '@grpc/grpc-js@1.14.5':
     dependencies:
       '@grpc/proto-loader': 0.8.1
       '@js-sdsl/ordered-map': 4.4.2
@@ -1863,22 +1863,22 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
-  '@restatedev/restate-sdk-clients@1.17.1':
+  '@restatedev/restate-sdk-clients@1.17.2':
     dependencies:
-      '@restatedev/restate-sdk-core': 1.17.1
+      '@restatedev/restate-sdk-core': 1.17.2
 
-  '@restatedev/restate-sdk-core@1.17.1': {}
+  '@restatedev/restate-sdk-core@1.17.2': {}
 
-  '@restatedev/restate-sdk-gen@1.17.1(@restatedev/restate-sdk@1.17.1)':
+  '@restatedev/restate-sdk-gen@1.17.2(@restatedev/restate-sdk@1.17.2)':
     dependencies:
-      '@restatedev/restate-sdk': 1.17.1
-      '@restatedev/restate-sdk-clients': 1.17.1
-      '@restatedev/restate-sdk-core': 1.17.1
+      '@restatedev/restate-sdk': 1.17.2
+      '@restatedev/restate-sdk-clients': 1.17.2
+      '@restatedev/restate-sdk-core': 1.17.2
 
-  '@restatedev/restate-sdk-testcontainers@1.17.1(supports-color@7.2.0)':
+  '@restatedev/restate-sdk-testcontainers@1.17.2(supports-color@7.2.0)':
     dependencies:
-      '@restatedev/restate-sdk': 1.17.1
-      '@restatedev/restate-sdk-clients': 1.17.1
+      '@restatedev/restate-sdk': 1.17.2
+      '@restatedev/restate-sdk-clients': 1.17.2
       apache-arrow: 18.1.0
       testcontainers: 11.14.0(supports-color@7.2.0)
     transitivePeerDependencies:
@@ -1887,9 +1887,9 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@restatedev/restate-sdk@1.17.1':
+  '@restatedev/restate-sdk@1.17.2':
     dependencies:
-      '@restatedev/restate-sdk-core': 1.17.1
+      '@restatedev/restate-sdk-core': 1.17.2
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -2226,7 +2226,7 @@ snapshots:
     optionalDependencies:
       supports-color: 7.2.0
 
-  docker-compose@1.4.2:
+  docker-compose@1.5.0:
     dependencies:
       yaml: 2.9.1
 
@@ -2242,7 +2242,7 @@ snapshots:
   dockerode@4.0.12(supports-color@7.2.0):
     dependencies:
       '@balena/dockerignore': 1.0.2
-      '@grpc/grpc-js': 1.14.4
+      '@grpc/grpc-js': 1.14.5
       '@grpc/proto-loader': 0.7.15
       docker-modem: 5.0.7(supports-color@7.2.0)
       protobufjs: 7.6.6
@@ -2680,7 +2680,7 @@ snapshots:
       async-lock: 1.4.1
       byline: 5.0.0
       debug: 4.4.3(supports-color@7.2.0)
-      docker-compose: 1.4.2
+      docker-compose: 1.5.0
       dockerode: 4.0.12(supports-color@7.2.0)
       get-port: 7.2.0
       proper-lockfile: 4.1.2
