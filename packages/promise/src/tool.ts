@@ -117,7 +117,7 @@ function toCoreHook<Input, Output, C>(
   };
 }
 
-function adoptInvocation<T>(promise: InvocationPromise<T>): ClientFuture<T> {
+export function adoptInvocation<T>(promise: InvocationPromise<T>): ClientFuture<T> {
   const future = adopt(promise);
   // The regular SDK types invocationId as Promise, but returns a RestatePromise.
   const invocationId = promise.invocationId;

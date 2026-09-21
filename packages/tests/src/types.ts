@@ -1,6 +1,14 @@
-import {agent, tool, type ToolContext, type Model, type OutputDecision} from "@restate-agents/core";
+import {
+  agent,
+  tool,
+  serviceTool,
+  type ToolContext,
+  type Model,
+  type OutputDecision,
+} from "@restate-agents/core";
 import {z} from "zod";
 import type {Context as RestateContext} from "@restatedev/restate-sdk";
+import * as r from "@restatedev/restate-sdk-gen";
 import * as promise from "@restate-agents/promise";
 
 // Compile-only examples verify the public type boundary.
@@ -199,3 +207,47 @@ agent<undefined>({
     return candidate;
   },
 });
+
+// ---------------------------------------------------------------------------
+// serviceTool — compile-time contracts.
+// ---------------------------------------------------------------------------
+const refundIface = r.iface.service("Refund", {
+  process: r.iface.schemas({
+    input: z.object({orderId: z.string()}),
+    output: z.object({ok: z.boolean()}),
+  }),
+  status: r.iface.json<void, string>(),
+});
+const counterIface = r.iface.object("Counter", {
+  add: r.iface.schemas({input: z.number(), output: z.number()}),
+});
+
+// serviceTool always yields a single Tool: a multiplexed one from a bare interface, and
+// a handler-scoped one from options. Both compose into an agent's tools record.
+agent<TenantContext>({
+  model,
+  tools: {
+    refund: serviceTool(refundIface),
+    pippo: serviceTool({iface: refundIface, handler: "process"}),
+  },
+});
+promise.agent<TenantContext>({
+  model,
+  tools: {
+    refund: promise.serviceTool(refundIface),
+    pippo: promise.serviceTool({iface: refundIface, handler: "status"}),
+  },
+});
+
+// @ts-expect-error "nope" is not a handler of the interface.
+serviceTool({iface: refundIface, handler: "nope"});
+// @ts-expect-error services do not take a key.
+serviceTool({iface: refundIface, handler: "process", key: "k"});
+// @ts-expect-error a bare object interface still needs a key.
+serviceTool(counterIface);
+// @ts-expect-error object tools require a key.
+serviceTool({iface: counterIface, handler: "add"});
+// Object tools accept a static key or a resolver, and may be multiplexed with a key.
+serviceTool({iface: counterIface, key: "c-1"});
+serviceTool({iface: counterIface, handler: "add", key: "c-1"});
+serviceTool({iface: counterIface, handler: "add", key: (input) => JSON.stringify(input)});

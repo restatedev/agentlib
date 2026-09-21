@@ -10,6 +10,7 @@ import {denial, ToolDenied, ToolError} from "./errors.js";
 import type {
   Agent,
   AsyncToolDefinition,
+  GuardrailResult,
   JsonValue,
   Tool,
   ToolContext,
@@ -18,46 +19,96 @@ import type {
 } from "./types.js";
 import {jsonSchema} from "./validation.js";
 
+/** Outcome of parsing raw tool input into the definition's validated shape. */
+export type ParseResult<T> = {ok: true; data: T} | {ok: false; error: string};
+
+/**
+ * The tool lifecycle callbacks (describe/before/approval/execute/after). Kept as one
+ * object so {@link buildTool} invokes them as methods (preserving `this`), and so a
+ * caller can pass a whole definition through as its lifecycle.
+ */
+export type ToolLifecycle<Data, Context> = {
+  describe?: ToolInfo | ((input: Data) => ToolInfo);
+  before?(input: Data, context: ToolContext<Context>): Operation<GuardrailResult>;
+  needsApproval?: boolean | ((input: Data, context: ToolContext<Context>) => Operation<boolean>);
+  execute(input: Data, context: ToolContext<Context>): Operation<JsonValue>;
+  after?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
+};
+
+/**
+ * Everything {@link buildTool} needs to assemble a tool, decoupled from any particular
+ * input-schema source: the JSON Schema is supplied directly and raw input is turned into
+ * validated `Data` by `parseInput`, so tools can be built from zod ({@link tool}) or from
+ * a ready-made JSON Schema (see `service-tool.ts`) sharing one lifecycle implementation.
+ */
+export type BuildToolSpec<Data, Context> = {
+  description: string;
+  inputSchema: Record<string, unknown>;
+  parseInput(raw: JsonValue): ParseResult<Data>;
+  background?: boolean;
+  deferred?: boolean;
+  provider?: string;
+  lifecycle: ToolLifecycle<Data, Context>;
+};
+
+/** Assemble a tool from an explicit JSON Schema and a pluggable input parser. */
+export function buildTool<Data, Context = unknown>(
+  spec: BuildToolSpec<Data, Context>,
+): Tool<Context> {
+  const {lifecycle} = spec;
+  return {
+    description: spec.description,
+    inputSchema: spec.inputSchema,
+    background: spec.background,
+    deferred: spec.deferred,
+    provider: spec.provider,
+    *execute(input, context): Operation<JsonValue> {
+      const parsed = spec.parseInput(input);
+      if (!parsed.ok) throw new ToolError(`Invalid tool input: ${parsed.error}`, "invalid_input");
+      const data = parsed.data;
+      if (lifecycle.describe) {
+        const info =
+          typeof lifecycle.describe === "function"
+            ? lifecycle.describe(structuredClone(data as JsonValue) as Data)
+            : lifecycle.describe;
+        yield* context.describe(info);
+      }
+      if (lifecycle.before) {
+        const reason = denial(yield* lifecycle.before(data, context));
+        if (reason !== undefined) throw new ToolDenied(reason);
+      }
+      const approval =
+        typeof lifecycle.needsApproval === "function"
+          ? yield* lifecycle.needsApproval(data, context)
+          : lifecycle.needsApproval;
+      if (approval && !(yield* context.approve(jsonSchema.parse(data as JsonValue))))
+        throw new ToolDenied("Human approval denied");
+      let result = yield* lifecycle.execute(data, context);
+      if (lifecycle.after) result = yield* lifecycle.after(result, context);
+      return jsonSchema.parse(result);
+    },
+  };
+}
+
 /** Describe a tool; its generator composes directly with Restate operations. */
 export function tool<Schema extends z.ZodType, Context = unknown>(
   definition: ToolDefinition<Schema, Context>,
 ): Tool<Context> {
-  return {
+  return buildTool<z.output<Schema>, Context>({
     description: definition.description,
     inputSchema: z.toJSONSchema(definition.input, {io: "input"}),
+    parseInput(raw) {
+      const parsed = definition.input.safeParse(raw);
+      return parsed.success
+        ? {ok: true, data: parsed.data}
+        : {ok: false, error: parsed.error.message};
+    },
     background: definition.background,
     deferred: definition.deferred,
     provider: definition.provider,
-    *execute(input, context): Operation<JsonValue> {
-      const parsed = definition.input.safeParse(input);
-      if (!parsed.success)
-        throw new ToolError(`Invalid tool input: ${parsed.error.message}`, "invalid_input");
-      if (definition.describe) {
-        let info: ToolInfo;
-        if (typeof definition.describe === "function") {
-          info = definition.describe(structuredClone(parsed.data));
-        } else {
-          info = definition.describe;
-        }
-        yield* context.describe(info);
-      }
-      if (definition.before) {
-        const reason = denial(yield* definition.before(parsed.data, context));
-        if (reason !== undefined) throw new ToolDenied(reason);
-      }
-      let approval: boolean | undefined;
-      if (typeof definition.needsApproval === "function") {
-        approval = yield* definition.needsApproval(parsed.data, context);
-      } else {
-        approval = definition.needsApproval;
-      }
-      if (approval && !(yield* context.approve(jsonSchema.parse(parsed.data))))
-        throw new ToolDenied("Human approval denied");
-      let result = yield* definition.execute(parsed.data, context);
-      if (definition.after) result = yield* definition.after(result, context);
-      return jsonSchema.parse(result);
-    },
-  };
+    // The definition itself is the lifecycle; methods stay bound to it.
+    lifecycle: definition,
+  });
 }
 
 /** Explicit durability boundary for ordinary I/O; preserves business errors on replay. */

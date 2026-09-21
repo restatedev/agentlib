@@ -10,6 +10,7 @@ import {
   asyncTool,
   handoff,
   handlerTool,
+  serviceTool,
   LazyStateConversation,
   sleepTool,
   tool,
@@ -489,11 +490,70 @@ const session = r.object({
     },
   },
 });
+// A Restate interface (contract) and its implementation, exercised through serviceTool.
+const refundIface = r.iface.service("ServiceToolRefund", {
+  issueRefund: r.iface.schemas({
+    input: z.object({orderId: z.string(), amountCents: z.number()}),
+    output: z.object({refundId: z.string()}),
+    description: "Issue a refund for an order.",
+  }),
+  getPolicy: r.iface.json<void, {refundWindowDays: number}>(),
+});
+const refundService = r.implement(refundIface, {
+  handlers: {
+    *issueRefund({orderId}) {
+      return {refundId: `re_${orderId}`};
+    },
+    *getPolicy() {
+      return {refundWindowDays: 30};
+    },
+  },
+});
+const serviceToolHarness = r.service({
+  name: "ServiceToolHarness",
+  handlers: {
+    // A single multiplexed tool routes to the handler the model selects.
+    *multiplexed() {
+      const result = yield* agent({
+        maxSteps: 3,
+        tools: {refund: serviceTool(refundIface)},
+        *model(request): r.Operation<ModelResponse> {
+          if (request.step === 1)
+            return {
+              type: "tool_calls",
+              calls: [
+                {
+                  id: "r1",
+                  name: "refund",
+                  input: {handler: "issueRefund", input: {orderId: "O-1", amountCents: 500}},
+                },
+              ],
+            };
+          return final;
+        },
+      }).run("issue a refund");
+      return {status: result.status, messages: result.messages};
+    },
+    // A scoped tool for a single void-input handler (empty input -> no argument).
+    *scoped() {
+      const result = yield* agent({
+        maxSteps: 3,
+        tools: {getPolicy: serviceTool({iface: refundIface, handler: "getPolicy"})},
+        *model(request): r.Operation<ModelResponse> {
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "p1", name: "getPolicy", input: {}}]};
+          return final;
+        },
+      }).run("read the policy");
+      return {status: result.status, messages: result.messages};
+    },
+  },
+});
 let env: RestateTestEnvironment;
 before(
   async () => {
     env = await RestateTestEnvironment.start({
-      services: [runner, child, gateway, session, aiSession],
+      services: [runner, child, gateway, session, aiSession, refundService, serviceToolHarness],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
   },
@@ -736,5 +796,24 @@ void test(
       connect({url: env.baseUrl()}).client(runner).externalCancellation(),
       /cancelled|canceled/i,
     );
+  },
+);
+void test(
+  "serviceTool routes a multiplexed call to the interface's handler and returns its result",
+  {timeout: 20000},
+  async () => {
+    const result = await connect({url: env.baseUrl()}).client(serviceToolHarness).multiplexed();
+    assert.equal(result.status, "completed");
+    // The refund handler's result flows back through the tool into the transcript.
+    assert.match(JSON.stringify(result.messages), /re_O-1/);
+  },
+);
+void test(
+  "serviceTool scoped to a void handler invokes it with no argument",
+  {timeout: 20000},
+  async () => {
+    const result = await connect({url: env.baseUrl()}).client(serviceToolHarness).scoped();
+    assert.equal(result.status, "completed");
+    assert.match(JSON.stringify(result.messages), /refundWindowDays/);
   },
 );

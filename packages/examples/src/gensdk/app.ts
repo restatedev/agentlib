@@ -8,6 +8,7 @@ import {ticketApproval} from "./06_human_approval.js";
 import {racingAgents} from "./07_racing_agents.js";
 import {researchReport, researchWorker} from "./08_research_report.js";
 import {aiSession} from "./09_support_session.js";
+import {refundAgent, refundService} from "./10_service_tool.js";
 
 await serve({
   services: [
@@ -21,6 +22,8 @@ await serve({
     researchReport,
     researchWorker,
     aiSession,
+    refundService,
+    refundAgent,
   ],
   port: 9080,
 });
