@@ -10,6 +10,9 @@ import {researchReport, researchWorker} from "./08_research_report.js";
 import {aiSession} from "./09_support_session.js";
 import {refundAgent, refundService} from "./10_service_tool.js";
 import {codingSession} from "./11_coding_agent.js";
+import {supportRouter} from "./12_routing.js";
+import {guardedBooking} from "./13_tool_guardrail.js";
+import {webResearch} from "./14_web_search.js";
 
 export const gensdkServices = [
   hello,
@@ -25,4 +28,7 @@ export const gensdkServices = [
   refundService,
   refundAgent,
   codingSession,
+  supportRouter,
+  guardedBooking,
+  webResearch,
 ];

@@ -169,8 +169,9 @@ The [tutorial](packages/examples/README.md) builds up from a single agent call
 to a full support session. Along the way it adds tools, conversation history,
 structured output, a draft-and-review loop, human approval, service tools,
 racing agents, parallel research workers, and a session that uses handoffs,
-steering, interruption, PTC, tool search, and MCP together. The last lesson is
-a coding agent that works in a Docker or Modal sandbox.
+steering, interruption, PTC, tool search, and MCP together. Goal-based recipes
+then show how to route to specialists, enforce a tool policy, and answer with
+current web sources. A coding lesson uses a Docker or Modal sandbox.
 
 Start a Restate server, then:
 

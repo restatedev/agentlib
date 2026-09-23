@@ -1,10 +1,10 @@
 # Agent tutorial
 
 Read the numbered files in [src/gensdk](src/gensdk) from `01` onward. Each file
-stands alone and introduces one concept using what you learned earlier; you do
-not need to import or edit previous lessons. Later lessons combine those
-concepts into workflows. [services.ts](src/gensdk/services.ts) lists the
-services in tutorial order, [app.ts](src/app.ts) serves them, and
+stands alone; you do not need to import or edit previous lessons. Lessons 01–10
+build up the agent and workflow primitives. The later lessons are goal-based
+recipes you can read in any order. [services.ts](src/gensdk/services.ts) lists
+the services in tutorial order, [app.ts](src/app.ts) serves them, and
 [shared.ts](src/shared.ts) configures the model.
 
 Each prompt handler declares a Zod input schema with a scenario-specific
@@ -26,6 +26,22 @@ the request body required; object fields use `.default(...)`.
 | 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         |
 | 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               |
 | 11     | A coding agent in a remote sandbox    | [11_coding_agent.ts](src/gensdk/11_coding_agent.ts)               |
+| 12     | Route to a specialist                 | [12_routing.ts](src/gensdk/12_routing.ts)                         |
+| 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/gensdk/13_tool_guardrail.ts)           |
+| 14     | Search the public web                 | [14_web_search.ts](src/gensdk/14_web_search.ts)                   |
+
+If you have a specific goal, start here:
+
+| Goal                                | Smallest lesson                        |
+| ----------------------------------- | -------------------------------------- |
+| Give an agent an API-backed tool    | [02](src/gensdk/02_tools.ts)           |
+| Remember earlier requests           | [03](src/gensdk/03_conversation.ts)    |
+| Require a person before a tool runs | [06](src/gensdk/06_human_approval.ts)  |
+| Split research across workers       | [08](src/gensdk/08_research_report.ts) |
+| Steer or interrupt a running turn   | [09](src/gensdk/09_support_session.ts) |
+| Route a request by its meaning      | [12](src/gensdk/12_routing.ts)         |
+| Enforce a budget before an action   | [13](src/gensdk/13_tool_guardrail.ts)  |
+| Answer with current public sources  | [14](src/gensdk/14_web_search.ts)      |
 
 ## Start
 
@@ -312,6 +328,74 @@ After each turn, the session sends itself a `shutdownIfIdle` call delayed by 30
 minutes, a durable timer. It terminates the sandbox unless a newer turn has
 started by then. `close` terminates it right away.
 
+## 12 — Route a request to a specialist
+
+Use a small structured-output agent to choose `billing`, `account`, or `product`,
+then let the chosen specialist answer. The application owns the branch:
+
+```ts
+function* answer(question: string) {
+  const {specialist} = completedOutput(yield* route.run(question));
+  return replyText(yield* specialists[specialist].run(question));
+}
+```
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/SupportRouter/answer" \
+  --json '"I cannot log into my account. How can I regain access?"'
+```
+
+The specialist starts a fresh run with only the question. Use the handoff in
+lesson 09 when the specialist should take over the **same** run and history.
+
+## 13 — Enforce a policy before an action
+
+`bookHotel.before` checks the authoritative quote and budget from application
+context before `execute` runs. The model chooses a hotel ID, but cannot set its
+price or bypass the limit by supplying a cheaper number. A denied tool call is
+returned to the model so it can explain why no booking was made.
+
+```ts
+*before({hotelId}, {context}) {
+  if (hotelId !== context.hotelId) return "Only the quoted hotel can be booked";
+  if (context.quotedTotalCents > context.maxTotalCents)
+    return "The quote exceeds the budget";
+}
+```
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/GuardedBooking/ask" \
+  --json '{"hotelId":"H-42","quotedTotalCents":12500,"maxTotalCents":10000}'
+```
+
+Raise `maxTotalCents` to `15000` to see the allowed path. The reservation is a
+demo result; connect a real booking API only after obtaining the quote from your
+own trusted service.
+
+## 14 — Answer with current public sources
+
+Set `TAVILY_API_KEY` before starting the example endpoint. `webSearch` sends a
+public query to Tavily and journals the bounded results, so a replay does not
+repeat the HTTP request. The agent is instructed to cite returned URLs and treat
+snippets as evidence, not instructions.
+
+```ts
+const researcher = agent({
+  model,
+  tools: {searchWeb: webSearch({apiKey})},
+  instructions: "Search before answering and cite returned URLs.",
+});
+```
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/WebResearch/answer" \
+  --json '"Find the current Restate TypeScript SDK docs and cite their URLs."'
+```
+
+Keep private data out of search queries. The key stays in application code and
+is not part of the model's tool schema. If it is missing, the handler fails with
+a clear setup error before calling the model.
+
 ## Model configuration
 
 [shared.ts](src/shared.ts) configures the example model. `openAIModel` defaults
@@ -383,6 +467,13 @@ commit `60d1eda2e5f3aae96db2efeba498e52367a01648`:
 | Research report | [workflow-orchestrator.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-orchestrator.ts)               | Typed bounded plan, supplied evidence, source tools and guards, cancellation bridge                    |
 | Code review     | [workflow-evaluator-optimizer.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-evaluator-optimizer.ts) | Structured decisions, previous draft carried forward, explicit exhaustion with the last draft retained |
 | Racing agents   | [racing-agents.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/racing-agents.ts)                               | Embedded operations, first completed success, cancellation with joined cleanup                         |
+
+The later goal-based lessons draw on the same patterns described by
+[Anthropic's workflow guide](https://www.anthropic.com/engineering/building-effective-agents),
+[OpenAI's tool guardrails](https://openai.github.io/openai-agents-python/guardrails/),
+and the [AI SDK web-search recipe](https://ai-sdk.dev/cookbook/node/web-search-agent).
+They use this library's Restate handlers and tools rather than copying another
+framework's control flow.
 
 `pnpm test:integration` registers these exported services with the official
 `RestateTestEnvironment` and a real `RestateContainer().alwaysReplay()`. Tests
