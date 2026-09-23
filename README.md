@@ -5,11 +5,11 @@
 - **Change course while running.** Steer or interrupt a turn with durable
   signals, even while a tool or human decision is pending.
 - **Give agents powerful tools.** Combine programmatic and background tool
-  calls, tool search, MCP, and handoffs between agents.
+  calls, tool search, MCP, sub-agents, and handoffs between agents.
 - **Stay in control.** Add guardrails, Zod-validated output, and human approval
   to the steps that need them.
-- **Fit your Restate service.** Use generator or promise-based handlers with the
-  same models, tools, and agent runtime.
+- **Fit your Restate service.** Run an agent as one step of any handler, next
+  to your own durable code.
 
 Restate Agents is a TypeScript agent library built for durable execution on
 [Restate](https://restate.dev). It runs inside your service handlers, so an agent
@@ -159,7 +159,9 @@ The [tutorial](packages/examples/README.md) builds up from a single agent call
 to a full support session. Along the way it adds tools, conversation history,
 structured output, a draft-and-review loop, human approval, service tools,
 racing agents, parallel research workers, and a session that uses handoffs,
-steering, interruption, PTC, tool search, and MCP together.
+steering, interruption, PTC, tool search, and MCP together. Goal-based recipes
+then show how to route to specialists, enforce a tool policy, and answer with
+current web sources. A coding lesson gives an agent tools backed by a Modal sandbox.
 
 Start a Restate server, then:
 

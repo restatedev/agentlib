@@ -18,6 +18,7 @@
     "@restatedev/restate-sdk-testcontainers": "1.17.2",
     "ai": "7.0.26",
     "minisearch": "7.2.0",
+    "modal": "0.10.1",
     "openai": "^7.17.0",
     "zod": "^4.6.5"
   }

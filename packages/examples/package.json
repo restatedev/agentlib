@@ -43,6 +43,22 @@
     "./gensdk/service-tool": {
       "types": "./dist/gensdk/10_service_tool.d.ts",
       "import": "./dist/gensdk/10_service_tool.js"
+    },
+    "./gensdk/coding-agent": {
+      "types": "./dist/gensdk/11_coding_agent.d.ts",
+      "import": "./dist/gensdk/11_coding_agent.js"
+    },
+    "./gensdk/routing": {
+      "types": "./dist/gensdk/12_routing.d.ts",
+      "import": "./dist/gensdk/12_routing.js"
+    },
+    "./gensdk/tool-guardrail": {
+      "types": "./dist/gensdk/13_tool_guardrail.d.ts",
+      "import": "./dist/gensdk/13_tool_guardrail.js"
+    },
+    "./gensdk/web-search": {
+      "types": "./dist/gensdk/14_web_search.d.ts",
+      "import": "./dist/gensdk/14_web_search.js"
     }
   },
   "scripts": {
@@ -55,6 +71,7 @@
     "@restate-agents/core": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",
     "@restatedev/restate-sdk-gen": "1.17.2",
+    "modal": "0.10.1",
     "zod": "^4.6.5"
   }
 }
