@@ -6,12 +6,14 @@ import {
   type Operation,
 } from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {denial, ToolDenied, ToolError} from "./errors.js";
+import {denial, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
 import type {
   Agent,
   AsyncToolDefinition,
   GuardrailResult,
   JsonValue,
+  RunOptions,
+  RunResult,
   Tool,
   ToolContext,
   ToolDefinition,
@@ -195,4 +197,49 @@ export function handoff<C>(
     }),
     handoff: () => (typeof target === "function" ? target() : target).definition,
   };
+}
+
+export type AgentToolOptions = {
+  /** What the sub-agent is for; the model reads this to decide when to delegate. */
+  description: string;
+  /** Let the parent keep working while the sub-agent runs. */
+  background?: boolean;
+  deferred?: boolean;
+  needsApproval?: boolean;
+};
+
+const delegatedTask = z.object({
+  task: z.string().min(1).describe("A complete, self-contained description of the task."),
+});
+
+/** Delegate a task to another agent as one tool call. The sub-agent runs in this
+ * invocation with a fresh conversation, its own limits, and the parent's context,
+ * and its answer (text or structured output) becomes the tool result. Every step
+ * is journaled, and interrupting the parent interrupts the sub-agent. */
+export function agentTool<C, O>(
+  subAgent: Pick<Agent<C, O>, "run">,
+  options: AgentToolOptions,
+): Tool<C> {
+  return tool({
+    ...options,
+    input: delegatedTask,
+    *execute({task}, context) {
+      // A run name unique to this call keeps approval signals of concurrent sub-agents apart.
+      const runOptions: RunOptions<C> = {
+        context: context.context,
+        name: `${context.name}/${context.callId}`,
+      } as RunOptions<C>;
+      const run = subAgent.run as (
+        input: string,
+        options: RunOptions<C>,
+      ) => Operation<RunResult<O>>;
+      const result = yield* run.call(subAgent, task, runOptions);
+      if (result.status === "completed") return jsonSchema.parse(result.output);
+      if (result.status === "interrupted") throw new ToolCancelled(result.reason);
+      throw new ToolError(
+        result.output ?? `The sub-agent stopped before finishing: ${result.reason}`,
+        "agent_stopped",
+      );
+    },
+  });
 }
