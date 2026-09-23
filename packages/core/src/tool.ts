@@ -163,6 +163,8 @@ export function* awaitChild<T>(future: ClientFuture<T>): Operation<T> {
     throw error;
   }
 }
+
+/** Call a Restate handler through a typed client; interruption cancels the child. */
 export function handlerTool<S extends z.ZodType, C = unknown>(
   definition: Omit<ToolDefinition<S, C>, "execute"> & {
     call(input: z.output<S>, context: ToolContext<C>): ClientFuture<JsonValue>;

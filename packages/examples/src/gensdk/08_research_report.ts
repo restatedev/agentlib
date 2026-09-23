@@ -150,8 +150,7 @@ export const researchReport = restate.service({
           for (const worker of workers) worker.interrupt();
           yield* restate.allSettled(workers);
         }
-        const report = completedOutput(yield* writer.run(JSON.stringify({topic, findings})));
-        return report;
+        return completedOutput(yield* writer.run(JSON.stringify({topic, findings})));
       },
     ),
   },

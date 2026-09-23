@@ -17,8 +17,7 @@ export class RunTasks {
   readonly failed = this.failure.receive;
 
   spawn<T>(operation: Operation<T>): Task<T> {
-    let task: Task<T>;
-    task = spawn(this.captureFailure(operation, () => this.owned.delete(task)));
+    const task: Task<T> = spawn(this.captureFailure(operation, () => this.owned.delete(task)));
     this.owned.add(task);
     return task;
   }

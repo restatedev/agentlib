@@ -68,6 +68,14 @@ const support = agent<SessionContext>({
   },
 });
 
+/** Deliver a control to the running turn; false when no turn is active. */
+function* signalActiveTurn(name: string, value: string): restate.Operation<boolean> {
+  const active = yield* restate.sharedState().get<ActiveTurn>("active");
+  if (!active) return false;
+  restate.invocation(active.invocationId).signal(name).resolve(value);
+  return true;
+}
+
 /** Application-owned session and control surface; none of this is required by the SDK. */
 export const aiSession = restate.object({
   name: "AiSession",
@@ -138,10 +146,7 @@ export const aiSession = restate.object({
         output: z.boolean(),
       },
       function* (message) {
-        const active = yield* restate.sharedState().get<ActiveTurn>("active");
-        if (!active) return false;
-        restate.invocation(active.invocationId).signal("steering").resolve(message);
-        return true;
+        return yield* signalActiveTurn("steering", message);
       },
     ),
     interrupt: restate.schemas(
@@ -150,10 +155,7 @@ export const aiSession = restate.object({
         output: z.boolean(),
       },
       function* (reason) {
-        const active = yield* restate.sharedState().get<ActiveTurn>("active");
-        if (!active) return false;
-        restate.invocation(active.invocationId).signal("interrupt").resolve(reason);
-        return true;
+        return yield* signalActiveTurn("interrupt", reason);
       },
     ),
     approve: restate.schemas(

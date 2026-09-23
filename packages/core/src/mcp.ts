@@ -30,6 +30,8 @@ export type McpOptions = {
   fetch?: typeof fetch;
 };
 type Session = {id?: string; version?: string};
+/** A later step reconnects to the session and discovery captured by the catalog. */
+type Resume = {session: Session; prior: PriorDiscovery};
 export type McpToolSet<C = unknown> = {
   tools: Record<string, Tool<C>>;
   close(): restate.Operation<void>;
@@ -42,6 +44,17 @@ class ResumedToolClient extends Client {
     super.assertCapabilityForMethod(method);
   }
 }
+const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+const MAX_AUTH_ATTEMPTS = 3;
+
+/** Keeps valid names readable; others get a sanitized prefix and a stable hash. */
+function localToolName(original: string): string {
+  if (TOOL_NAME.test(original)) return original;
+  const prefix = original.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 51);
+  const suffix = createHash("sha256").update(original).digest("hex").slice(0, 12);
+  return `${prefix}_${suffix}`;
+}
+
 /** Snapshot the catalog once. No process-local MCP session is a source of truth. */
 export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<McpToolSet<C>> {
   if (!/^[a-zA-Z0-9_-]{1,24}$/.test(options.namespace))
@@ -50,12 +63,14 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
   const endpoint = new URL(options.url);
   if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password)
     throw new TerminalError("MCP requires an HTTP(S) URL without embedded credentials");
-  async function connect(
+  /** Opens a short-lived client for one journaled step and always closes it. */
+  async function withClient<T>(
     token: string | undefined,
     signal: AbortSignal,
-    session: Session = {},
-    prior?: PriorDiscovery,
-  ) {
+    resume: Resume | undefined,
+    use: (client: Client, transport: StreamableHTTPClientTransport) => Promise<T>,
+  ): Promise<T> {
+    const {session = {}, prior} = resume ?? {};
     const Constructor = session.id ? ResumedToolClient : Client;
     const client = new Constructor(
       {name: "restate-agent-sdk", version: "0.1.0"},
@@ -86,13 +101,17 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
       await client.close().catch(() => {});
       throw error;
     }
-    return {client, transport};
+    try {
+      return await use(client, transport);
+    } finally {
+      await client.close();
+    }
   }
   function* authorized<T>(
     name: string,
     fn: (token: string | undefined, signal: AbortSignal) => Promise<T>,
   ): restate.Operation<T> {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 1; ; attempt++) {
       const token = options.token ? yield* options.token() : undefined;
       const result = yield* restate.run(
         async ({signal}) => {
@@ -107,15 +126,14 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
         {name, retry: {maxAttempts: 1}},
       );
       if (result.type === "ok") return result.value;
-      if (attempt === 2) throw new TerminalError("MCP authorization failed after three attempts");
+      if (attempt === MAX_AUTH_ATTEMPTS)
+        throw new TerminalError("MCP authorization failed after three attempts");
       if (!options.onAuthorizationRequired) throw new TerminalError("MCP authorization required");
       yield* options.onAuthorizationRequired();
     }
-    throw new TerminalError("MCP authorization failed after three attempts");
   }
-  const catalog = yield* authorized(`mcp-${options.namespace}-catalog`, async (token, signal) => {
-    const {client, transport} = await connect(token, signal);
-    try {
+  const catalog = yield* authorized(`mcp-${options.namespace}-catalog`, (token, signal) =>
+    withClient(token, signal, undefined, async (client, transport) => {
       const listed = await client.listTools(undefined, {
         signal,
         timeout,
@@ -135,21 +153,13 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
         },
         prior,
       };
-    } finally {
-      await client.close();
-    }
-  });
+    }),
+  );
   const tools = new Map<string, Tool<C>>();
   for (const definition of catalog.tools) {
     if (options.allow && !options.allow(definition.name)) continue;
-    const original = `${options.namespace}_${definition.name}`;
-    let name = original;
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(original)) {
-      const prefix = original.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 51);
-      const suffix = createHash("sha256").update(original).digest("hex").slice(0, 12);
-      name = `${prefix}_${suffix}`;
-    }
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name) || tools.has(name))
+    const name = localToolName(`${options.namespace}_${definition.name}`);
+    if (!TOOL_NAME.test(name) || tools.has(name))
       throw new TerminalError(`Invalid or duplicate MCP tool name: ${name}`);
     if (JSON.stringify(definition.inputSchema).length > 64000)
       throw new TerminalError("MCP input schema too large");
@@ -161,10 +171,9 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
         deferred: options.deferred ?? true,
         input: z.fromJSONSchema(definition.inputSchema as Parameters<typeof z.fromJSONSchema>[0]),
         *execute(input, context) {
-          const result = yield* authorized(`mcp-${name}`, async (token, signal) => {
-            const {client} = await connect(token, signal, catalog.session, catalog.prior);
-            try {
-              return await client.callTool(
+          const result = yield* authorized(`mcp-${name}`, (token, signal) =>
+            withClient(token, signal, catalog, (client) =>
+              client.callTool(
                 {
                   name: definition.name,
                   arguments: input as Record<string, unknown>,
@@ -178,11 +187,9 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
                     "Idempotency-Key": `${context.invocationId}:${context.name}:${context.callId}`,
                   },
                 },
-              );
-            } finally {
-              await client.close();
-            }
-          });
+              ),
+            ),
+          );
           if (JSON.stringify(result).length > 128000)
             throw new ToolError("MCP result exceeds 128000 characters", "output_limit");
           if (result.isError) throw new ToolError(JSON.stringify(result));
@@ -195,15 +202,12 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
     tools: Object.fromEntries(tools),
     *close() {
       if (!catalog.session.id) return;
-      yield* authorized(`mcp-${options.namespace}-close`, async (token, signal) => {
-        const {client, transport} = await connect(token, signal, catalog.session, catalog.prior);
-        try {
+      yield* authorized(`mcp-${options.namespace}-close`, (token, signal) =>
+        withClient(token, signal, catalog, async (_, transport) => {
           await transport.terminateSession();
           return null;
-        } finally {
-          await client.close();
-        }
-      });
+        }),
+      );
     },
   };
 }

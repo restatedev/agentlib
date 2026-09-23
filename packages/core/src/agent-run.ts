@@ -24,15 +24,16 @@ import {jsonSchema, modelResponse} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
+  GuardrailResult,
+  Message,
   ModelFinalResponse,
   ModelResponse,
   ModelToolCallsResponse,
-  Message,
   RunContext,
+  RunControls,
   RunOptions,
   RunResult,
   SteeringSource,
-  ToolResult,
 } from "./types.js";
 
 export type RunConfiguration = ToolExecutionLimits &
@@ -41,11 +42,6 @@ export type RunConfiguration = ToolExecutionLimits &
     maxOutputTokens: number;
     outputSchema?: Record<string, unknown>;
   }>;
-
-type LlmOutcome =
-  | {kind: "response"; response: ModelResponse}
-  | {kind: "steer"; message: string}
-  | {kind: "interrupt"; reason: string};
 
 export function* runAgent<C, O>(
   input: string,
@@ -57,7 +53,36 @@ export function* runAgent<C, O>(
   return yield* new AgentRun(root, config, history, options).run();
 }
 
-/** One conversation turn. The run alternates between model and tool phases. */
+function allow(result: GuardrailResult): void {
+  const rejected = denial(result);
+  if (rejected !== undefined) throw new GuardrailError(rejected);
+}
+
+/** Explicit controls take precedence over named invocation signals. */
+function resolveControls<C>(options?: RunOptions<C>): RunControls {
+  const controls = options?.controls;
+  let steering = controls?.steering?.bind(controls);
+  const steeringSignal = options?.steeringSignal;
+  if (!steering && steeringSignal) steering = () => signal<string>(steeringSignal);
+  let interrupt = controls?.interrupt;
+  if (!interrupt && options?.interruptSignal) interrupt = signal<string>(options.interruptSignal);
+  return {steering, interrupt};
+}
+
+/** One conversation turn: runAgent loads prior messages and appends the user
+ * input, then the run alternates model and tool phases until it completes.
+ *
+ * Every wait goes through race(), which also watches controls and task failures:
+ * - Steering is appended to history the moment it arrives. Work whose result
+ *   depends on history (a model request, output review) is a candidate and is
+ *   discarded; tool calls keep running because their results stay valid.
+ * - Interruption and the step limit settle owned work, then share one
+ *   review/finish path. Controls are no longer raced from there on, so a late
+ *   interrupt cannot restart finalization.
+ * - Background results completed during a model request also invalidate its
+ *   response: the model must see them before acting.
+ *
+ * Nothing is saved until finish() persists the turn; failures save nothing. */
 class AgentRun<C, O> {
   private step = 0;
   private steeringSource: SteeringSource | undefined;
@@ -66,7 +91,7 @@ class AgentRun<C, O> {
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
   private readonly context: RunContext<C>;
-  private readonly tasks: RunTasks;
+  private readonly tasks = new RunTasks();
   private readonly tools: RunTools<C>;
 
   constructor(
@@ -82,7 +107,6 @@ class AgentRun<C, O> {
       invocationId: handlerRequest().id,
       name: options?.name ?? root.name ?? "agent",
     };
-    this.tasks = new RunTasks();
     this.tools = new RunTools(
       root,
       this.context,
@@ -93,307 +117,199 @@ class AgentRun<C, O> {
     );
   }
 
-  /** Data flow for one run:
-   * runAgent has loaded prior messages once and appended this turn's user input.
-   * Startup applies beforeRun and optional compaction; nothing is saved yet.
-   * The LLM call races steering and interruption. The winning control returns
-   * to this loop; the losing model task is interrupted and its response is
-   * discarded. Completed background results are appended before acting on a
-   * model response and likewise require a fresh request.
-   * The tool phase races foreground calls with steering and interruption.
-   * Each result is appended when selected. The model cannot read a partial
-   * native tool-call batch, so the phase ends when its foreground calls settle.
-   * The model-facing transcript then groups those results after their call.
-   * Background calls receive pending acknowledgments immediately; their later
-   * results enter history as new model-visible messages.
-   * A final answer passes validation and afterRun before finish() appends the
-   * accepted output and saves this turn. Interruption or a step limit first
-   * settles owned work, then uses the same review/finish path. Unexpected
-   * failures leave the turn unpersisted. */
   *run(): Operation<RunResult<O>> {
     try {
-      // Startup has no model work to invalidate. Controls are received by the
-      // first planning step after policy and conversation compaction finish.
-      if (this.root.beforeRun) {
-        const rejected = denial(yield* this.root.beforeRun(this.history.snapshot(), this.context));
-        if (rejected !== undefined) throw new GuardrailError(rejected);
-      }
-      yield* this.history.compact();
-
-      const controls = this.options?.controls;
-      const steeringSignal = this.options?.steeringSignal;
-      if (controls?.steering) {
-        this.steeringSource = controls.steering.bind(controls);
-      } else if (steeringSignal) {
-        this.steeringSource = () => signal<string>(steeringSignal);
-      }
-      this.steering = this.steeringSource?.();
-      this.interrupt = controls?.interrupt;
-      if (!this.interrupt && this.options?.interruptSignal) {
-        this.interrupt = signal<string>(this.options.interruptSignal);
-      }
-
+      yield* this.start();
       let interruption: RunInterrupted | undefined;
       try {
-        for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
-          const outcome = yield* this.llm(this.history.snapshot());
-          if (outcome.kind === "steer") {
-            this.acceptSteering(outcome.message);
-            continue;
-          }
-          if (outcome.kind === "interrupt") throw new RunInterrupted(outcome.reason);
-
-          const completed = this.tools.drainCompleted();
-          if (completed.length > 0) {
-            this.history.append(...completed);
-            continue;
-          }
-
-          const action = outcome.response;
-          if (action.type === "final") {
-            const result = yield* this.complete(action);
-            if (result) return result;
-          } else {
-            yield* this.toolPhase(action);
-          }
-        }
+        const result = yield* this.steps();
+        if (result) return result;
       } catch (error) {
         if (!(error instanceof RunInterrupted)) throw error;
         interruption = error;
       }
-
-      if (!interruption) this.step = this.config.maxSteps;
-      // Stopped-run finalization stays outside the control catch, so its
-      // failures propagate instead of starting another stop attempt.
-      yield* this.stop(interruption ?? new InterruptedError("Maximum model steps reached"));
-      const end = {steps: this.step, messages: this.history.snapshot()};
-      let result: RunResult<O>;
-      if (interruption) {
-        result = {
-          ...end,
-          status: "interrupted",
-          reason: interruption.message,
-        };
-      } else {
-        result = {
-          ...end,
-          status: "stopped",
-          reason: "max_steps",
-        };
-      }
-      return yield* this.finish(yield* this.reviewOutput(result));
+      // Outside the catch: a failing stop propagates instead of stopping twice.
+      return yield* this.stop(interruption);
     } finally {
       yield* this.tasks.close();
     }
   }
 
-  private *plan(messages: Message[]): Operation<ModelResponse> {
-    let instructions: string | undefined;
-    if (typeof this.active.instructions === "function") {
-      instructions = yield* this.active.instructions(this.context);
-    } else {
-      instructions = this.active.instructions;
+  /** Startup has no model work to supersede, so controls attach afterwards. */
+  private *start(): Operation<void> {
+    if (this.root.beforeRun)
+      allow(yield* this.root.beforeRun(this.history.snapshot(), this.context));
+    yield* this.history.compact();
+    const controls = resolveControls(this.options);
+    this.steeringSource = controls.steering;
+    this.steering = controls.steering?.();
+    this.interrupt = controls.interrupt;
+  }
+
+  /** Returns the completed result, or undefined when the step budget runs out. */
+  private *steps(): Operation<RunResult<O> | undefined> {
+    for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
+      const response = yield* this.candidate(this.plan(this.history.snapshot()));
+      if (!response || this.collectBackground()) continue;
+      if (response.type === "tool_calls") {
+        yield* this.toolPhase(response);
+        continue;
+      }
+      const result = yield* this.complete(response);
+      if (result) return result;
     }
+    return undefined;
+  }
+
+  /** Waits for one branch or a control. Failures and interruption throw;
+   * steering is recorded and reported under the "steering" tag. */
+  private *race(branches: FutureBranches): Operation<{tag: string; value: unknown}> {
+    const controls: FutureBranches = {failed: this.tasks.failed};
+    if (this.interrupt) controls.interrupt = this.interrupt;
+    if (this.steering) controls.steering = this.steering;
+    const {tag, future} = yield* select({...controls, ...branches});
+    const value = yield* future;
+    if (tag === "failed") throw value;
+    if (tag === "interrupt") {
+      if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
+      throw new RunInterrupted(value);
+    }
+    if (tag === "steering") this.acceptSteering(value);
+    return {tag, value};
+  }
+
+  /** Runs work that steering supersedes; returns undefined when it was discarded. */
+  private *candidate<T>(operation: Operation<T>): Operation<T | undefined> {
+    const task = this.tasks.spawn(operation);
+    const {tag, value} = yield* this.race({candidate: task});
+    if (tag === "candidate") return value as T;
+    yield* this.discard(task);
+    return undefined;
+  }
+
+  private *discard(task: Task<unknown>): Operation<void> {
+    task.interrupt(new InterruptedError("Superseded by steering"));
+    try {
+      yield* task;
+    } catch (error) {
+      if (!(error instanceof InterruptedError)) throw error;
+    }
+  }
+
+  private *plan(messages: Message[]): Operation<ModelResponse> {
+    const {instructions} = this.active;
     const request = {
-      instructions,
+      instructions:
+        typeof instructions === "function" ? yield* instructions(this.context) : instructions,
       outputSchema: this.config.outputSchema,
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
       messages,
       tools: this.catalog.visibleManifests(),
     };
-    if (this.root.beforeStep) {
-      const blocked = denial(yield* this.root.beforeStep(request, this.context));
-      if (blocked !== undefined) throw new GuardrailError(blocked);
+    // The root's policy applies to every step; a handoff target adds its own.
+    for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
+      if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));
     }
-    if (this.active !== this.root && this.active.beforeStep) {
-      const blocked = denial(yield* this.active.beforeStep(request, this.context));
-      if (blocked !== undefined) throw new GuardrailError(blocked);
-    }
-    const action = modelResponse(yield* this.active.model(request));
-    if ((action.chunks ?? []).reduce((n, c) => n + c.text.length, 0) > this.config.maxOutputChars)
+    const response = modelResponse(yield* this.active.model(request));
+    const chunkChars = (response.chunks ?? []).reduce((n, chunk) => n + chunk.text.length, 0);
+    if (chunkChars > this.config.maxOutputChars)
       throw new AgentLimitError("Model chunks exceed maxOutputChars");
-    if ((action.text?.length ?? 0) > this.config.maxOutputChars)
+    if ((response.text?.length ?? 0) > this.config.maxOutputChars)
       throw new AgentLimitError("Model output exceeds maxOutputChars");
-    return action;
+    return response;
   }
 
-  /** Race one model request with controls; never change conversation history. */
-  private *llm(messages: Message[]): Operation<LlmOutcome> {
-    const model = this.tasks.spawn(this.plan(messages));
-    const branches: FutureBranches = {failed: this.tasks.failed};
-    if (this.interrupt) branches.interrupt = this.interrupt;
-    if (this.steering) branches.steering = this.steering;
-    branches.model = model;
-    const selected = yield* select(branches);
-    const value = yield* selected.future;
-    if (selected.tag === "failed") throw value;
-    if (selected.tag === "model") return {kind: "response", response: value as ModelResponse};
-    yield* this.discardModel(model);
-    if (selected.tag === "steering") {
-      if (typeof value !== "string" || !value.trim())
-        throw new TypeError("Steering must be a nonempty string");
-      return {kind: "steer", message: value};
-    }
-    if (selected.tag === "interrupt") {
-      if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
-      return {kind: "interrupt", reason: value};
-    }
-    throw new Error(`Unexpected LLM branch: ${selected.tag}`);
-  }
-
-  private *discardModel(model: Task<ModelResponse>): Operation<void> {
-    model.interrupt(new InterruptedError("Model response superseded by a control"));
-    try {
-      yield* model;
-    } catch (error) {
-      if (!(error instanceof InterruptedError)) throw error;
-    }
-  }
-
-  private *complete(action: ModelFinalResponse): Operation<RunResult<O> | undefined> {
-    if (this.tools.hasPending) {
-      // A pending tool should not hold a later steer hostage. Either its
-      // result or new steering gives the model a reason to reconsider.
-      if (this.step < this.config.maxSteps) yield* this.pendingToolPhase();
-      return undefined;
-    }
-    let output: O;
-    if (this.root.output) {
-      let candidate: unknown = action.output;
-      if (candidate === undefined) {
-        try {
-          candidate = JSON.parse(action.text);
-        } catch {}
-      }
-      const parsed = this.root.output.safeParse(candidate);
-      if (action.validationError || !parsed.success) {
-        this.history.append(
-          {role: "assistant", content: action.text},
-          {
-            role: "user",
-            content: JSON.stringify({
-              source: "agent-runtime",
-              type: "output-invalid",
-              instruction: "Return a final answer matching the requested output schema.",
-            }),
-          },
-        );
-        return undefined;
-      }
-      output = parsed.data;
-    } else {
-      if (action.validationError) throw new ModelProtocolError(action.validationError);
-      output = action.text as O;
-    }
-    const result = yield* this.reviewPhase({
-      status: "completed",
-      output,
-      steps: this.step,
-      messages: this.history.snapshot(),
-    });
-    if (!result) return undefined;
-    return yield* this.finish(result);
-  }
-
+  /** Runs one native tool-call batch. The model cannot read a partial batch, so
+   * the phase lasts until every foreground call settles; background calls were
+   * acknowledged as pending and report later through collectBackground(). */
   private *toolPhase(action: ModelToolCallsResponse): Operation<void> {
     const foreground = this.tools.startBatch(action, this.step, this.active, this.catalog);
     while (Object.keys(foreground).length > 0) {
-      const branches: FutureBranches = {
-        failed: this.tasks.failed,
-        ...foreground,
-        ...this.tools.pendingTasks(),
-      };
-      if (this.steering) branches.steering = this.steering;
-      if (this.interrupt) branches.interrupt = this.interrupt;
-      const selected = yield* select(branches);
-      const value = yield* selected.future;
-      if (selected.tag === "failed") throw value;
-      if (selected.tag === "interrupt") {
-        if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
-        throw new RunInterrupted(value);
-      }
-      if (selected.tag === "steering") {
-        this.acceptSteering(value);
-      } else if (selected.tag.startsWith("tool:")) {
-        this.tools.recordResult(selected.tag.slice(5), value as ToolResult);
-        delete foreground[selected.tag];
-      } else if (selected.tag.startsWith("pending:")) {
-        this.history.append(...this.tools.drainCompleted());
-      } else {
-        throw new Error(`Unexpected tool-phase branch: ${selected.tag}`);
-      }
+      const {tag} = yield* this.race({...foreground, ...this.tools.pendingTasks()});
+      delete foreground[tag];
+      this.collectBackground();
     }
     const transfer = this.tools.commitBatch();
-    this.history.append(...this.tools.drainCompleted());
+    this.collectBackground();
     if (transfer) {
       this.active = transfer();
       this.catalog = createToolCatalog(this.active.tools);
     }
   }
 
-  /** A final answer cannot complete while a background tool is pending. */
-  private *pendingToolPhase(): Operation<void> {
-    const branches: FutureBranches = {failed: this.tasks.failed, ...this.tools.pendingTasks()};
-    if (this.interrupt) branches.interrupt = this.interrupt;
-    if (this.steering) branches.steering = this.steering;
-    const selected = yield* select(branches);
-    const value = yield* selected.future;
-    if (selected.tag === "failed") throw value;
-    if (selected.tag === "interrupt") {
-      if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
-      throw new RunInterrupted(value);
-    }
-    if (selected.tag === "steering") {
-      this.acceptSteering(value);
-      return;
-    }
-    if (!selected.tag.startsWith("pending:"))
-      throw new Error(`Unexpected pending-tool branch: ${selected.tag}`);
-    this.history.append(...this.tools.drainCompleted());
+  /** Moves finished background results into history; true when any arrived. */
+  private collectBackground(): boolean {
+    const completed = this.tools.drainCompleted();
+    this.history.append(...completed);
+    return completed.length > 0;
   }
 
-  /** Review is another candidate operation: steering can invalidate it before
-   * its output is accepted, and interruption cancels it immediately. */
-  private *reviewPhase(candidate: RunResult<O>): Operation<RunResult<O> | undefined> {
-    const review = this.tasks.spawn(this.reviewOutput(candidate));
-    let changed = false;
-    while (true) {
-      const branches: FutureBranches = {failed: this.tasks.failed, review};
-      if (this.steering) branches.steering = this.steering;
-      if (this.interrupt) branches.interrupt = this.interrupt;
-      const selected = yield* select(branches);
-      const value = yield* selected.future;
-      if (selected.tag === "failed") throw value;
-      if (selected.tag === "interrupt") {
-        if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
-        throw new RunInterrupted(value);
+  private *complete(action: ModelFinalResponse): Operation<RunResult<O> | undefined> {
+    if (this.tools.hasPending) {
+      // A final answer cannot complete while background work is outstanding.
+      // Its result, or steering, gives the model a reason to reconsider.
+      if (this.step < this.config.maxSteps) {
+        yield* this.race(this.tools.pendingTasks());
+        this.collectBackground();
       }
-      if (selected.tag === "steering") {
-        this.acceptSteering(value);
-        changed = true;
-        continue;
-      }
-      if (selected.tag !== "review")
-        throw new Error(`Unexpected review-phase branch: ${selected.tag}`);
-      return changed ? undefined : (value as RunResult<O>);
+      return undefined;
     }
+    const parsed = this.parseOutput(action);
+    if (!parsed) {
+      this.history.append(
+        {role: "assistant", content: action.text},
+        {
+          role: "user",
+          content: JSON.stringify({
+            source: "agent-runtime",
+            type: "output-invalid",
+            instruction: "Return a final answer matching the requested output schema.",
+          }),
+        },
+      );
+      return undefined;
+    }
+    const result = yield* this.candidate(
+      this.review({
+        status: "completed",
+        output: parsed.output,
+        steps: this.step,
+        messages: this.history.snapshot(),
+      }),
+    );
+    return result && (yield* this.finish(result));
+  }
+
+  /** Returns undefined when the model should retry against the output schema. */
+  private parseOutput(action: ModelFinalResponse): {output: O} | undefined {
+    if (!this.root.output) {
+      if (action.validationError) throw new ModelProtocolError(action.validationError);
+      return {output: action.text as O};
+    }
+    let candidate: unknown = action.output;
+    if (candidate === undefined) {
+      try {
+        candidate = JSON.parse(action.text);
+      } catch {}
+    }
+    const parsed = this.root.output.safeParse(candidate);
+    if (action.validationError || !parsed.success) return undefined;
+    return {output: parsed.data};
   }
 
   private acceptSteering(value: unknown): void {
     if (typeof value !== "string" || !value.trim())
       throw new TypeError("Steering must be a nonempty string");
-    const source = this.steeringSource;
-    if (!source) throw new Error("Steering source is not configured");
-    const message: Message = {
+    this.history.append({
       role: "user",
       content: JSON.stringify({source: "agent-runtime", type: "steering", message: value}),
-    };
-    this.history.append(message);
-    this.steering = source();
+    });
+    // A steering future only exists when its source does.
+    this.steering = this.steeringSource!();
   }
 
-  private *reviewOutput(result: RunResult<O>): Operation<RunResult<O>> {
+  private *review(result: RunResult<O>): Operation<RunResult<O>> {
     result = yield* summarizeStoppedRun(result, this.root.finalize);
     if (this.root.afterRun) {
       const decision = yield* this.root.afterRun(createOutputCandidate(result), this.context);
@@ -402,6 +318,23 @@ class AgentRun<C, O> {
     return result;
   }
 
+  /** Ends a run that did not complete: settles owned work, then reviews and saves. */
+  private *stop(interruption: RunInterrupted | undefined): Operation<RunResult<O>> {
+    const reason = interruption ?? new InterruptedError("Maximum model steps reached");
+    yield* this.tasks.stop(reason);
+    this.tools.commitBatch(reason.message);
+    this.history.append(...this.tools.settlePending(reason));
+    const end = {
+      steps: Math.min(this.step, this.config.maxSteps),
+      messages: this.history.snapshot(),
+    };
+    const result: RunResult<O> = interruption
+      ? {...end, status: "interrupted", reason: interruption.message}
+      : {...end, status: "stopped", reason: "max_steps"};
+    return yield* this.finish(yield* this.review(result));
+  }
+
+  /** Validates the accepted result, commits its output, and saves the turn. */
   private *finish(result: RunResult<O>): Operation<RunResult<O>> {
     if (result.status === "completed") {
       if (this.root.output) result = {...result, output: this.root.output.parse(result.output)};
@@ -411,28 +344,15 @@ class AgentRun<C, O> {
     const output = result.output === undefined ? undefined : jsonSchema.parse(result.output);
     if (output !== undefined && JSON.stringify(output).length > this.config.maxOutputChars)
       throw new AgentLimitError("Final output exceeds maxOutputChars");
-    // From this point the answer is accepted. A late application interrupt
-    // must not turn publication/cleanup into a second finalization attempt.
-    this.steering = undefined;
-    this.interrupt = undefined;
-    // Commit only the accepted output. An interrupted policy cannot leak its
-    // candidate, and policy-provided stopped summaries get their own message.
+    // Only accepted output reaches history: a discarded candidate never does,
+    // and a policy-provided stopped summary gets its own message.
     if (output !== undefined) {
       this.history.append({
         role: "assistant",
         content: typeof output === "string" ? output : JSON.stringify(output),
       });
     }
-    result = {...result, messages: this.history.snapshot()};
     yield* this.history.save();
-    return result;
-  }
-
-  private *stop(reason: InterruptedError): Operation<void> {
-    this.steering = undefined;
-    this.interrupt = undefined;
-    yield* this.tasks.stop(reason);
-    this.tools.commitBatch(reason.message);
-    this.history.append(...this.tools.settlePending(reason));
+    return {...result, messages: this.history.snapshot()};
   }
 }

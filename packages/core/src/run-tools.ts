@@ -14,28 +14,24 @@ import type {
   ToolResult,
 } from "./types.js";
 
-type Outcome = {result?: ToolResult};
-type Completion = Readonly<{call: ToolCall; result: ToolResult}>;
-type Entry = Readonly<{
-  call: ToolCall;
-  background: boolean;
-  task: Task<ToolResult>;
-  outcome: Outcome;
-}>;
+type Entry = {
+  readonly call: ToolCall;
+  readonly background: boolean;
+  task?: Task<ToolResult>;
+  result?: ToolResult;
+};
 type Batch<C> = {
-  entries: readonly Entry[];
-  transfer?: ToolCall;
-  catalog: ToolCatalog<C>;
-  reported: Set<string>;
+  foreground: Entry[];
+  handoff?: {id: string; target: () => AgentRuntime<C>};
 };
 
-/** Owns call IDs and the active batch. Background tasks stay addressable by ID
- * for cancellation; completed results wait in a FIFO queue for the turn loop.
+/** Owns call IDs and the active batch. Foreground results are recorded as their
+ * tasks finish; background results wait in a FIFO queue for the turn loop.
  * Task lifetime belongs to RunTasks; transcript changes go through RunHistory. */
 export class RunTools<C> {
   private readonly usedIds: Set<string>;
-  private readonly backgroundById = new Map<string, Entry>();
-  private readonly completed: Completion[] = [];
+  private readonly background = new Map<string, Entry>();
+  private readonly completed: Entry[] = [];
   private batch: Batch<C> | undefined;
   private readonly executor: ToolExecutor<C>;
 
@@ -47,11 +43,12 @@ export class RunTools<C> {
     private readonly history: RunHistory,
     onApproval?: ApprovalHandler<C>,
   ) {
-    const previousCallIds = history.snapshot().flatMap((message) => {
-      if (message.role !== "assistant") return [];
-      return (message.calls ?? []).map((call) => call.id);
-    });
-    this.usedIds = new Set(previousCallIds);
+    this.usedIds = new Set(
+      history
+        .snapshot()
+        .flatMap((message) => (message.role === "assistant" ? (message.calls ?? []) : []))
+        .map((call) => call.id),
+    );
     this.executor = createToolExecutor({
       root,
       context,
@@ -62,15 +59,17 @@ export class RunTools<C> {
   }
 
   get hasPending(): boolean {
-    return this.backgroundById.size > 0;
+    return this.background.size > 0;
   }
 
   pendingTasks(): FutureBranches {
     return Object.fromEntries(
-      [...this.backgroundById].map(([id, entry]) => [`pending:${id}`, entry.task]),
+      [...this.background].map(([id, entry]) => [`pending:${id}`, entry.task!]),
     );
   }
 
+  /** Validates and starts a batch. Returns its foreground tasks; each records
+   * its own result when it finishes. Background calls are acknowledged now. */
   startBatch(
     action: ModelToolCallsResponse,
     step: number,
@@ -90,58 +89,48 @@ export class RunTools<C> {
       content: action.text ?? "",
       calls: structuredClone(action.calls),
     });
-    const entries = action.calls.map((call) => this.start(call, step, owner, catalog));
-    this.batch = {
-      entries,
-      transfer: transfers[0],
-      catalog,
-      reported: new Set(),
-    };
-    const foreground: FutureBranches = {};
-    for (const entry of entries) {
+
+    const batch: Batch<C> = {foreground: []};
+    const [transfer] = transfers;
+    if (transfer)
+      batch.handoff = {id: transfer.id, target: catalog.registry.get(transfer.name)!.handoff!};
+    this.batch = batch;
+
+    const tasks: FutureBranches = {};
+    for (const call of action.calls) {
+      const entry: Entry = {call, background: catalog.registry.get(call.name)?.background ?? false};
+      // The launching agent, catalog, and step stay fixed even if the run later hands off.
+      entry.task = this.tasks.spawn(this.invoke(entry, step, owner, catalog));
       if (entry.background) {
-        this.backgroundById.set(entry.call.id, entry);
-        this.record(entry, {status: "pending", operationId: entry.call.id});
+        this.background.set(call.id, entry);
+        this.record(call, {status: "pending", operationId: call.id});
       } else {
-        foreground[`tool:${entry.call.id}`] = entry.task;
+        batch.foreground.push(entry);
+        tasks[`tool:${call.id}`] = entry.task;
       }
     }
-    return foreground;
+    return tasks;
   }
 
-  /** Record a foreground result as soon as its task completes. */
-  recordResult(id: string, result: ToolResult): void {
-    const entry = this.batch?.entries.find((candidate) => candidate.call.id === id);
-    if (!entry || entry.background)
-      throw new Error(`No foreground call in the active batch: ${id}`);
-    this.record(entry, result);
-  }
-
-  /** Returns an approved transfer without activating it before results are flushed. */
-  commitBatch(reason?: string): (() => AgentRuntime<C>) | undefined {
-    if (!this.batch) return undefined;
-    const {entries, transfer, catalog, reported} = this.batch;
-    const transferred =
-      transfer &&
-      entries.find((entry) => entry.call.id === transfer.id)?.outcome.result?.status === "success";
-    for (const entry of entries) {
-      if (reported.has(entry.call.id)) continue;
-      const result = entry.outcome.result ?? {
-        status: "cancelled",
-        message: reason ?? "Run stopped",
-      };
-      this.record(entry, result);
-    }
+  /** Closes the batch, cancelling calls that never produced a result. Returns
+   * the handoff target when the batch approved one; the caller activates it. */
+  commitBatch(reason = "Run stopped"): (() => AgentRuntime<C>) | undefined {
+    const batch = this.batch;
+    if (!batch) return undefined;
     this.batch = undefined;
-    if (!transferred) return undefined;
-    const definition = catalog.registry.get(transfer.name)!;
-    return () => definition.handoff!();
+    for (const entry of batch.foreground) {
+      if (!entry.result) this.record(entry.call, {status: "cancelled", message: reason});
+    }
+    const {handoff} = batch;
+    if (!handoff) return undefined;
+    const approved = batch.foreground.find((entry) => entry.call.id === handoff.id);
+    return approved?.result?.status === "success" ? handoff.target : undefined;
   }
 
   /** Drain background completions in the order their tasks finished. */
   drainCompleted(): Message[] {
     return this.completed.splice(0).map(({call, result}) => {
-      this.backgroundById.delete(call.id);
+      this.background.delete(call.id);
       return {
         role: "user",
         content: JSON.stringify({
@@ -157,63 +146,36 @@ export class RunTools<C> {
 
   settlePending(reason: InterruptedError): Message[] {
     // Work interrupted before its first execute yield still needs a result.
-    for (const entry of this.backgroundById.values()) {
-      if (entry.outcome.result) continue;
-      const result: ToolResult = {status: "cancelled", message: reason.message};
-      entry.outcome.result = result;
-      this.completed.push({call: entry.call, result});
+    for (const entry of this.background.values()) {
+      if (entry.result) continue;
+      entry.result = {status: "cancelled", message: reason.message};
+      this.completed.push(entry);
     }
     return this.drainCompleted();
   }
 
-  private start(
-    call: ToolCall,
-    step: number,
-    owner: AgentRuntime<C>,
-    catalog: ToolCatalog<C>,
-  ): Entry {
-    const outcome: Outcome = {};
-    const background = catalog.registry.get(call.name)?.background ?? false;
-    return {
-      call,
-      background,
-      outcome,
-      // The task publishes its result through a per-call outcome. Its launching
-      // agent, catalog, and step stay fixed even if the run later hands off.
-      task: this.tasks.spawn(this.invoke(call, step, owner, catalog, outcome, background)),
-    };
-  }
-
   private *invoke(
-    call: ToolCall,
+    entry: Entry,
     step: number,
     owner: AgentRuntime<C>,
     catalog: ToolCatalog<C>,
-    outcome: Outcome,
-    background: boolean,
   ): Operation<ToolResult> {
-    const result = yield* this.executor.execute(call, step, owner, catalog);
-    outcome.result = result;
-    if (background) this.completed.push({call, result});
+    const result = yield* this.executor.execute(entry.call, step, owner, catalog);
+    entry.result = result;
+    if (entry.background) this.completed.push(entry);
+    else this.record(entry.call, result);
     return result;
   }
 
   private *cancel(id: string, reason = "Cancelled by the agent"): Operation<boolean> {
-    const entry = this.backgroundById.get(id);
+    const entry = this.background.get(id);
     if (!entry) throw new ToolError(`Unknown pending operation: ${id}`, "unknown_operation");
-    if (entry.outcome.result) return false;
-    entry.task.interrupt(new ToolCancelled(reason));
-    return (yield* entry.task).status === "cancelled";
+    if (entry.result) return false;
+    entry.task!.interrupt(new ToolCancelled(reason));
+    return (yield* entry.task!).status === "cancelled";
   }
 
-  private record(entry: Entry, result: ToolResult): void {
-    const batch = this.batch!;
-    this.history.append({
-      role: "tool",
-      callId: entry.call.id,
-      name: entry.call.name,
-      result,
-    });
-    batch.reported.add(entry.call.id);
+  private record(call: ToolCall, result: ToolResult): void {
+    this.history.append({role: "tool", callId: call.id, name: call.name, result});
   }
 }

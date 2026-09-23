@@ -94,17 +94,11 @@ function toolContext<C>(context: CoreToolContext<C>): ToolContext<C> {
 
 function toCoreOptions<S extends z.ZodType, C>(options: ToolOptions<S, C>): CoreToolOptions<S, C> {
   const {before, after, needsApproval, ...metadata} = options;
-  let approval: CoreToolOptions<S, C>["needsApproval"];
-  if (typeof needsApproval === "function") {
-    approval = toCoreHook(needsApproval);
-  } else {
-    approval = needsApproval;
-  }
   return {
     ...metadata,
     before: toCoreHook(before),
     after: toCoreHook(after),
-    needsApproval: approval,
+    needsApproval: typeof needsApproval === "function" ? toCoreHook(needsApproval) : needsApproval,
   };
 }
 
