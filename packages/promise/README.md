@@ -23,7 +23,7 @@ without an SDK context. Core handles result validation, business errors, and
 the optional `retry` policy.
 
 Set `retry: {maxAttempts: 5, initialInterval: {milliseconds: 250}}` on an
-`asyncTool` to retry its callback. The default is one attempt. For `tool`, set
+`asyncTool` to retry its callback. The default is three attempts. For `tool`, set
 retry options on its SDK operations; for `handlerTool`, set `retryPolicy` on
 the called service or handler. See [retry policies](../examples/README.md#retry-policies)
 for complete examples, model retries, and error behavior.
@@ -37,13 +37,6 @@ Tool `before`, `after`, and dynamic `needsApproval` hooks accept synchronous val
 or `RestatePromise`s. Metadata exposes application context, run/call IDs, step,
 display information, and available tool names. Core-only generator helpers are
 not part of this interface.
-
-Define `onUpdate(update, ctx, context)` on the agent or an individual run to
-observe progress and approval requests. The callback receives the regular SDK
-context and your application context. It can return synchronously or return a
-`RestatePromise<void>`; an `async` callback returns a native promise and is rejected.
-When both callbacks are supplied, the agent callback finishes before the run
-callback receives the same event.
 
 Define `onApproval(request, ctx, context)` on the agent or an individual run to
 store or publish approval requests. Each request contains `invocationId`,
@@ -59,9 +52,9 @@ its durable signal from a shared handler. `onApproval` publishes the request;
 it does not return a decision. Core's `onHumanApproval` remains an optional override
 for the decision mechanism.
 
-Use `@restate-agents/core` for generator composition, streaming, conversation
+Use `@restate-agents/core` for generator composition, conversation
 abstractions, and the remaining agent-level generator hooks. The local `adopt` compatibility
-helper currently pins the coroutine SDK to 1.17.1.
+helper pins the coroutine SDK to 1.17.2.
 
 See the [promise examples](../examples/src/promise) and
 [running instructions](../examples/README.md).

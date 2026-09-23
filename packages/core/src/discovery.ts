@@ -49,6 +49,42 @@ function nestedSchema(value: unknown): unknown {
     }),
   );
 }
+/** The model-facing schema: an optional object key plus the handler's input. */
+function inputSchema(raw: unknown, target: RestateToolTarget) {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  if (target.keyed) {
+    properties.key = {type: "string", minLength: 1};
+    required.push("key");
+  }
+  if (target.acceptsInput) {
+    properties.input = nestedSchema(raw);
+    required.push("input");
+  }
+  return {type: "object", properties, required, additionalProperties: false};
+}
+
+/** Validates the same shape as inputSchema(); throws for unsupported schemas. */
+function inputValidator(raw: unknown, target: RestateToolTarget): z.ZodType {
+  let value: z.ZodType = z.never();
+  if (raw === true) value = z.json();
+  else if (raw !== false && target.acceptsInput)
+    value = z.fromJSONSchema(raw as Record<string, unknown>);
+  return z
+    .object({
+      ...(target.keyed ? {key: z.string().min(1)} : {}),
+      ...(target.acceptsInput ? {input: value} : {}),
+    })
+    .strict();
+}
+
+/** Catalog ordering must not depend on the endpoint machine's locale. */
+function byCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** Snapshot annotated Restate handlers once per run, as in replit-final. */
 export function* restateTools<C = unknown>(
   options: RestateDiscoveryOptions,
@@ -76,14 +112,9 @@ export function* restateTools<C = unknown>(
   const warnings: string[] = [];
   const handlers = catalog.services
     .flatMap((service) => service.handlers.map((handler) => ({service, handler})))
-    .sort((a, b) => {
-      // Catalog ordering must not depend on the endpoint machine's locale.
-      const left = `${a.service.name}/${a.handler.name}`;
-      const right = `${b.service.name}/${b.handler.name}`;
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    .sort((a, b) =>
+      byCodeUnits(`${a.service.name}/${a.handler.name}`, `${b.service.name}/${b.handler.name}`),
+    );
   for (const {service, handler} of handlers) {
     const name = handler.metadata["restate.dev/agent"]?.trim();
     if (!name) continue;
@@ -101,36 +132,13 @@ export function* restateTools<C = unknown>(
       acceptsInput,
     };
     if (options.allow && !options.allow(target, name)) continue;
-    const properties: Record<string, unknown> = {},
-      required: string[] = [];
-    if (target.keyed) {
-      properties.key = {type: "string", minLength: 1};
-      required.push("key");
-    }
-    if (acceptsInput) {
-      properties.input = nestedSchema(raw);
-      required.push("input");
-    }
-    const schema = {type: "object", properties, required, additionalProperties: false};
-    let valueSchema: z.ZodType;
+    let input: z.ZodType;
     try {
-      if (raw === true) {
-        valueSchema = z.json();
-      } else if (raw === false || !acceptsInput) {
-        valueSchema = z.never();
-      } else {
-        valueSchema = z.fromJSONSchema(raw as Record<string, unknown>);
-      }
+      input = inputValidator(raw, target);
     } catch {
       warnings.push(`Ignored unsupported input schema at ${service.name}/${handler.name}`);
       continue;
     }
-    const input = z
-      .object({
-        ...(target.keyed ? {key: z.string().min(1)} : {}),
-        ...(acceptsInput ? {input: valueSchema} : {}),
-      })
-      .strict();
     tools.set(name, {
       ...tool({
         description: handler.documentation?.trim() || `Call ${target.service}/${target.handler}`,
@@ -151,7 +159,7 @@ export function* restateTools<C = unknown>(
           );
         },
       }),
-      inputSchema: schema,
+      inputSchema: inputSchema(raw, target),
     });
     reserved.add(name);
   }

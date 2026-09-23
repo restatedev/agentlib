@@ -10,7 +10,6 @@ import {
   GuardrailError,
   tool,
   ToolError,
-  type AgentUpdate,
   type ModelResponse,
 } from "@restate-agents/core";
 import {history} from "../../core/src/validation.js";
@@ -24,7 +23,7 @@ const call = (name: string, id = name, input = {}) => ({id, name, input});
 const batch = (...calls: ReturnType<typeof call>[]): ModelResponse => ({type: "tool_calls", calls});
 const base = {description: "test", input: z.object({})};
 
-void test("background completion gets one acknowledgment and a later runtime observation", async () => {
+void test("background completion gets one acknowledgment and a later model message", async () => {
   let step = 0;
   const result = await r.execute(
     ctx(),
@@ -64,8 +63,58 @@ void test("background completion gets one acknowledgment and a later runtime obs
   history(result.messages);
 });
 
+void test("background results reach the next model request in completion order", async () => {
+  await r.execute(
+    ctx(),
+    (function* () {
+      const releaseA = r.channel<void>();
+      const releaseB = r.channel<void>();
+      let step = 0;
+      const a = agent({
+        tools: {
+          a: tool({
+            ...base,
+            background: true,
+            *execute() {
+              yield* releaseA.receive;
+              return "A";
+            },
+          }),
+          b: tool({
+            ...base,
+            background: true,
+            *execute() {
+              yield* releaseB.receive;
+              return "B";
+            },
+          }),
+        },
+        *model(request) {
+          if (++step === 1) return batch(call("a"), call("b"));
+          if (step === 2) {
+            yield* releaseB.send();
+            yield* releaseA.send();
+            return {type: "final", text: "stale"};
+          }
+          const completed = request.messages.flatMap((message) => {
+            if (message.role !== "user" || !message.content.includes("background-tool-result"))
+              return [];
+            return [JSON.parse(message.content).operationId as string];
+          });
+          assert.deepEqual(completed, ["b", "a"]);
+          return done;
+        },
+      });
+      const result = yield* a.run("go");
+      assert.equal(result.output, "done");
+      assert.equal(step, 3);
+    })(),
+  );
+});
+
 void test("steering during inference discards a stale final answer and retains the update", async () => {
   let step = 0;
+  let discarded = false;
   await r.execute(
     ctx(),
     (function* () {
@@ -75,8 +124,13 @@ void test("steering during inference discards a stale final answer and retains t
       const a = agent({
         *model(req) {
           if (++step === 1) {
-            yield* change.send("Use the new address");
-            return {type: "final", text: "old"};
+            try {
+              yield* change.send("Use the new address");
+              yield* r.channel().receive;
+              return {type: "final", text: "old"};
+            } finally {
+              discarded = true;
+            }
           }
           assert.match(JSON.stringify(req.messages), /new address/);
           return done;
@@ -93,6 +147,7 @@ void test("steering during inference discards a stale final answer and retains t
     })(),
   );
   assert.equal(step, 2);
+  assert.equal(discarded, true);
 });
 
 void test("steering preserves effects from the active tool batch", async () => {
@@ -128,9 +183,10 @@ void test("steering preserves effects from the active tool batch", async () => {
   );
 });
 
-void test("interruption aborts inference, cleans its task, and makes no later tool calls", async () => {
-  let cleaned = false,
-    steps = 0;
+void test("interruption cancels inference and prevents its proposed tools", async () => {
+  let modelCancelled = false;
+  let toolRan = false;
+  let steps = 0;
   await r.execute(
     ctx(),
     (function* () {
@@ -141,10 +197,19 @@ void test("interruption aborts inference, cleans its task, and makes no later to
           try {
             yield* stop.send("stop now");
             yield* r.channel().receive;
-            return done;
+            return batch(call("write"));
           } finally {
-            cleaned = true;
+            modelCancelled = true;
           }
+        },
+        tools: {
+          write: tool({
+            ...base,
+            *execute() {
+              toolRan = true;
+              return "written";
+            },
+          }),
         },
       });
       const result = yield* a.run("go", {controls: {interrupt: stop.receive}});
@@ -152,7 +217,8 @@ void test("interruption aborts inference, cleans its task, and makes no later to
       if (result.status === "interrupted") assert.equal(result.reason, "stop now");
     })(),
   );
-  assert.equal(cleaned, true);
+  assert.equal(modelCancelled, true);
+  assert.equal(toolRan, false);
   assert.equal(steps, 1);
 });
 
@@ -239,7 +305,7 @@ void test("a background failure interrupts a later parked model and joins every 
   assert.equal(cleaned, true);
 });
 
-void test("selective background cancellation produces an observation and keeps unrelated work", async () => {
+void test("selective background cancellation produces a model message and keeps unrelated work", async () => {
   let cleaned = false,
     step = 0;
   const a = agent({
@@ -270,6 +336,64 @@ void test("selective background cancellation produces an observation and keeps u
   assert.equal(cleaned, true);
   history(result.messages);
 });
+
+void test(
+  "steering reaches the model while a background tool is still pending",
+  {timeout: 5000},
+  async () => {
+    let cleaned = false;
+    let step = 0;
+    await r.execute(
+      ctx(),
+      (function* () {
+        const change = r.channel<string>();
+        const never = r.channel<string>();
+        let receives = 0;
+        const a = agent({
+          tools: {
+            wait: tool({
+              ...base,
+              background: true,
+              *execute() {
+                try {
+                  yield* r.channel().receive;
+                  return 0;
+                } finally {
+                  cleaned = true;
+                }
+              },
+            }),
+            cancel: cancelOperationTool(),
+          },
+          *model(request) {
+            if (++step === 1) return batch(call("wait"));
+            if (step === 2) {
+              yield* change.send("Do not wait; cancel the sleep");
+              return {type: "final", text: "stale"};
+            }
+            if (step === 3) {
+              assert.match(JSON.stringify(request.messages), /cancel the sleep/);
+              return batch(call("cancel", "cancel", {operationId: "wait"}));
+            }
+            assert.match(JSON.stringify(request.messages), /background-tool-result/);
+            return done;
+          },
+        });
+        const result = yield* a.run("go", {
+          controls: {steering: () => (receives++ === 0 ? change.receive : never.receive)},
+        });
+        assert.equal(result.status, "completed");
+        assert.ok(
+          !result.messages.some(
+            (message) => message.role === "assistant" && message.content === "stale",
+          ),
+        );
+      })(),
+    );
+    assert.equal(cleaned, true);
+    assert.equal(step, 4);
+  },
+);
 
 void test("nested calls share tool policies, private context, approval, and output filtering", async () => {
   const order: string[] = [];
@@ -417,63 +541,6 @@ void test("async business errors and background results survive full journal rep
   assert.equal(effects, 1);
 });
 
-void test("stream consumption returns ordered updates and closing it joins active work", async () => {
-  let cleaned = false;
-  await r.execute(
-    ctx(),
-    (function* () {
-      const started = r.channel<void>();
-      const a = agent({
-        *model() {
-          return batch(call("wait"));
-        },
-        tools: {
-          wait: tool({
-            ...base,
-            *execute() {
-              try {
-                yield* started.send();
-                yield* r.channel().receive;
-                return 0;
-              } finally {
-                cleaned = true;
-              }
-            },
-          }),
-        },
-      });
-      const stream = yield* a.stream("go");
-      const first = yield* stream.next();
-      assert.equal(first.done, false);
-      yield* started.receive;
-      yield* stream.close();
-    })(),
-  );
-  assert.equal(cleaned, true);
-  const updates: AgentUpdate[] = [];
-  await r.execute(
-    ctx(),
-    (function* () {
-      const stream = yield* agent({
-        *model() {
-          return done;
-        },
-      }).stream("go");
-      while (true) {
-        const next = yield* stream.next();
-        if (next.done) break;
-        updates.push(next.value);
-      }
-      assert.equal((yield* stream.result).status, "completed");
-    })(),
-  );
-  assert.deepEqual(
-    updates.map((u) => u.sequence),
-    [1, 2],
-  );
-  assert.equal(new Set(updates.map((u) => u.id)).size, 2);
-});
-
 void test("steering received during an output guard triggers a fresh answer", async () => {
   let step = 0;
   await r.execute(
@@ -504,3 +571,73 @@ void test("steering received during an output guard triggers a fresh answer", as
   );
   assert.equal(step, 2);
 });
+
+void test("startup finishes before the run subscribes to steering", async () => {
+  let subscribed = false;
+  const result = await r.execute(
+    ctx(),
+    agent({
+      *beforeRun() {
+        assert.equal(subscribed, false);
+      },
+      *model() {
+        assert.equal(subscribed, true);
+        return done;
+      },
+    }).run("go", {
+      controls: {
+        steering: () => {
+          subscribed = true;
+          return r.channel<string>().receive;
+        },
+      },
+    }),
+  );
+  assert.equal(result.status, "completed");
+});
+
+for (const failure of [new Error("source failed"), null, undefined]) {
+  void test(`control source failure propagates unchanged: ${String(failure)}`, async () => {
+    let modelCleaned = false;
+    let rejected = false;
+    try {
+      await r.execute(
+        ctx(),
+        (function* () {
+          const change = r.channel<string>();
+          const never = r.channel<string>();
+          const brokenSource = r.spawn(
+            (function* (): r.Operation<string> {
+              throw failure;
+            })(),
+          );
+          let receives = 0;
+          const a = agent({
+            *model() {
+              try {
+                yield* change.send("update");
+                yield* never.receive;
+                return done;
+              } finally {
+                modelCleaned = true;
+              }
+            },
+          });
+          yield* a.run("go", {
+            controls: {
+              steering: () => {
+                if (receives++ === 0) return change.receive;
+                return brokenSource;
+              },
+            },
+          });
+        })(),
+      );
+    } catch (error) {
+      rejected = true;
+      assert.equal(error, failure);
+    }
+    assert.equal(rejected, true);
+    assert.equal(modelCleaned, true);
+  });
+}

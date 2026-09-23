@@ -141,7 +141,7 @@ export function asyncTool<S extends z.ZodType, C = unknown>(
             throw error;
           }
         },
-        {name: context.info.name, retry: definition.retry ?? {maxAttempts: 1}},
+        {name: context.info.name, retry: definition.retry ?? {maxAttempts: 3}},
       );
       if (!result.ok) throw new ToolError(result.message, result.code);
       return result.value;
@@ -163,6 +163,8 @@ export function* awaitChild<T>(future: ClientFuture<T>): Operation<T> {
     throw error;
   }
 }
+
+/** Call a Restate handler through a typed client; interruption cancels the child. */
 export function handlerTool<S extends z.ZodType, C = unknown>(
   definition: Omit<ToolDefinition<S, C>, "execute"> & {
     call(input: z.output<S>, context: ToolContext<C>): ClientFuture<JsonValue>;

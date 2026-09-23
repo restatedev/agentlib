@@ -8,9 +8,7 @@ export {journaledModel} from "./model.js";
 export {ModelProtocolError, ToolError, GuardrailError, AgentLimitError} from "./errors.js";
 export type {
   Agent,
-  AgentEvent,
   AgentOptions,
-  AgentUpdate,
   JsonValue,
   Message,
   Model,
@@ -34,7 +32,6 @@ export type {
   AsyncToolDefinition,
   ToolManifest,
   ToolResult,
-  UpdateHandler,
 } from "./types.js";
 
 export type {
@@ -42,7 +39,6 @@ export type {
   ApprovalRequest,
   ApprovalHandler,
   GuardrailResult,
-  AgentStream,
   AgentRuntime,
 } from "./types.js";
 export {sleepTool, humanApprovalTool, cancelOperationTool, searchToolsTool} from "./builtins.js";
@@ -56,6 +52,7 @@ export type {
   Conversation,
   ConversationStore,
   ConversationSnapshot,
+  ConversationCompactionStatus,
   CompactionPolicy,
   CompactionPlan,
   CompactionResult,

@@ -2,58 +2,24 @@ import {
   allSettled,
   channel as oneshot,
   InterruptedError,
-  select,
   spawn,
   type Future,
   type Operation,
   type Task,
 } from "@restatedev/restate-sdk-gen";
-import {RunInterrupted, type CapturedFailure} from "./errors.js";
 
 export type FutureBranches = Record<string, Future<unknown>>;
 
-/** Owns child tasks, their first fatal failure, and the interruption cutoff. */
+/** Owns child task cleanup and reports the first unexpected failure. */
 export class RunTasks {
   private readonly owned = new Set<Task<unknown>>();
-  private readonly fatal = oneshot<void>();
-  private failure: CapturedFailure | undefined;
-  private finalizing = false;
+  private readonly failure = oneshot<unknown>();
+  readonly failed = this.failure.receive;
 
-  track<T>(operation: Operation<T>): Task<T> {
-    const task = spawn(this.captureFailure(operation));
+  spawn<T>(operation: Operation<T>): Task<T> {
+    const task: Task<T> = spawn(this.captureFailure(operation, () => this.owned.delete(task)));
     this.owned.add(task);
     return task;
-  }
-
-  beginFinalization(): void {
-    this.finalizing = true;
-  }
-
-  *supervise<T>(operation: Operation<T>, interrupt?: Future<string>): Operation<T> {
-    const driver = spawn(operation);
-    try {
-      const branches: FutureBranches = {
-        fatal: this.fatal.receive,
-        ...(interrupt ? {interrupt} : {}),
-        driver,
-      };
-      const selected = yield* select(branches);
-      if (selected.tag === "fatal") {
-        driver.interrupt(this.failure!.error);
-        yield* allSettled([driver]);
-        throw this.failure!.error;
-      }
-      if (selected.tag === "interrupt") {
-        const reason = yield* selected.future;
-        if (typeof reason !== "string") throw new TypeError("Interruption reason must be a string");
-        if (!this.finalizing) driver.interrupt(new RunInterrupted(reason));
-      }
-      return yield* driver;
-    } catch (error) {
-      driver.interrupt(error);
-      yield* allSettled([driver]);
-      throw error;
-    }
   }
 
   *stop(reason: InterruptedError): Operation<void> {
@@ -69,20 +35,23 @@ export class RunTasks {
   }
 
   private *settle(reason: InterruptedError) {
-    for (const task of this.owned) task.interrupt(reason);
-    return yield* allSettled([...this.owned]);
+    const tasks = [...this.owned];
+    for (const task of tasks) task.interrupt(reason);
+    return yield* allSettled(tasks);
   }
 
-  private *captureFailure<T>(operation: Operation<T>): Operation<T> {
+  private *captureFailure<T>(operation: Operation<T>, release: () => void): Operation<T> {
+    let unexpectedFailure = false;
     try {
       return yield* operation;
     } catch (error) {
-      // Wake supervision even when the driver is parked on an unrelated task.
-      if (!(error instanceof InterruptedError)) {
-        this.failure ??= {error};
-        yield* this.fatal.send();
-      }
+      // A failed background task must wake the run even while other work is parked.
+      unexpectedFailure = !(error instanceof InterruptedError);
+      if (unexpectedFailure) yield* this.failure.send(error);
       throw error;
+    } finally {
+      // Keep unexpected failures until stop() has had a chance to report them.
+      if (!unexpectedFailure) release();
     }
   }
 }

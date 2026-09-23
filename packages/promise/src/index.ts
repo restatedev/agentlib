@@ -11,7 +11,6 @@ export type {
   ToolDefinition,
   AsyncToolDefinition,
   HandlerToolDefinition,
-  UpdateHandler,
   ApprovalHandler,
 } from "./types.js";
 export type {
@@ -20,7 +19,6 @@ export type {
   JsonValue,
   ToolInfo,
   GuardrailResult,
-  AgentUpdate,
   ApprovalRequest,
 } from "@restate-agents/core";
 export type {AsyncToolContext} from "@restate-agents/core";

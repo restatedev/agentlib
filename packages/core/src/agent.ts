@@ -2,7 +2,6 @@ import {z} from "zod";
 import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {Agent, AgentOptions, RunOptions, RunResult} from "./types.js";
 import {runAgent} from "./agent-run.js";
-import {streamRun} from "./agent-stream.js";
 import {positiveInteger as limit} from "./limits.js";
 
 /** Embeddable task loop. Definitions are reusable; every mutable object is run-local. */
@@ -31,19 +30,5 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   return {
     definition: options,
     run,
-    *stream(
-      input: string,
-      runOptions?: RunOptions<C>,
-    ): Operation<import("./types.js").AgentStream<O>> {
-      return yield* streamRun((emit) =>
-        run(input, {
-          ...runOptions,
-          *onUpdate(event, context) {
-            if (runOptions?.onUpdate) yield* runOptions.onUpdate(structuredClone(event), context);
-            yield* emit(event);
-          },
-        } as RunOptions<C>),
-      );
-    },
   };
 }

@@ -5,7 +5,6 @@ import * as r from "@restatedev/restate-sdk-gen";
 import {agent, type ModelResponse} from "@restate-agents/core";
 import {restateTools} from "@restate-agents/core/discovery";
 import {webSearch} from "@restate-agents/core/web-search";
-import {otelUpdates} from "@restate-agents/core/telemetry";
 import {runHandler} from "./replay-harness.mjs";
 const final: ModelResponse = {type: "final", text: "done"};
 
@@ -132,26 +131,4 @@ void test("web search bounds results, forwards cancellation, and replays without
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);
   assert.equal(requests, 1);
-});
-
-void test("OTel hooks emit metadata once per journaled effect and omit private context", async () => {
-  const spans: unknown[] = [];
-  const tracer = {
-    startSpan(name: string, options: unknown) {
-      spans.push({name, options});
-      return {end() {}};
-    },
-  };
-  const a = agent<{secret: string}>({
-    *model() {
-      return final;
-    },
-    onUpdate: otelUpdates(tracer as Parameters<typeof otelUpdates>[0]),
-  });
-  const handler = (ctx: Context) => r.execute(ctx, a.run("go", {context: {secret: "private"}}));
-  const first = await runHandler(handler);
-  assert.equal(spans.length, 2);
-  assert.ok(!JSON.stringify(spans).includes("private"));
-  await runHandler(handler, {replay: first.journal});
-  assert.equal(spans.length, 2);
 });

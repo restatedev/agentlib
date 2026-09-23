@@ -242,27 +242,13 @@ export function makeServiceTool<C = unknown>(
   arg: ServiceDescriptor | ServiceToolOptions<Record<string, HandlerDescriptor>>,
   makeCallFor: (descriptor: AnyDescriptor) => MakeCall,
 ): Tool<C> {
-  let descriptor: AnyDescriptor;
-  let handler: string | undefined;
-  let key: KeyArg | undefined;
-  let overrides: Overrides = {};
-  if (isDescriptor(arg)) {
-    descriptor = arg;
-  } else {
-    const {
-      iface,
-      handler: h,
-      key: k,
-      ...rest
-    } = arg as ServiceToolOptions<Record<string, HandlerDescriptor>> & {
-      handler?: string;
-      key?: KeyArg;
-    };
-    descriptor = iface as unknown as AnyDescriptor;
-    handler = h;
-    key = k;
-    overrides = rest;
-  }
+  const options = (isDescriptor(arg) ? {iface: arg} : arg) as Overrides & {
+    iface: unknown;
+    handler?: string;
+    key?: KeyArg;
+  };
+  const {iface, handler, key, ...overrides} = options;
+  const descriptor = iface as AnyDescriptor;
   const resolveKey = normalizeKey(descriptor, key);
   const makeCall = makeCallFor(descriptor);
   return handler === undefined
@@ -271,21 +257,17 @@ export function makeServiceTool<C = unknown>(
 }
 
 /** Gen-flavor client call: the free `client()` reads the ambient operation context. */
+type Handlers = Record<string, HandlerDescriptor>;
+type HandlerClient = Record<string, (arg?: JsonValue) => ClientFuture<JsonValue>>;
+
 const genMakeCallFor =
   (descriptor: AnyDescriptor): MakeCall =>
   (handler, key, callArg) => {
-    const c =
+    const handlers =
       key === undefined
-        ? client(descriptor as Descriptor<string, Record<string, HandlerDescriptor>, "service">)
-        : client(
-            descriptor as Descriptor<
-              string,
-              Record<string, HandlerDescriptor>,
-              "object" | "workflow"
-            >,
-            key,
-          );
-    return (c as Record<string, (arg?: JsonValue) => ClientFuture<JsonValue>>)[handler](callArg);
+        ? client(descriptor as Descriptor<string, Handlers, "service">)
+        : client(descriptor as Descriptor<string, Handlers, "object" | "workflow">, key);
+    return (handlers as HandlerClient)[handler](callArg);
   };
 
 /**
@@ -293,7 +275,7 @@ const genMakeCallFor =
  *
  * - `serviceTool(refundIface)` — one tool that can invoke any handler of the service
  *   (the model selects the handler via the tool input).
- * - `serviceTool({ iface: refundIface, handler: "pippo" })` — a tool scoped to one
+ * - `serviceTool({ iface: refundIface, handler: "issueRefund" })` — a tool scoped to one
  *   handler; `handler` is typechecked against the interface's handler names.
  *
  * Virtual objects and workflows additionally require a `key` (a string or a resolver).
@@ -302,7 +284,7 @@ const genMakeCallFor =
  * ```ts
  * tools: {
  *   refund: serviceTool(refundIface),
- *   pippo: serviceTool({ iface: refundIface, handler: "pippo" }),
+ *   issueRefund: serviceTool({ iface: refundIface, handler: "issueRefund" }),
  * }
  * ```
  */

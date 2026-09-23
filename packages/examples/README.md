@@ -5,11 +5,12 @@ Choose a flavor and read its numbered files from `01` onward:
 - [gensdk](src/gensdk): `@restate-agents/core`, generator tools, and `yield* agent.run(...)`.
 - [Promise](src/promise): `@restate-agents/promise`, regular SDK tools, and `await agent.run(ctx, ...)`.
 
-The first six lessons match across both flavors. Each file stands alone and
+The first six lessons match across both flavors, and so does the service-tool
+lesson (gensdk 10, promise 08). Each file stands alone and
 introduces one concept using what you learned earlier; you do not need to import
 or edit previous lessons. Later lessons combine those concepts into workflows.
-The `app.ts` files only register the services, and [shared.ts](src/shared.ts)
-configures the model.
+Each flavor's `services.ts` lists its services in tutorial order; the `app.ts`
+files serve them, and [shared.ts](src/shared.ts) configures the model.
 
 Each prompt handler declares a Zod input schema with a scenario-specific
 default for the request editor. Matching lessons use the same defaults
@@ -29,6 +30,7 @@ the request body required; object fields use `.default(...)`.
 | 07     | Concurrent agents / support integration | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             | [07_support_session.ts](src/promise/07_support_session.ts)         |
 | 08     | Parallel worker RPCs and synthesis      | [08_research_report.ts](src/gensdk/08_research_report.ts)         | —                                                                  |
 | 09     | Handoffs and session controls           | [09_support_session.ts](src/gensdk/09_support_session.ts)         | —                                                                  |
+| 10     | A whole Restate service as one tool     | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               | [08_service_tool.ts](src/promise/08_service_tool.ts)               |
 
 ## Start
 
@@ -211,7 +213,7 @@ to wait on SDK work return a `RestatePromise` directly.
 request and the application's run context; the promise flavor also receives the
 regular SDK context. The SDK awaits publication before waiting for a decision.
 To publish to an event bus, use a journaled `run` operation or a durable service
-call in the callback. No `onUpdate` filtering is needed.
+call in the callback.
 
 ## Promise 07 — Put tools and history together
 
@@ -230,9 +232,8 @@ unfinished child call when interrupted. Both services are registered by
 `pnpm dev:promise` and `pnpm dev`.
 
 Tool `before`, `after`, and dynamic `needsApproval` hooks return synchronous
-values or `RestatePromise`s. Model adapters are shared with core; streaming,
-conversation abstractions, and agent-level generator hooks use
-`@restate-agents/core`.
+values or `RestatePromise`s. Model adapters are shared with core. Conversation
+abstractions and agent-level generator hooks come from `@restate-agents/core`.
 
 ## gensdk 07 — Race concurrent agents
 
@@ -301,6 +302,25 @@ closing the demo ticket. `steer` and `interrupt` have example messages too.
 For `approve`, copy `invocationId` and `signalName` from `status().approval` and set
 `approved` to `true` to allow the action; its default is `false`.
 
+## gensdk 10 / Promise 08 — Expose a service as one tool
+
+`serviceTool(refundIface)` turns a Restate interface into a single tool. The
+model picks a handler (`getPolicy` or `issueRefund`) and passes its input; the
+handler descriptions and input schemas come from the interface contract, so no
+extra wiring is needed. Pass `{iface, handler: "issueRefund"}` to scope a tool
+to one handler instead. Virtual objects and workflows also take a `key`.
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/RefundAgent/ask" \
+  --json '"Refund order O-99 for $12.50 and tell me the refund policy."'
+# Promise flavor:
+curl --globoff "$RESTATE_CALL_URL/PromiseRefundAgent/ask" \
+  --json '"Refund order O-99 for $12.50 and tell me the refund policy."'
+```
+
+Each call is a durable child invocation. Interrupting the run cancels an
+unfinished call, and a failed handler is reported to the model as a tool error.
+
 ## Model configuration
 
 [shared.ts](src/shared.ts) configures the example model. `openAIModel` defaults
@@ -310,7 +330,7 @@ settings are preserved. Change an agent's `model` field to use another adapter
 or gateway.
 
 The promise adapter uses the local `adopt` backport, so the workspace pins the
-generator SDK to 1.17.1 until upstream `internal.adopt` is released.
+generator SDK to 1.17.2 until upstream `internal.adopt` is released.
 
 ## Retry policies
 
@@ -356,16 +376,22 @@ const result = await ctx.run("Perform action", () => performAction(), {
 });
 ```
 
-Without an explicit policy, `asyncTool` uses one attempt and the model adapters
-use three. A supplied policy replaces that default; specify `maxAttempts` when
+Without an explicit policy, `asyncTool` and the model adapters use three
+attempts. A supplied policy replaces that default; specify `maxAttempts` when
 you want a fixed attempt limit. The retry duration limits retries, not the
-execution time of one attempt.
+execution time of one attempt. Pass `callId` as an idempotency key for external
+writes, since a retried attempt can repeat an effect.
 
 For `asyncTool`, an ordinary thrown `Error` follows the retry policy.
 `ToolError` is a business error returned to the model without retrying the
-callback; `TerminalError` fails without retrying. The policy covers `execute`;
-SDK operations in `before` and `after` configure their own retries. Exhausting
-an action's retry policy raises a `TerminalError`.
+callback; `TerminalError` stops retrying. The policy covers `execute`; SDK
+operations in `before` and `after` configure their own retries. Exhausting an
+action's retry policy raises a `TerminalError`.
+
+A tool that ends with a `TerminalError` (thrown directly, after exhausted
+retries, or from a failed child handler) does not fail the agent. The model
+receives `{status: "error", code: "tool_failed", message}` and decides what to
+do next. Restate cancellation and agent limits still end the run.
 
 `handlerTool` relies on the called handler's invocation policy. The promise
 support example sets `retryPolicy` through `createServiceHandler`, with

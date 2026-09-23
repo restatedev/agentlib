@@ -4,10 +4,12 @@ import type {Message, Model} from "./types.js";
 import {history, modelResponse} from "./validation.js";
 
 export type ConversationSnapshot = {messages: Message[]; version: number};
+/** `void` retains compatibility with adapters that always reload after compaction. */
+export type ConversationCompactionStatus = "skipped" | "applied" | "stale" | void;
 export interface Conversation {
   load(): Operation<ConversationSnapshot>;
   append(messages: readonly Message[], expectedVersion: number): Operation<number>;
-  compact?(): Operation<unknown>;
+  compact?(): Operation<ConversationCompactionStatus>;
 }
 export interface ConversationStore {
   get<T>(key: string): Operation<T | undefined>;
@@ -39,6 +41,7 @@ export class LazyStateConversation implements Conversation {
   private readonly store: ConversationStore;
   private readonly metaKey: string;
   private readonly stateKey: string;
+
   constructor(
     private readonly options: {
       metaKey?: string;
@@ -51,26 +54,27 @@ export class LazyStateConversation implements Conversation {
     this.stateKey = options.stateKey ?? "conversation";
     this.metaKey = options.metaKey ?? `${this.stateKey}/meta`;
   }
+
   private *meta(): Operation<Meta> {
     return structuredClone((yield* this.store.get<Meta>(this.metaKey)) ?? {count: 0});
   }
+
   private key(index: number) {
     return `${this.stateKey}/${index}`;
   }
+
+  /** Messages in [from, through), read chunk by chunk. */
   private *range(from: number, through: number): Operation<Message[]> {
     const messages: Message[] = [];
     for (let i = Math.floor(from / CHUNK_SIZE); i < Math.ceil(through / CHUNK_SIZE); i++) {
       const chunk = yield* this.store.get<Message[]>(this.key(i));
       if (!chunk) throw new ConversationConflictError(`Missing conversation chunk: ${i}`);
-      messages.push(
-        ...chunk.slice(
-          Math.max(0, from - i * CHUNK_SIZE),
-          Math.min(CHUNK_SIZE, through - i * CHUNK_SIZE),
-        ),
-      );
+      const offset = i * CHUNK_SIZE;
+      messages.push(...chunk.slice(Math.max(0, from - offset), through - offset));
     }
     return structuredClone(messages);
   }
+
   *load(): Operation<ConversationSnapshot> {
     const meta = yield* this.meta();
     const messages = history(yield* this.range(meta.summary?.through ?? 0, meta.count));
@@ -81,6 +85,7 @@ export class LazyStateConversation implements Conversation {
       });
     return {messages, version: meta.count};
   }
+
   *append(messages: readonly Message[], expectedVersion: number): Operation<number> {
     const additions = history(messages);
     const meta = yield* this.meta();
@@ -89,8 +94,8 @@ export class LazyStateConversation implements Conversation {
     if (!additions.length) return meta.count;
     let offset = 0;
     while (offset < additions.length) {
-      const index = Math.floor(meta.count / CHUNK_SIZE),
-        used = meta.count % CHUNK_SIZE;
+      const index = Math.floor(meta.count / CHUNK_SIZE);
+      const used = meta.count % CHUNK_SIZE;
       const chunk = used ? yield* this.store.get<Message[]>(this.key(index)) : [];
       if (!chunk || chunk.length !== used)
         throw new ConversationConflictError("Invalid conversation tail");
@@ -102,20 +107,16 @@ export class LazyStateConversation implements Conversation {
     yield* this.store.set(this.metaKey, meta);
     return meta.count;
   }
+
   /** Full history remains available even after compaction changes model context. */
   *page(from = 0, limit = 100): Operation<{messages: Message[]; next: number}> {
-    if (
-      !Number.isSafeInteger(from) ||
-      from < 0 ||
-      !Number.isSafeInteger(limit) ||
-      limit < 1 ||
-      limit > 1000
-    )
-      throw new TypeError("Invalid conversation page range");
+    const valid = Number.isSafeInteger(from) && from >= 0 && Number.isSafeInteger(limit);
+    if (!valid || limit < 1 || limit > 1000) throw new TypeError("Invalid conversation page range");
     const meta = yield* this.meta();
     const end = Math.min(meta.count, from + limit);
     return {messages: yield* this.range(Math.min(from, meta.count), end), next: end};
   }
+
   /** Reserve an immutable prefix; it may be summarized in another handler. */
   *prepareCompaction(policy: CompactionPolicy = {}): Operation<CompactionPlan | undefined> {
     const {maxMessages = 64, maxChars = 64000, retainMessages = 12} = policy;
@@ -144,6 +145,7 @@ export class LazyStateConversation implements Conversation {
       ...(meta.summary ? {previousSummary: meta.summary.text} : {}),
     };
   }
+
   /** New appends are allowed; an overlapping newer summary makes this result stale. */
   *applyCompaction(result: CompactionResult): Operation<boolean> {
     const meta = yield* this.meta();
@@ -163,7 +165,8 @@ export class LazyStateConversation implements Conversation {
     yield* this.store.set(this.metaKey, {...meta, summary: {through: plan.through, text: summary}});
     return true;
   }
-  *compact(): Operation<"skipped" | "applied" | "stale"> {
+
+  *compact(): Operation<Exclude<ConversationCompactionStatus, void>> {
     if (!this.options.compaction) return "skipped";
     const plan = yield* this.prepareCompaction(this.options.compaction.policy);
     if (!plan) return "skipped";

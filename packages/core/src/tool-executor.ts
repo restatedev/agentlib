@@ -1,3 +1,4 @@
+import {CancelledError, TerminalError} from "@restatedev/restate-sdk";
 import {run as journal, signal, type Operation} from "@restatedev/restate-sdk-gen";
 import {
   AgentLimitError,
@@ -8,7 +9,6 @@ import {
   ToolError,
 } from "./errors.js";
 import type {
-  AgentEvent,
   AgentRuntime,
   ApprovalHandler,
   ApprovalRequest,
@@ -30,7 +30,6 @@ export type ToolExecutionLimits = Readonly<{
 type ToolExecutorOptions<C> = ToolExecutionLimits & {
   root: AgentRuntime<C>;
   context: RunContext<C>;
-  update: (event: AgentEvent) => Operation<void>;
   onApproval?: ApprovalHandler<C>;
   cancelOperation: ToolContext<C>["cancelOperation"];
 };
@@ -43,7 +42,6 @@ export function createToolExecutor<C>({
   maxToolCalls,
   maxToolDepth,
   maxOutputChars,
-  update,
   onApproval,
   cancelOperation,
 }: ToolExecutorOptions<C>) {
@@ -61,13 +59,16 @@ export function createToolExecutor<C>({
     const definition = registry.registry.get(call.name);
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
-    let nested = 0,
-      approval = 0;
+    // Root policies wrap the owner's: they check first and post-process last.
+    const policies = owner === root ? [root] : [root, owner];
+    let nestedCalls = 0;
+    let approvals = 0;
     let info: ToolInfo = {name: call.name, details: structuredClone(call.input)};
     const toolContext: ToolContext<C> = {
       ...context,
       callId: call.id,
       toolName: call.name,
+      step: callStep,
       get info() {
         return structuredClone(info);
       },
@@ -81,9 +82,7 @@ export function createToolExecutor<C>({
         if (JSON.stringify(snapshot).length > maxOutputChars)
           throw new AgentLimitError("Tool display information exceeds maxOutputChars");
         info = snapshot;
-        yield* update({type: "tool-info", step: callStep, callId: call.id, info});
       },
-      step: callStep,
       availableTools: () => [...registry.registry.keys()],
       *searchTools(query) {
         const selected = yield* journal(async () => registry.search.search(query), {
@@ -92,76 +91,59 @@ export function createToolExecutor<C>({
         });
         return registry.search.load(selected);
       },
-      *progress(value) {
-        yield* update({
-          type: "progress",
-          step: callStep,
-          callId: call.id,
-          value: jsonSchema.parse(value),
-        });
-      },
       *approve(input, question) {
         const request: ApprovalRequest = {
           invocationId: context.invocationId,
           call: {...call, input},
-          signalName: `${context.name}:approval:${call.id}:${approval++}`,
+          signalName: `${context.name}:approval:${call.id}:${approvals++}`,
           ...(question === undefined ? {} : {question}),
         };
-        yield* update({type: "approval-required", step: callStep, request});
-        if (root.onApproval) yield* root.onApproval(structuredClone(request), context.context);
-        if (owner !== root && owner.onApproval)
-          yield* owner.onApproval(structuredClone(request), context.context);
-        if (onApproval) yield* onApproval(structuredClone(request), context.context);
-        if (owner.onHumanApproval)
-          return (yield* owner.onHumanApproval(request, toolContext)) === true;
-        if (root.onHumanApproval)
-          return (yield* root.onHumanApproval(request, toolContext)) === true;
-        return (yield* signal<boolean>(request.signalName)) === true;
+        // Every handler publishes the request; the most specific decider answers it.
+        for (const publish of [...policies.map((p) => p.onApproval), onApproval]) {
+          if (publish) yield* publish(structuredClone(request), context.context);
+        }
+        const decider = policies.findLast((p) => p.onHumanApproval);
+        const approved = decider
+          ? yield* decider.onHumanApproval!(request, toolContext)
+          : yield* signal<boolean>(request.signalName);
+        return approved === true;
       },
       *callTool(name, input) {
         if (registry.registry.get(name)?.handoff)
           throw new ToolError("Handoffs must be direct model calls");
-        const child = {id: `${call.id}/nested-${nested++}`, name, input: jsonSchema.parse(input)};
-        yield* update({
-          type: "tool-start",
-          step: callStep,
-          call: child,
-          info: {name, details: child.input},
-        });
+        const child = {
+          id: `${call.id}/nested-${nestedCalls++}`,
+          name,
+          input: jsonSchema.parse(input),
+        };
         const result = yield* executeCall(child, callStep, owner, registry, depth + 1);
-        yield* update({type: "tool-end", step: callStep, call: child, result});
         if (result.status === "success") return result.output;
         if (result.status === "cancelled") throw new ToolCancelled(result.message);
+        if (result.status === "pending")
+          throw new ToolError("Unexpected pending nested call", "pending");
         throw new ToolError(
-          "message" in result ? result.message : "Unexpected pending nested call",
+          result.message,
           result.status === "error" ? result.code : result.status,
         );
       },
       cancelOperation,
     };
     try {
-      if (root.beforeTool) {
-        const reason = denial(yield* root.beforeTool(structuredClone(call), toolContext));
+      for (const policy of policies) {
+        if (!policy.beforeTool) continue;
+        const reason = denial(yield* policy.beforeTool(structuredClone(call), toolContext));
         if (reason !== undefined) throw new ToolDenied(reason);
       }
-      if (owner !== root && owner.beforeTool) {
-        const denied = denial(yield* owner.beforeTool(structuredClone(call), toolContext));
-        if (denied !== undefined) throw new ToolDenied(denied);
-      }
       let output = yield* definition.execute(call.input, toolContext);
-      if (owner !== root && owner.afterTool) output = yield* owner.afterTool(output, toolContext);
-      if (root.afterTool) output = yield* root.afterTool(output, toolContext);
+      for (const policy of policies.toReversed()) {
+        if (policy.afterTool) output = yield* policy.afterTool(output, toolContext);
+      }
       output = jsonSchema.parse(output);
       if (JSON.stringify(output).length > maxOutputChars)
         throw new ToolError("Tool output exceeds maxOutputChars", "output_limit");
       return {status: "success", output};
     } catch (error) {
-      if (error instanceof RunInterrupted || error instanceof ToolCancelled)
-        return {status: "cancelled", message: error.message};
-      if (error instanceof ToolDenied) return {status: "denied", message: error.message};
-      if (error instanceof ToolError)
-        return {status: "error", code: error.code, message: error.message};
-      throw error;
+      return failedResult(error);
     }
   }
 
@@ -174,6 +156,25 @@ export function createToolExecutor<C>({
       return executeCall(call, step, owner, catalog);
     },
   };
+}
+
+/** Maps settled tool failures to results the model can act on. A terminal
+ * failure (including exhausted retries or a failed child handler) is final for
+ * the tool, not the run. Native cancellation, run budgets, and retryable errors
+ * still propagate: Restate owns those. */
+function failedResult(error: unknown): ToolResult {
+  if (error instanceof RunInterrupted || error instanceof ToolCancelled)
+    return {status: "cancelled", message: error.message};
+  if (error instanceof ToolDenied) return {status: "denied", message: error.message};
+  if (error instanceof ToolError)
+    return {status: "error", code: error.code, message: error.message};
+  if (
+    error instanceof TerminalError &&
+    !(error instanceof CancelledError) &&
+    !(error instanceof AgentLimitError)
+  )
+    return {status: "error", code: "tool_failed", message: error.message};
+  throw error;
 }
 
 export type ToolExecutor<C> = ReturnType<typeof createToolExecutor<C>>;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
-import {agent, searchToolsTool, type ModelResponse} from "@restate-agents/core";
+import {agent, searchToolsTool, type Message, type ModelResponse} from "@restate-agents/core";
 import {mcpTools} from "@restate-agents/core/mcp";
 import {runHandler} from "./replay-harness.mjs";
 
@@ -198,7 +198,7 @@ void test("MCP authorization can refresh durably and is reused on replay", async
   assert.equal(mock.seen.length, requests);
 });
 
-void test("an expired stateful session fails instead of silently starting a replacement", async () => {
+void test("an expired stateful session is reported to the model instead of silently replaced", async () => {
   const mock = fixture("stateful", {expired: true});
   const handler = (ctx: Context) =>
     r.execute(
@@ -213,7 +213,8 @@ void test("an expired stateful session fails instead of silently starting a repl
         try {
           return yield* agent({
             tools: mcp.tools,
-            *model() {
+            *model(request) {
+              if (request.step === 2) return {type: "final", text: "session expired"};
               return {
                 type: "tool_calls",
                 calls: [{id: "x", name: "remote_lookup", input: {id: "42"}}],
@@ -226,6 +227,8 @@ void test("an expired stateful session fails instead of silently starting a repl
       })(),
     );
   const first = await runHandler(handler);
-  assert.match(first.output.error, /404|Session not found/);
+  const failure = first.output.messages.find((m: Message) => m.role === "tool")?.result;
+  assert.equal(failure?.status, "error");
+  assert.match(failure?.message, /404|Session not found/);
   assert.equal(mock.seen.filter((x) => x.method === "initialize").length, 1);
 });

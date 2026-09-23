@@ -4,12 +4,39 @@ import type {Message} from "./types.js";
 import {history} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
+type ToolMessage = Extract<Message, {role: "tool"}>;
 
-/** Owns committed messages, buffered observations, and the persistence cursor.
- * Callers receive snapshots; only observations invalidate an in-flight plan. */
+/** Events arrive in execution order. Model protocols require each batch's tool
+ * results immediately after its assistant call, ahead of intervening steering. */
+function modelTranscript(events: readonly Message[]): Message[] {
+  const batchByCall = new Map<string, number>();
+  for (const [index, message] of events.entries()) {
+    if (message.role !== "assistant") continue;
+    for (const call of message.calls ?? []) batchByCall.set(call.id, index);
+  }
+  const resultsByBatch = new Map<number, ToolMessage[]>();
+  for (const message of events) {
+    if (message.role !== "tool") continue;
+    const batch = batchByCall.get(message.callId);
+    if (batch === undefined) throw new TypeError("History contains an unmatched tool result");
+    const results = resultsByBatch.get(batch) ?? [];
+    results.push(message);
+    resultsByBatch.set(batch, results);
+  }
+  const transcript: Message[] = [];
+  for (const [index, message] of events.entries()) {
+    if (message.role === "tool") continue;
+    transcript.push(message);
+    if (message.role === "assistant") transcript.push(...(resultsByBatch.get(index) ?? []));
+  }
+  return history(transcript);
+}
+
+/** Owns the append-only event history and its persistence cursor. The run saves
+ * a model-valid transcript at finalization; earlier failures save nothing.
+ * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
-  private readonly observations: Message[] = [];
-  private currentRevision = 0;
+  private readonly provisional = new Set<Message>();
 
   private constructor(
     private readonly input: string,
@@ -37,43 +64,38 @@ export class RunHistory {
     return run;
   }
 
-  get revision(): number {
-    return this.currentRevision;
+  /** What the model sees during this run, including provisional feedback. */
+  snapshot(): Message[] {
+    return modelTranscript(this.messages);
   }
 
-  snapshot(): Message[] {
-    return structuredClone(this.messages);
+  /** What the turn commits: the persisted and returned transcript. */
+  committed(): Message[] {
+    return modelTranscript(this.messages.filter((message) => !this.provisional.has(message)));
   }
 
   append(...messages: Message[]): void {
     this.messages.push(...messages);
   }
 
-  observe(value: Record<string, unknown>): void {
-    this.observations.push({
-      role: "user",
-      content: JSON.stringify({source: "agent-runtime", ...value}),
-    });
-    this.currentRevision++;
-  }
-
-  flush(): void {
-    this.append(...this.observations.splice(0));
+  /** Model-visible for the rest of the run, but never saved or returned. */
+  appendProvisional(...messages: Message[]): void {
+    for (const message of messages) this.provisional.add(message);
+    this.messages.push(...messages);
   }
 
   *save(): Operation<void> {
-    if (this.conversation && this.messages.length > this.persisted) {
-      this.version = yield* this.conversation.append(
-        this.messages.slice(this.persisted),
-        this.version,
-      );
-      this.persisted = this.messages.length;
-    }
+    if (!this.conversation) return;
+    const transcript = this.committed();
+    if (transcript.length === this.persisted) return;
+    this.version = yield* this.conversation.append(transcript.slice(this.persisted), this.version);
+    this.persisted = transcript.length;
   }
 
   *compact(): Operation<void> {
     if (!this.conversation?.compact) return;
-    yield* this.conversation.compact();
+    const result = yield* this.conversation.compact();
+    if (result === "skipped") return;
     const compacted = yield* this.conversation.load();
     this.messages.splice(0, this.messages.length, ...history(compacted.messages), {
       role: "user",

@@ -27,7 +27,6 @@ export type ProviderOptions = {
   providerOptions?: GenerateSettings["providerOptions"];
   telemetry?: GenerateSettings["experimental_telemetry"];
   tracer?: Tracer;
-  includeChunks?: boolean;
   /** Best-effort I/O inside one journal attempt. A new start replaces that step's
    * previous attempt; raw text/reasoning precedes output guardrails. */
   onChunk?(
@@ -83,85 +82,100 @@ function toolCalls(
     return {id: call.toolCallId, name: call.toolName, input: jsonSchema.parse(call.input)};
   });
 }
+type Generation = {finishReason: string; text: string; calls: ToolCall[]; output: unknown};
+type ChunkInfo = {step: number; signal: AbortSignal};
+
+function settingsFor(
+  options: ProviderOptions,
+  request: ModelRequest,
+  signal: AbortSignal,
+): GenerateSettings {
+  const tools: ToolSet = Object.fromEntries(
+    request.tools.map((t) => [
+      t.name,
+      {description: t.description, inputSchema: aiSchema(t.inputSchema), strict: false},
+    ]),
+  );
+  return {
+    model: options.model,
+    instructions: request.instructions,
+    messages: messages(request),
+    tools,
+    maxOutputTokens: request.maxOutputTokens,
+    maxRetries: 0,
+    abortSignal: signal,
+    providerOptions: options.providerOptions,
+    experimental_telemetry: options.telemetry,
+    ...(request.outputSchema
+      ? {output: Output.object({schema: aiSchema(request.outputSchema)})}
+      : {}),
+  };
+}
+
+async function generate(settings: GenerateSettings, wantsOutput: boolean): Promise<Generation> {
+  const result = await generateText(settings);
+  finished(result.finishReason);
+  const calls = toolCalls(result.toolCalls);
+  const output = wantsOutput && !calls.length ? result.output : undefined;
+  return {finishReason: result.finishReason, text: result.text, calls, output};
+}
+
+async function stream(
+  settings: GenerateSettings,
+  wantsOutput: boolean,
+  options: ProviderOptions,
+  info: ChunkInfo,
+): Promise<Generation> {
+  await options.onChunk?.({type: "start"}, info);
+  const result = streamText(settings);
+  for await (const part of result.fullStream) {
+    if (part.type === "error") throw part.error;
+    if (part.type === "text-delta" || part.type === "reasoning-delta") {
+      await options.onChunk?.({type: part.type, text: part.text}, info);
+    }
+  }
+  const finishReason = await result.finishReason;
+  finished(finishReason);
+  const text = await result.text;
+  const calls = toolCalls(await result.toolCalls);
+  const output = wantsOutput && !calls.length ? await result.output : undefined;
+  await options.onChunk?.({type: "finish"}, info);
+  return {finishReason, text, calls, output};
+}
+
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */
 export function aiModel(options: ProviderOptions): Model {
-  return journaledModel(
-    async (request, {signal}) =>
-      traceModel(options.tracer, request, async () => {
-        const tools: ToolSet = Object.fromEntries(
-          request.tools.map((t) => [
-            t.name,
-            {description: t.description, inputSchema: aiSchema(t.inputSchema), strict: false},
-          ]),
-        );
-        const settings: GenerateSettings = {
-          model: options.model,
-          instructions: request.instructions,
-          messages: messages(request),
-          tools,
-          maxOutputTokens: request.maxOutputTokens,
-          maxRetries: 0,
-          abortSignal: signal,
-          providerOptions: options.providerOptions,
-          experimental_telemetry: options.telemetry,
+  async function complete(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
+    const settings = settingsFor(options, request, signal);
+    const wantsOutput = request.outputSchema !== undefined;
+    try {
+      const {finishReason, text, calls, output} = options.onChunk
+        ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
+        : await generate(settings, wantsOutput);
+      if (finishReason === "tool-calls" && !calls.length)
+        throw new ModelProtocolError("Model indicated tool calls but returned none");
+      if (calls.length) return {type: "tool_calls", calls, text};
+      return {
+        type: "final",
+        text,
+        ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
+      };
+    } catch (error) {
+      if (NoObjectGeneratedError.isInstance(error)) {
+        finished(error.finishReason);
+        return {
+          type: "final",
+          text: error.text ?? "",
+          validationError: "The response did not match the requested output schema.",
         };
-        if (request.outputSchema) {
-          settings.output = Output.object({schema: aiSchema(request.outputSchema)});
-        }
-        const chunks: ModelChunk[] = [];
-        const info = {step: request.step ?? 0, signal};
-        try {
-          let text: string, calls: ToolCall[], output: unknown, finishReason: string;
-          if (options.onChunk || options.includeChunks) {
-            await options.onChunk?.({type: "start"}, info);
-            const result = streamText(settings);
-            for await (const part of result.fullStream) {
-              if (part.type === "error") throw part.error;
-              if (part.type === "text-delta" || part.type === "reasoning-delta") {
-                const chunk = {type: part.type, text: part.text};
-                if (options.includeChunks) chunks.push(chunk);
-                await options.onChunk?.(chunk, info);
-              }
-            }
-            finishReason = await result.finishReason;
-            finished(finishReason);
-            text = await result.text;
-            calls = toolCalls(await result.toolCalls);
-            output = request.outputSchema && !calls.length ? await result.output : undefined;
-            await options.onChunk?.({type: "finish"}, info);
-          } else {
-            const result = await generateText(settings);
-            finishReason = result.finishReason;
-            finished(finishReason);
-            text = result.text;
-            calls = toolCalls(result.toolCalls);
-            output = request.outputSchema && !calls.length ? result.output : undefined;
-          }
-          if (finishReason === "tool-calls" && !calls.length)
-            throw new ModelProtocolError("Model indicated tool calls but returned none");
-          if (calls.length) {
-            return {type: "tool_calls", calls, text, ...(options.includeChunks ? {chunks} : {})};
-          }
-          return {
-            type: "final",
-            text,
-            ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
-            ...(options.includeChunks ? {chunks} : {}),
-          };
-        } catch (error) {
-          if (NoObjectGeneratedError.isInstance(error)) {
-            finished(error.finishReason);
-            return {
-              type: "final",
-              text: error.text ?? "",
-              validationError: "The response did not match the requested output schema.",
-            };
-          }
-          if (APICallError.isInstance(error) && !error.isRetryable)
-            throw new TerminalError(error.message);
-          throw error;
-        }
-      }),
+      }
+      if (APICallError.isInstance(error) && !error.isRetryable)
+        throw new TerminalError(error.message);
+      throw error;
+    }
+  }
+  return journaledModel(
+    (request, {signal}) => traceModel(options.tracer, request, () => complete(request, signal)),
     {name: "agent-model", retry: options.retry},
   );
 }

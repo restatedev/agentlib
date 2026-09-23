@@ -190,23 +190,3 @@ void test("structured output rejects transforms instead of applying them twice",
     /transform/i,
   );
 });
-
-void test("interruption after final output acceptance does not change the completed result", async () => {
-  await r.execute(
-    context(),
-    (function* () {
-      const stop = r.channel<string>();
-      const a = agent({
-        *model() {
-          return final;
-        },
-        *onUpdate(event) {
-          if (event.type === "run-end") yield* stop.send("late interruption");
-        },
-      });
-      const result = yield* a.run("go", {controls: {interrupt: stop.receive}});
-      assert.equal(result.status, "completed");
-      assert.equal(result.output, "accepted answer");
-    })(),
-  );
-});

@@ -6,7 +6,7 @@ import {channel, type Future} from "@restatedev/restate-sdk-gen";
  * Pass the RestatePromise directly, without an async wrapper or `.then()`.
  * Returns a plain Future; child-invocation cancellation stays with the caller.
  *
- * Temporary backport for restate-sdk-gen 1.17.1 until internal.adopt is released:
+ * Temporary backport for restate-sdk-gen 1.17.2 until internal.adopt is released:
  * https://github.com/restatedev/sdk-typescript/pull/797
  */
 export function adopt<T>(promise: RestatePromise<T>): Future<T> {

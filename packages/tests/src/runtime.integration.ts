@@ -8,6 +8,7 @@ import {z} from "zod";
 import {
   agent,
   asyncTool,
+  cancelOperationTool,
   handoff,
   handlerTool,
   serviceTool,
@@ -15,8 +16,8 @@ import {
   sleepTool,
   tool,
   type ModelResponse,
-  type AgentUpdate,
   type ToolCall,
+  type Conversation,
 } from "@restate-agents/core";
 import {programTool} from "@restate-agents/core/program";
 import {restateTools} from "@restate-agents/core/discovery";
@@ -85,100 +86,119 @@ const runner = r.service({
         ["first", "second"].map((name) =>
           r.spawn(
             (function* () {
-              const updates: AgentUpdate[] = [];
-              const result = yield* a.run(name, {
-                name,
-                context: {owner: name},
-                *onUpdate(update) {
-                  updates.push(update);
-                },
-              });
-              return {result, updates};
+              return yield* a.run(name, {name, context: {owner: name}});
             })(),
           ),
         ),
       );
     },
-    *streamFailure() {
-      const fail = r.channel<void>();
-      const stream = yield* agent({
-        *model() {
-          yield* fail.receive;
-          yield* r.sleep(5);
-          throw new TerminalError("expected producer failure");
-        },
-      }).stream("go");
-      const first = yield* stream.next();
-      yield* fail.send();
-      try {
-        yield* stream.next();
-        return {first, error: "Expected the next read to throw"};
-      } catch (error) {
-        return {first, error: String(error)};
-      }
-    },
     *steeringBursts() {
       const steering = r.invocation(r.handlerRequest().id).signal<string>("steering");
-      const steered = r.channel<void>();
-      const updates: AgentUpdate[] = [];
+      let signalsSent = 0;
       const result = yield* agent({
         *model(request) {
           if (request.step === 1) {
             steering.resolve("first");
+            signalsSent++;
             steering.resolve("second");
-            yield* steered.receive;
+            signalsSent++;
+            yield* r.sleep(5);
             return {type: "final", text: "stale"};
           }
+          yield* r.sleep(25);
           return final;
         },
-        *onUpdate(update) {
-          updates.push(update);
-          if (update.type === "steering" && update.message === "first") {
-            // Another arrival while the previous batch is being processed.
-            steering.resolve("third");
-            yield* r.sleep(5);
-          }
-          if (update.type === "steering" && update.message === "third") yield* steered.send();
-        },
       }).run("go", {steeringSignal: "steering"});
-      return {result, updates};
+      return {result, signalsSent};
     },
-    *streamBursts() {
-      const buffered = r.channel<void>();
-      const resume = r.channel<void>();
-      const stream = yield* agent({
+    *steeringBeforeModel() {
+      let writes = 0;
+      const result = yield* agent({
         tools: {
-          report: tool({
+          write: tool({
             ...base,
-            *execute(_, context) {
-              yield* context.progress(1);
-              yield* context.progress(2);
-              yield* buffered.send();
-              yield* resume.receive;
-              yield* r.sleep(5);
-              yield* context.progress(3);
-              return "reported";
+            *execute() {
+              writes++;
+              return "written";
             },
           }),
         },
-        *model(request) {
+        *beforeStep(request) {
           if (request.step === 1) {
-            return {type: "tool_calls", calls: [{id: "report", name: "report", input: {}}]};
+            r.invocation(r.handlerRequest().id).signal("steering").resolve("Do not write");
+            yield* r.sleep(5);
           }
+        },
+        *model(request): r.Operation<ModelResponse> {
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "write", name: "write", input: {}}]};
+          assert.match(JSON.stringify(request.messages), /Do not write/);
           return final;
         },
-      }).stream("go");
-      // Let the producer buffer several updates before the first read.
-      yield* buffered.receive;
-      const updates: AgentUpdate[] = [];
-      while (true) {
-        const next = yield* stream.next();
-        if (next.done) break;
-        updates.push(next.value);
-        // The queue is empty here; the next update must wake a fresh waiter.
-        if (next.value.type === "progress" && next.value.value === 2) yield* resume.send();
-      }
-      return {updates, result: yield* stream.result};
+      }).run("go", {steeringSignal: "steering"});
+      return {result, writes};
+    },
+    *steeringDuringTool() {
+      const self = r.invocation(r.handlerRequest().id);
+      let step = 0;
+      const result = yield* agent({
+        tools: {
+          write: tool({
+            ...base,
+            *execute() {
+              self.signal("steering").resolve("First revision");
+              self.signal("steering").resolve("Second revision");
+              yield* r.sleep(5);
+              return "written";
+            },
+          }),
+        },
+        *model(request): r.Operation<ModelResponse> {
+          if (++step === 1)
+            return {type: "tool_calls", calls: [{id: "write", name: "write", input: {}}]};
+          if (!JSON.stringify(request.messages).includes("Second revision"))
+            return {type: "final", text: "stale"};
+          return final;
+        },
+      }).run("go", {steeringSignal: "steering"});
+      return {result, step};
+    },
+    *steerPendingSleep() {
+      const self = r.invocation(r.handlerRequest().id);
+      const finalSubmitted = r.channel<void>();
+      r.spawn(
+        (function* () {
+          yield* finalSubmitted.receive;
+          yield* r.sleep(25);
+          self.signal("steering").resolve("Do not sleep; cancel it");
+        })(),
+      );
+      let step = 0;
+      const result = yield* agent({
+        tools: {sleep: sleepTool(), cancel: cancelOperationTool()},
+        *model(request): r.Operation<ModelResponse> {
+          if (++step === 1)
+            return {
+              type: "tool_calls",
+              calls: [{id: "sleep", name: "sleep", input: {milliseconds: 60000}}],
+            };
+          if (step === 2) {
+            assert.match(JSON.stringify(request.messages), /"status":"pending"/);
+            yield* finalSubmitted.send();
+            return {type: "final", text: "stale"};
+          }
+          if (step === 3) {
+            assert.match(JSON.stringify(request.messages), /Do not sleep/);
+            return {
+              type: "tool_calls",
+              calls: [{id: "cancel", name: "cancel", input: {operationId: "sleep"}}],
+            };
+          }
+          assert.match(JSON.stringify(request.messages), /background-tool-result/);
+          return final;
+        },
+      }).run("go", {steeringSignal: "steering"});
+      return {result, step};
     },
     *toolLimits(limit: "calls" | "depth") {
       const executed: string[] = [];
@@ -229,7 +249,6 @@ const runner = r.service({
       }
     },
     *toolInfo() {
-      const updates: AgentUpdate[] = [];
       const result = yield* agent({
         tools: {
           closeTicket: asyncTool({
@@ -253,15 +272,12 @@ const runner = r.service({
           }
           return final;
         },
-        *onUpdate(update) {
-          updates.push(update);
-        },
       }).run("Close T-42");
-      return {result, updates, invocationId: r.handlerRequest().id};
+      return {result, invocationId: r.handlerRequest().id};
     },
     *run(scenario: string) {
-      const updates: string[] = [];
       let modelCleaned = false;
+      let modelReturned = false;
       const a = agent({
         maxSteps: 6,
         tools: {
@@ -282,12 +298,29 @@ const runner = r.service({
           fail: tool({
             ...base,
             *execute() {
+              throw new Error("unexpected tool failure");
+            },
+          }),
+          failTerminal: tool({
+            ...base,
+            *execute() {
               throw new TerminalError("expected terminal failure");
             },
           }),
           sleep: sleepTool(),
           lookup: handlerTool({...base, call: () => r.client(child, "lookup").lookup()}),
-          remote: handlerTool({...base, call: () => r.client(child, "cancel").wait()}),
+          remote: handlerTool({
+            ...base,
+            call: () => {
+              r.spawn(
+                (function* () {
+                  yield* r.sleep(10);
+                  r.invocation(r.handlerRequest().id).signal("interrupt").resolve("cancel child");
+                })(),
+              );
+              return r.client(child, "cancel").wait();
+            },
+          }),
           write: asyncTool({
             ...base,
             async execute() {
@@ -301,7 +334,8 @@ const runner = r.service({
           if (scenario === "interrupt") {
             try {
               r.invocation(r.handlerRequest().id).signal("interrupt").resolve("stop inference");
-              yield* r.sleep(60000);
+              yield* r.sleep(10);
+              modelReturned = true;
               return final;
             } finally {
               modelCleaned = true;
@@ -324,6 +358,9 @@ const runner = r.service({
             switch (scenario) {
               case "failure":
                 names = ["wait", "fail"];
+                break;
+              case "terminal-tool":
+                names = ["failTerminal"];
                 break;
               case "approval":
                 names = ["approval"];
@@ -361,20 +398,6 @@ const runner = r.service({
           yield* r.run(async () => null, {name: "Publish approval"});
           r.invocation(request.invocationId).signal(request.signalName).resolve(true);
         },
-        *onUpdate(event) {
-          updates.push(event.type);
-          if (scenario === "late-interrupt" && event.type === "run-end")
-            r.invocation(r.handlerRequest().id).signal("interrupt").resolve("after acceptance");
-          if (scenario === "rpc-cancel" && event.type === "tool-start") {
-            r.spawn(
-              (function* () {
-                yield* r.sleep(10);
-                r.invocation(r.handlerRequest().id).signal("interrupt").resolve("cancel child");
-              })(),
-            );
-          }
-          yield* r.run(async () => null, {name: `event:${event.id}`});
-        },
       });
       try {
         return {
@@ -382,11 +405,11 @@ const runner = r.service({
             steeringSignal: "steering",
             interruptSignal: "interrupt",
           }),
-          updates,
           modelCleaned,
+          modelReturned,
         };
       } catch (error) {
-        return {error: String(error), updates, modelCleaned};
+        return {error: String(error), modelCleaned, modelReturned};
       }
     },
     *discovery() {
@@ -423,9 +446,62 @@ const runner = r.service({
 const session = r.object({
   name: "SdkConversation",
   handlers: {
+    *persistTurn(ending: "completed" | "stopped" | "interrupted" | "failed") {
+      const stored = new LazyStateConversation();
+      let loads = 0;
+      let appends = 0;
+      const conversation: Conversation = {
+        *load() {
+          loads++;
+          return yield* stored.load();
+        },
+        *append(messages, version) {
+          appends++;
+          return yield* stored.append(messages, version);
+        },
+        compact: () => stored.compact(),
+      };
+      const a = agent({
+        maxSteps: ending === "stopped" ? 1 : 3,
+        tools: {
+          write: tool({
+            ...base,
+            *execute() {
+              r.state().set("effect", "written");
+              yield* r.sleep(1);
+              return "written";
+            },
+          }),
+        },
+        *model(request): r.Operation<ModelResponse> {
+          assert.deepEqual((yield* stored.page()).messages, []);
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "write", name: "write", input: {}}]};
+          if (ending === "failed") throw new TerminalError("failure after effect");
+          if (ending === "interrupted") {
+            r.invocation(r.handlerRequest().id).signal("interrupt").resolve("stop");
+            yield* r.sleep(10);
+          }
+          return final;
+        },
+      });
+      let status: string;
+      try {
+        status = (yield* a.run("go", {conversation, interruptSignal: "interrupt"})).status;
+      } catch (error) {
+        if (!(error instanceof TerminalError)) throw error;
+        status = "failed";
+      }
+      return {
+        status,
+        loads,
+        appends,
+        messages: (yield* stored.page()).messages,
+        effect: yield* r.state().get<string>("effect"),
+      };
+    },
     *approveOutput() {
       const conversation = new LazyStateConversation();
-      const outputs: unknown[] = [];
       const result = yield* agent({
         *model(): r.Operation<ModelResponse> {
           return {type: "final", text: "approved answer"};
@@ -436,11 +512,8 @@ const session = r.object({
           yield* r.sleep(1);
           // Returning nothing approves the candidate without returning lifecycle facts.
         },
-        *onUpdate(update) {
-          if (update.type === "run-end") outputs.push(update.output);
-        },
       }).run("go", {conversation});
-      return {result, outputs, history: yield* conversation.page()};
+      return {result, history: yield* conversation.page()};
     },
     *interruptGuard() {
       const conversation = new LazyStateConversation();
@@ -563,84 +636,39 @@ after(async () => {
   await env?.stop();
 });
 void test(
-  "native always-replay: concurrent runs isolate call budgets, history, and updates",
+  "native always-replay: concurrent runs isolate call budgets and history",
   {timeout: 20000},
   async () => {
     const runs = await connect({url: env.baseUrl()}).client(runner).concurrentRuns();
     assert.deepEqual(
-      runs.map(({result}) => result.output),
+      runs.map((result) => result.output),
       ["first", "second"],
     );
     assert.deepEqual(
-      runs.map(({result}) => result.messages[0]),
+      runs.map((result) => result.messages[0]),
       [
         {role: "user", content: "first"},
         {role: "user", content: "second"},
       ],
     );
-    for (const {updates} of runs)
-      assert.deepEqual(
-        updates.map((update) => update.sequence),
-        [1, 2, 3, 4, 5],
-      );
-    assert.equal(new Set(runs.flatMap(({updates}) => updates.map((update) => update.id))).size, 10);
   },
 );
-void test(
-  "native always-replay: producer failure wakes an empty stream reader",
-  {timeout: 20000},
-  async () => {
-    const {first, error} = await connect({url: env.baseUrl()}).client(runner).streamFailure();
-    assert.equal(first.done, false);
-    assert.equal(first.value?.type, "step-start");
-    assert.match(error, /expected producer failure/);
-  },
-);
-void test(
-  "native always-replay: steering retains bursts and arrivals during draining",
-  {timeout: 20000},
-  async () => {
-    const {result, updates} = await connect({url: env.baseUrl()}).client(runner).steeringBursts();
-    assert.deepEqual(
-      updates.filter((update) => update.type === "steering").map((update) => update.message),
-      ["first", "second", "third"],
-    );
-    assert.deepEqual(
-      result.messages
-        .filter((message) => message.role === "user")
-        .map((message) => message.content),
-      [
-        "go",
-        '{"source":"agent-runtime","type":"steering","message":"first"}',
-        '{"source":"agent-runtime","type":"steering","message":"second"}',
-        '{"source":"agent-runtime","type":"steering","message":"third"}',
-      ],
-    );
-    assert.equal(result.output, "done");
-    assert.ok(
-      !result.messages.some(
-        (message) => message.role === "assistant" && message.content === "stale",
-      ),
-    );
-  },
-);
-void test(
-  "native always-replay: stream retains bursts and wakes again after draining",
-  {timeout: 20000},
-  async () => {
-    const {updates, result} = await connect({url: env.baseUrl()}).client(runner).streamBursts();
-    assert.deepEqual(
-      updates.filter((update) => update.type === "progress").map((update) => update.value),
-      [1, 2, 3],
-    );
-    assert.deepEqual(
-      updates.map((update) => update.sequence),
-      [1, 2, 3, 4, 5, 6, 7, 8],
-    );
-    assert.equal(updates.at(-1)?.type, "run-end");
-    assert.equal(result.status, "completed");
-  },
-);
+void test("native always-replay: steering retains bursts", {timeout: 20000}, async () => {
+  const {result, signalsSent} = await connect({url: env.baseUrl()}).client(runner).steeringBursts();
+  assert.equal(signalsSent, 2);
+  assert.deepEqual(
+    result.messages.filter((message) => message.role === "user").map((message) => message.content),
+    [
+      "go",
+      '{"source":"agent-runtime","type":"steering","message":"first"}',
+      '{"source":"agent-runtime","type":"steering","message":"second"}',
+    ],
+  );
+  assert.equal(result.output, "done");
+  assert.ok(
+    !result.messages.some((message) => message.role === "assistant" && message.content === "stale"),
+  );
+});
 for (const limit of ["calls", "depth"] as const) {
   void test(`native always-replay: shared tool ${limit} limit`, {timeout: 20000}, async () => {
     const result = await connect({url: env.baseUrl()}).client(runner).toolLimits(limit);
@@ -658,15 +686,15 @@ for (const scenario of [
   "steering",
   "steering-tools",
   "interrupt",
-  "late-interrupt",
   "failure",
+  "terminal-tool",
   "program",
   "rpc-cancel",
 ]) {
   void test(`native always-replay: ${scenario}`, {timeout: 20000}, async () => {
     const result = await connect({url: env.baseUrl()}).client(runner).run(scenario);
     if (scenario === "failure") {
-      assert.match(result.error!, /expected terminal failure/);
+      assert.match(result.error!, /unexpected tool failure/);
       return;
     }
     assert.ok(result.result, JSON.stringify(result));
@@ -674,7 +702,18 @@ for (const scenario of [
       result.result.status,
       scenario === "interrupt" || scenario === "rpc-cancel" ? "interrupted" : "completed",
     );
-    if (scenario === "interrupt") assert.equal(result.modelCleaned, true);
+    if (scenario === "interrupt") {
+      assert.equal(result.modelCleaned, true);
+      assert.equal(result.modelReturned, false);
+    }
+    if (scenario === "terminal-tool") {
+      const failure = result.result.messages.find((m) => m.role === "tool");
+      assert.deepEqual(failure?.role === "tool" && failure.result, {
+        status: "error",
+        code: "tool_failed",
+        message: "expected terminal failure",
+      });
+    }
     if (scenario === "parallel" || scenario === "program") assert.equal(effects.get(scenario), 1);
     if (scenario === "steering-tools") assert.equal(effects.get(scenario) ?? 0, 0);
     if (scenario === "parallel")
@@ -715,7 +754,6 @@ void test("the embeddable session example exposes shared controls without model 
   const client = connect({url: env.baseUrl()}).client(aiSession, "example");
   const status = await client.status();
   assert.equal(status.approval, null);
-  assert.deepEqual(status.updates, []);
   assert.deepEqual(await client.history(), {messages: [], next: 0});
   assert.equal(await client.steer("new note"), false);
   assert.equal(await client.interrupt("stop"), false);
@@ -726,9 +764,6 @@ void test(
   {timeout: 20000},
   async () => {
     const response = await connect({url: env.baseUrl()}).client(runner).toolInfo();
-    const metadata = response.updates.find((update) => update.type === "tool-info");
-    assert.ok(metadata && metadata.type === "tool-info");
-    assert.deepEqual(metadata.info, {name: "Close ticket", details: {ticketId: "T-42"}});
     assert.equal(response.result.status, "completed");
     assert.equal(effects.get("tool-info"), 1);
     const journal = await fetch(`${env.adminAPIBaseUrl()}/query`, {
@@ -753,7 +788,6 @@ void test(
     assert.equal(response.result.status, "completed");
     assert.equal(response.result.steps, 1);
     assert.equal(response.result.output, "approved answer");
-    assert.deepEqual(response.outputs, ["approved answer"]);
     assert.deepEqual(response.history.messages, [
       {role: "user", content: "go"},
       {role: "assistant", content: "approved answer"},
@@ -817,3 +851,88 @@ void test(
     assert.match(JSON.stringify(result.messages), /refundWindowDays/);
   },
 );
+
+void test(
+  "native always-replay: steering during beforeStep rejects stale tools",
+  {timeout: 20000},
+  async () => {
+    const {result, writes} = await connect({url: env.baseUrl()})
+      .client(runner)
+      .steeringBeforeModel();
+    assert.equal(result.output, "done");
+    assert.equal(writes, 0);
+    assert.equal(result.steps, 2);
+  },
+);
+
+void test(
+  "native always-replay: steering during a tool batch keeps FIFO order",
+  {timeout: 20000},
+  async () => {
+    const {result, step} = await connect({url: env.baseUrl()}).client(runner).steeringDuringTool();
+    assert.equal(result.output, "done");
+    assert.ok(step >= 2);
+    const steering = result.messages.flatMap((message) =>
+      message.role === "user" && message.content.includes('"type":"steering"') ? [message] : [],
+    );
+    assert.deepEqual(
+      steering.map((message) => message.content),
+      [
+        '{"source":"agent-runtime","type":"steering","message":"First revision"}',
+        '{"source":"agent-runtime","type":"steering","message":"Second revision"}',
+      ],
+    );
+    const toolIndex = result.messages.findIndex(
+      (message) => message.role === "tool" && message.callId === "write",
+    );
+    assert.ok(toolIndex >= 0 && toolIndex < result.messages.indexOf(steering[0]!));
+  },
+);
+
+void test(
+  "native always-replay: steering can cancel a pending durable sleep",
+  {timeout: 20000},
+  async () => {
+    const {result, step} = await connect({url: env.baseUrl()}).client(runner).steerPendingSleep();
+    assert.equal(result.status, "completed");
+    assert.equal(result.output, "done");
+    assert.equal(step, 4);
+    assert.ok(
+      !result.messages.some(
+        (message) => message.role === "assistant" && message.content === "stale",
+      ),
+    );
+    const completion = result.messages.find(
+      (message) => message.role === "user" && message.content.includes('"background-tool-result"'),
+    );
+    assert.ok(completion?.role === "user");
+    assert.match(completion.content, /"status":"cancelled"/);
+    const steeringIndex = result.messages.findIndex(
+      (message) => message.role === "user" && message.content.includes('"type":"steering"'),
+    );
+    assert.ok(steeringIndex >= 0);
+    assert.ok(steeringIndex < result.messages.indexOf(completion));
+  },
+);
+
+for (const ending of ["completed", "stopped", "interrupted", "failed"] as const) {
+  void test(
+    `native always-replay: turn persistence after ${ending}`,
+    {timeout: 20000},
+    async () => {
+      const result = await connect({url: env.baseUrl()})
+        .client(session, `persist-${ending}`)
+        .persistTurn(ending);
+      assert.equal(result.status, ending);
+      assert.equal(result.loads, 1);
+      assert.equal(result.effect, "written");
+      if (ending === "failed") {
+        assert.equal(result.appends, 0);
+        assert.deepEqual(result.messages, []);
+      } else {
+        assert.equal(result.appends, 1);
+        assert.match(JSON.stringify(result.messages), /written/);
+      }
+    },
+  );
+}
