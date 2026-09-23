@@ -29,6 +29,7 @@ the request body required; object fields use `.default(...)`.
 | 12     | Route to a specialist                 | [12_routing.ts](src/gensdk/12_routing.ts)                         |
 | 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/gensdk/13_tool_guardrail.ts)           |
 | 14     | Search the public web                 | [14_web_search.ts](src/gensdk/14_web_search.ts)                   |
+| 15     | Exchange feedback over durable RPC    | [15_peer_review_rpc.ts](src/gensdk/15_peer_review_rpc.ts)         |
 
 If you have a specific goal, start here:
 
@@ -42,6 +43,7 @@ If you have a specific goal, start here:
 | Route a request by its meaning      | [12](src/gensdk/12_routing.ts)         |
 | Enforce a budget before an action   | [13](src/gensdk/13_tool_guardrail.ts)  |
 | Answer with current public sources  | [14](src/gensdk/14_web_search.ts)      |
+| Let agents review each other's work | [15](src/gensdk/15_peer_review_rpc.ts) |
 
 ## Start
 
@@ -396,6 +398,41 @@ Keep private data out of search queries. The key stays in application code and
 is not part of the model's tool schema. If it is missing, the handler fails with
 a clear setup error before calling the model.
 
+## 15 — Let agents exchange feedback over RPC
+
+`PeerReview` asks `PeerAuthor` for a draft, sends that draft to two
+`PeerReviewer` invocations in parallel, and sends their labeled feedback back
+to the author for one revision. Each role is a normal Restate service. The
+conversation between them is explicit in typed request and response bodies:
+
+```mermaid
+sequenceDiagram
+  participant Lead as PeerReview
+  participant Author as PeerAuthor
+  participant Reviewer as PeerReviewer
+  Lead->>Author: write(brief)
+  Author-->>Lead: draft
+  par requirements
+    Lead->>Reviewer: review(brief, draft, requirements)
+    Reviewer-->>Lead: feedback
+  and clarity
+    Lead->>Reviewer: review(brief, draft, clarity)
+    Reviewer-->>Lead: feedback
+  end
+  Lead->>Author: write(brief, draft, both reviews)
+  Author-->>Lead: revised answer
+```
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/PeerReview/answer" \
+  --json '"Write a two-sentence release note for a feature that retries transient failures and resumes completed steps from a journal."'
+```
+
+The caller receives only the revised answer. Restate journals each RPC, so a
+replay does not repeat completed author or reviewer calls. The example uses
+`awaitChild` to cancel unfinished child invocations if the coordinator is
+interrupted. There is no shared mailbox or bespoke agent-to-agent protocol.
+
 ## Model configuration
 
 [shared.ts](src/shared.ts) configures the example model. `openAIModel` defaults
@@ -474,6 +511,11 @@ The later goal-based lessons draw on the same patterns described by
 and the [AI SDK web-search recipe](https://ai-sdk.dev/cookbook/node/web-search-agent).
 They use this library's Restate handlers and tools rather than copying another
 framework's control flow.
+
+Lesson 15 applies Restate's
+[service-to-service calls](https://docs.restate.dev/ai/patterns/multi-agent) to a
+bounded author-reviewer exchange. It combines durable RPC, parallel feedback,
+and one explicit revision without extra messaging infrastructure.
 
 `pnpm test:integration` registers these exported services with the official
 `RestateTestEnvironment` and a real `RestateContainer().alwaysReplay()`. Tests

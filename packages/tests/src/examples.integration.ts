@@ -20,8 +20,11 @@ const sources = [
   },
 ];
 const effects = new Map<string, number>();
+const peerEffects = new Map<string, number>();
 const cleanedRaces = new Set<string>();
 const answer = (output: unknown): ModelResponse => ({type: "final", text: JSON.stringify(output)});
+type PeerDraftRequest = {brief: string; draft?: string; feedback: string[]};
+type PeerReviewRequest = {brief: string; draft: string; focus: "requirements" | "clarity"};
 
 // Both workers must reach this barrier before either can finish: serialization
 // would deadlock and fail the test's timeout.
@@ -224,6 +227,44 @@ const fixtureModel: Model = function* (request) {
     assert.equal(result.result.status, "success");
     return {type: "final", text: "Demo hotel H-42 was reserved."};
   }
+  if (instructions.startsWith("Write a concise answer using only facts")) {
+    const input = JSON.parse(prompt(request)) as PeerDraftRequest;
+    if (input.draft)
+      assert.deepEqual(input.feedback, [
+        "requirements: Mention retries and replay.",
+        "clarity: Use two short sentences.",
+      ]);
+    const stage = input.draft ? "revision" : "first-draft";
+    const invocationId = r.handlerRequest().id;
+    return yield* r.run(
+      async (): Promise<ModelResponse> => {
+        const key = `${invocationId}:${stage}`;
+        peerEffects.set(key, (peerEffects.get(key) ?? 0) + 1);
+        return {type: "final", text: input.draft ? "Revised answer." : "First draft."};
+      },
+      {name: `fixture:${stage}`},
+    );
+  }
+  if (instructions.startsWith("Review the draft for the requested focus")) {
+    const input = JSON.parse(prompt(request)) as PeerReviewRequest;
+    assert.equal(input.draft, "First draft.");
+    const invocationId = r.handlerRequest().id;
+    // Both reviewer RPCs must arrive before either can finish.
+    yield* r.client(barrier, "peer-review").arrive(invocationId);
+    yield* r.signal("workers-ready");
+    return yield* r.run(
+      async (): Promise<ModelResponse> => {
+        const key = `${invocationId}:${input.focus}`;
+        peerEffects.set(key, (peerEffects.get(key) ?? 0) + 1);
+        const feedback =
+          input.focus === "requirements"
+            ? "Mention retries and replay."
+            : "Use two short sentences.";
+        return {type: "final", text: feedback};
+      },
+      {name: `fixture:${input.focus}`},
+    );
+  }
   const last = request.messages.at(-1);
   if (last?.role === "user" && last.content.startsWith("The run stopped:"))
     return {type: "final", text: "Stopped as requested."};
@@ -257,6 +298,7 @@ const [
   {ticketApproval},
   {supportRouter},
   {guardedBooking},
+  {peerAuthor, peerReviewer, peerReview},
 ] = await Promise.all([
   import("@restate-agents/examples/gensdk/hello"),
   import("@restate-agents/examples/gensdk/tools"),
@@ -269,6 +311,7 @@ const [
   import("@restate-agents/examples/gensdk/human-approval"),
   import("@restate-agents/examples/gensdk/routing"),
   import("@restate-agents/examples/gensdk/tool-guardrail"),
+  import("@restate-agents/examples/gensdk/peer-review-rpc"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -289,6 +332,9 @@ before(
         ticketApproval,
         supportRouter,
         guardedBooking,
+        peerAuthor,
+        peerReviewer,
+        peerReview,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -362,6 +408,19 @@ void test("tool policy denies an over-budget booking and permits one within budg
     "Demo hotel H-42 was reserved.",
   );
 });
+
+void test(
+  "agents exchange parallel reviews and a revision through durable RPC",
+  {timeout: 20000},
+  async () => {
+    const result = await connect({url: env.baseUrl()})
+      .client(peerReview)
+      .answer("Write a two-sentence release note about retries and journal replay.");
+    assert.equal(result, "Revised answer.");
+    assert.equal(peerEffects.size, 4);
+    assert.ok([...peerEffects.values()].every((count) => count === 1));
+  },
+);
 
 const approvalExamples = [
   {

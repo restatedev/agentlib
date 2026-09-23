@@ -59,6 +59,10 @@
     "./gensdk/web-search": {
       "types": "./dist/gensdk/14_web_search.d.ts",
       "import": "./dist/gensdk/14_web_search.js"
+    },
+    "./gensdk/peer-review-rpc": {
+      "types": "./dist/gensdk/15_peer_review_rpc.d.ts",
+      "import": "./dist/gensdk/15_peer_review_rpc.js"
     }
   },
   "scripts": {
