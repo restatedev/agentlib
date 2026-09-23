@@ -258,7 +258,7 @@ void test("provider truncation fails even when the response text is otherwise va
   assert.match(first.output.message, /Incomplete model response: length/);
 });
 
-void test("live chunks occur only during provider I/O while recorded chunks reconstruct on replay", async () => {
+void test("live chunks occur only during provider I/O and are not replayed", async () => {
   const live: string[] = [];
   const provider = new MockLanguageModelV4({
     doStream: async () => ({
@@ -278,7 +278,6 @@ void test("live chunks occur only during provider I/O while recorded chunks reco
   const a = agent({
     model: aiModel({
       model: provider,
-      includeChunks: true,
       async onChunk(chunk) {
         live.push(chunk.type);
       },

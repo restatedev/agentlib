@@ -27,7 +27,6 @@ export type ProviderOptions = {
   providerOptions?: GenerateSettings["providerOptions"];
   telemetry?: GenerateSettings["experimental_telemetry"];
   tracer?: Tracer;
-  includeChunks?: boolean;
   /** Best-effort I/O inside one journal attempt. A new start replaces that step's
    * previous attempt; raw text/reasoning precedes output guardrails. */
   onChunk?(
@@ -126,16 +125,13 @@ async function stream(
   wantsOutput: boolean,
   options: ProviderOptions,
   info: ChunkInfo,
-  chunks: ModelChunk[],
 ): Promise<Generation> {
   await options.onChunk?.({type: "start"}, info);
   const result = streamText(settings);
   for await (const part of result.fullStream) {
     if (part.type === "error") throw part.error;
     if (part.type === "text-delta" || part.type === "reasoning-delta") {
-      const chunk = {type: part.type, text: part.text};
-      if (options.includeChunks) chunks.push(chunk);
-      await options.onChunk?.(chunk, info);
+      await options.onChunk?.({type: part.type, text: part.text}, info);
     }
   }
   const finishReason = await result.finishReason;
@@ -152,21 +148,17 @@ export function aiModel(options: ProviderOptions): Model {
   async function complete(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
-    const chunks: ModelChunk[] = [];
-    const extra = options.includeChunks ? {chunks} : {};
     try {
-      const {finishReason, text, calls, output} =
-        options.onChunk || options.includeChunks
-          ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal}, chunks)
-          : await generate(settings, wantsOutput);
+      const {finishReason, text, calls, output} = options.onChunk
+        ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
+        : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
         throw new ModelProtocolError("Model indicated tool calls but returned none");
-      if (calls.length) return {type: "tool_calls", calls, text, ...extra};
+      if (calls.length) return {type: "tool_calls", calls, text};
       return {
         type: "final",
         text,
         ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
-        ...extra,
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {

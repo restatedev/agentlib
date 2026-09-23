@@ -36,13 +36,11 @@ export type ModelFinalResponse = {
   text: string;
   output?: JsonValue;
   validationError?: string;
-  chunks?: ModelChunk[];
 };
 export type ModelToolCallsResponse = {
   type: "tool_calls";
   calls: ToolCall[];
   text?: string;
-  chunks?: ModelChunk[];
 };
 export type ModelResponse = ModelFinalResponse | ModelToolCallsResponse;
 /** A local journaled call or an RPC to a model gateway are both operations. */

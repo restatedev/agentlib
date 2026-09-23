@@ -212,9 +212,6 @@ class AgentRun<C, O> {
       if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));
     }
     const response = modelResponse(yield* this.active.model(request));
-    const chunkChars = (response.chunks ?? []).reduce((n, chunk) => n + chunk.text.length, 0);
-    if (chunkChars > this.config.maxOutputChars)
-      throw new AgentLimitError("Model chunks exceed maxOutputChars");
     if ((response.text?.length ?? 0) > this.config.maxOutputChars)
       throw new AgentLimitError("Model output exceeds maxOutputChars");
     return response;

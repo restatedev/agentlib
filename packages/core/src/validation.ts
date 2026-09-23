@@ -28,9 +28,6 @@ const messageSchema = z.discriminatedUnion("role", [
     result: toolResultSchema,
   }),
 ]);
-const chunks = z
-  .array(z.object({type: z.enum(["text-delta", "reasoning-delta"]), text: z.string()}))
-  .optional();
 const responseSchema = z.discriminatedUnion("type", [
   z
     .object({
@@ -38,7 +35,6 @@ const responseSchema = z.discriminatedUnion("type", [
       text: z.string(),
       output: jsonSchema.optional(),
       validationError: z.string().optional(),
-      chunks,
     })
     .refine(
       (value) =>
@@ -48,7 +44,6 @@ const responseSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_calls"),
     calls: z.array(callSchema).min(1),
     text: z.string().optional(),
-    chunks,
   }),
 ]);
 
