@@ -103,6 +103,35 @@ void test("handoff preserves completed history, changes tools/instructions, and 
   assert.equal((await r.execute(ctx(), bounded.run("go"))).status, "stopped");
 });
 
+void test("run-level tools remain available after a handoff", async () => {
+  const lookup = tool({
+    description: "run-level fixture",
+    input: z.object({}),
+    *execute() {
+      return "found";
+    },
+  });
+  const specialist = agent({
+    name: "specialist",
+    *model(req) {
+      assert.deepEqual(
+        req.tools.map((t) => t.name),
+        ["lookup"],
+      );
+      return done;
+    },
+  });
+  const triage = agent({
+    name: "triage",
+    tools: {transfer: handoff(specialist)},
+    *model() {
+      return {type: "tool_calls", calls: [{id: "h", name: "transfer", input: {}}]};
+    },
+  });
+  const result = await r.execute(ctx(), triage.run("go", {tools: {lookup}}));
+  assert.equal(result.status, "completed");
+});
+
 void test("background work keeps its launching agent's tool context after a handoff", async () => {
   await r.execute(
     ctx(),

@@ -234,7 +234,8 @@ class AgentRun<C, O> {
     this.collectBackground();
     if (transfer) {
       this.active = transfer();
-      this.catalog = createToolCatalog(this.active.tools);
+      // Run-level tools belong to the run, not the agent, so they survive a handoff.
+      this.catalog = createToolCatalog(this.active.tools, this.options?.tools);
     }
   }
 
