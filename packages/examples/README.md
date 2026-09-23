@@ -1,9 +1,9 @@
 # Agent tutorial
 
-Read the numbered files in [src/gensdk](src/gensdk) from `01` onward. Each file
+Read the numbered files in [src/lessons](src/lessons) from `01` onward. Each file
 stands alone; you do not need to import or edit previous lessons. Lessons 01–10
 build up the agent and workflow primitives. The later lessons are goal-based
-recipes you can read in any order. [services.ts](src/gensdk/services.ts) lists
+recipes you can read in any order. [services.ts](src/lessons/services.ts) lists
 the services in tutorial order, [app.ts](src/app.ts) serves them, and
 [shared.ts](src/shared.ts) configures the model.
 
@@ -13,35 +13,35 @@ the endpoint after changing a schema so Restate receives the updated defaults.
 String bodies use `.meta({default: ...})` to prefill the editor while keeping
 the request body required; object fields use `.default(...)`.
 
-| Lesson | New concept                           | Source                                                            |
-| ------ | ------------------------------------- | ----------------------------------------------------------------- |
-| 01     | One agent, one request                | [01_hello.ts](src/gensdk/01_hello.ts)                             |
-| 02     | A tool with validated arguments       | [02_tools.ts](src/gensdk/02_tools.ts)                             |
-| 03     | Conversation history between requests | [03_conversation.ts](src/gensdk/03_conversation.ts)               |
-| 04     | Validated, typed output               | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     |
-| 05     | A bounded draft-and-review loop       | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) |
-| 06     | Human approval                        | [06_human_approval.ts](src/gensdk/06_human_approval.ts)           |
-| 07     | Concurrent agents                     | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             |
-| 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/gensdk/08_research_report.ts)         |
-| 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         |
-| 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               |
-| 11     | A coding agent in a Modal sandbox     | [11_coding_agent.ts](src/gensdk/11_coding_agent.ts)               |
-| 12     | Route to a specialist                 | [12_routing.ts](src/gensdk/12_routing.ts)                         |
-| 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/gensdk/13_tool_guardrail.ts)           |
-| 14     | Search the public web                 | [14_web_search.ts](src/gensdk/14_web_search.ts)                   |
+| Lesson | New concept                           | Source                                                             |
+| ------ | ------------------------------------- | ------------------------------------------------------------------ |
+| 01     | One agent, one request                | [01_hello.ts](src/lessons/01_hello.ts)                             |
+| 02     | A tool with validated arguments       | [02_tools.ts](src/lessons/02_tools.ts)                             |
+| 03     | Conversation history between requests | [03_conversation.ts](src/lessons/03_conversation.ts)               |
+| 04     | Validated, typed output               | [04_structured_output.ts](src/lessons/04_structured_output.ts)     |
+| 05     | A bounded draft-and-review loop       | [05_evaluator_optimizer.ts](src/lessons/05_evaluator_optimizer.ts) |
+| 06     | Human approval                        | [06_human_approval.ts](src/lessons/06_human_approval.ts)           |
+| 07     | Concurrent agents                     | [07_racing_agents.ts](src/lessons/07_racing_agents.ts)             |
+| 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/lessons/08_research_report.ts)         |
+| 09     | Handoffs and session controls         | [09_support_session.ts](src/lessons/09_support_session.ts)         |
+| 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/lessons/10_service_tool.ts)               |
+| 11     | A coding agent in a Modal sandbox     | [11_coding_agent.ts](src/lessons/11_coding_agent.ts)               |
+| 12     | Route to a specialist                 | [12_routing.ts](src/lessons/12_routing.ts)                         |
+| 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/lessons/13_tool_guardrail.ts)           |
+| 14     | Search the public web                 | [14_web_search.ts](src/lessons/14_web_search.ts)                   |
 
 If you have a specific goal, start here:
 
-| Goal                                | Smallest lesson                        |
-| ----------------------------------- | -------------------------------------- |
-| Give an agent an API-backed tool    | [02](src/gensdk/02_tools.ts)           |
-| Remember earlier requests           | [03](src/gensdk/03_conversation.ts)    |
-| Require a person before a tool runs | [06](src/gensdk/06_human_approval.ts)  |
-| Split research across workers       | [08](src/gensdk/08_research_report.ts) |
-| Steer or interrupt a running turn   | [09](src/gensdk/09_support_session.ts) |
-| Route a request by its meaning      | [12](src/gensdk/12_routing.ts)         |
-| Enforce a budget before an action   | [13](src/gensdk/13_tool_guardrail.ts)  |
-| Answer with current public sources  | [14](src/gensdk/14_web_search.ts)      |
+| Goal                                | Smallest lesson                         |
+| ----------------------------------- | --------------------------------------- |
+| Give an agent an API-backed tool    | [02](src/lessons/02_tools.ts)           |
+| Remember earlier requests           | [03](src/lessons/03_conversation.ts)    |
+| Require a person before a tool runs | [06](src/lessons/06_human_approval.ts)  |
+| Split research across workers       | [08](src/lessons/08_research_report.ts) |
+| Steer or interrupt a running turn   | [09](src/lessons/09_support_session.ts) |
+| Route a request by its meaning      | [12](src/lessons/12_routing.ts)         |
+| Enforce a budget before an action   | [13](src/lessons/13_tool_guardrail.ts)  |
+| Answer with current public sources  | [14](src/lessons/14_web_search.ts)      |
 
 ## Start
 
@@ -161,7 +161,7 @@ run. This loop starts fresh runs for successive drafts. See the
 
 ## 06 — Wait for human approval
 
-[The lesson](src/gensdk/06_human_approval.ts) adds `needsApproval: true` to one
+[The lesson](src/lessons/06_human_approval.ts) adds `needsApproval: true` to one
 `closeTicket` tool. The tool simulates an async API call; no external ticketing
 system is involved.
 
@@ -403,12 +403,12 @@ or gateway.
 Configure retries at the operation that can fail; there is no agent-wide retry
 default. `maxSteps` limits the model/tool loop, not retries.
 
-| Operation           | Where to configure it                                  | Example                               |
-| ------------------- | ------------------------------------------------------ | ------------------------------------- |
-| Ordinary async tool | `asyncTool({retry, ...})`                              | [02_tools.ts](src/gensdk/02_tools.ts) |
-| Model call          | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)            |
-| Individual action   | `restate.run(action, {name, retry})`                   | Below                                 |
-| Handler-backed tool | `retryPolicy` on the called service or handler         | —                                     |
+| Operation           | Where to configure it                                  | Example                                |
+| ------------------- | ------------------------------------------------------ | -------------------------------------- |
+| Ordinary async tool | `asyncTool({retry, ...})`                              | [02_tools.ts](src/lessons/02_tools.ts) |
+| Model call          | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)             |
+| Individual action   | `restate.run(action, {name, retry})`                   | Below                                  |
+| Handler-backed tool | `retryPolicy` on the called service or handler         | —                                      |
 
 The tool lessons use this policy; the same shape works for model adapters and
 individual actions:

@@ -53,9 +53,9 @@ export const hello = restate.service({
 });
 ```
 
-Each request starts a fresh run. Add a [conversation](packages/examples/src/gensdk/03_conversation.ts)
+Each request starts a fresh run. Add a [conversation](packages/examples/src/lessons/03_conversation.ts)
 when the agent needs to remember earlier turns, or add
-[tools](packages/examples/src/gensdk/02_tools.ts) when it needs to act.
+[tools](packages/examples/src/lessons/02_tools.ts) when it needs to act.
 
 ## Try it
 
@@ -81,7 +81,7 @@ workspace:
 
 ```ts
 import {connect} from "@restatedev/restate-sdk-clients";
-import {hello} from "@restate-agents/examples/gensdk/hello";
+import {hello} from "@restate-agents/examples/hello";
 
 const answer = await connect({url: "http://localhost:8080"})
   .client(hello)
@@ -96,15 +96,15 @@ changed services.
 
 - **Support that remembers and adapts.** Keep conversation history in a keyed
   object, and steer or interrupt an active turn.
-  [See the support session](packages/examples/src/gensdk/09_support_session.ts).
+  [See the support session](packages/examples/src/lessons/09_support_session.ts).
 - **Actions with a human in the loop.** Pause a tool for approval or check a
   budget before it runs.
-  [See human approval](packages/examples/src/gensdk/06_human_approval.ts) and
-  [tool policy](packages/examples/src/gensdk/13_tool_guardrail.ts).
+  [See human approval](packages/examples/src/lessons/06_human_approval.ts) and
+  [tool policy](packages/examples/src/lessons/13_tool_guardrail.ts).
 - **Research across workers.** Fan out typed Restate RPCs and synthesize their
-  results. [See the research report](packages/examples/src/gensdk/08_research_report.ts).
+  results. [See the research report](packages/examples/src/lessons/08_research_report.ts).
 - **Coding in a sandbox.** Give an agent sandbox operations as tools inside a
-  durable handler. [See the coding agent](packages/examples/src/gensdk/11_coding_agent.ts).
+  durable handler. [See the coding agent](packages/examples/src/lessons/11_coding_agent.ts).
 
 The [tutorial](packages/examples/README.md) develops these patterns one lesson
 at a time, from a single call through multi-agent workflows.

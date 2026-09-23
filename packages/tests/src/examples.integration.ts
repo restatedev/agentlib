@@ -258,17 +258,17 @@ const [
   {supportRouter},
   {guardedBooking},
 ] = await Promise.all([
-  import("@restate-agents/examples/gensdk/hello"),
-  import("@restate-agents/examples/gensdk/tools"),
-  import("@restate-agents/examples/gensdk/conversation"),
-  import("@restate-agents/examples/gensdk/structured-output"),
-  import("@restate-agents/examples/gensdk/research-report"),
-  import("@restate-agents/examples/gensdk/evaluator-optimizer"),
-  import("@restate-agents/examples/gensdk/racing-agents"),
-  import("@restate-agents/examples/gensdk/session"),
-  import("@restate-agents/examples/gensdk/human-approval"),
-  import("@restate-agents/examples/gensdk/routing"),
-  import("@restate-agents/examples/gensdk/tool-guardrail"),
+  import("@restate-agents/examples/hello"),
+  import("@restate-agents/examples/tools"),
+  import("@restate-agents/examples/conversation"),
+  import("@restate-agents/examples/structured-output"),
+  import("@restate-agents/examples/research-report"),
+  import("@restate-agents/examples/evaluator-optimizer"),
+  import("@restate-agents/examples/racing-agents"),
+  import("@restate-agents/examples/support-session"),
+  import("@restate-agents/examples/human-approval"),
+  import("@restate-agents/examples/routing"),
+  import("@restate-agents/examples/tool-guardrail"),
 ]);
 
 let env: RestateTestEnvironment;
