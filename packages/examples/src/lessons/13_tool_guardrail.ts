@@ -5,27 +5,25 @@ import {z} from "zod";
 import {exampleModel as model, replyText} from "../shared.js";
 
 type BookingContext = {hotelId: string; quotedTotalCents: number; maxTotalCents: number};
-const reservationInput = z.object({hotelId: z.string().min(1)});
-
-const bookHotel = asyncTool<typeof reservationInput, BookingContext>({
-  description: "Book the quoted demo hotel. The application supplies the authoritative price.",
-  input: reservationInput,
-  *before({hotelId}, {context}) {
-    if (hotelId !== context.hotelId) return "Only the quoted hotel can be booked";
-    if (context.quotedTotalCents > context.maxTotalCents)
-      return `The total exceeds the $${(context.maxTotalCents / 100).toFixed(2)} budget`;
-  },
-  async execute({hotelId}, {context}) {
-    return {hotelId, totalCents: context.quotedTotalCents, status: "reserved", demo: true};
-  },
-});
 
 const bookingAgent = agent<BookingContext>({
   model,
   maxSteps: 4,
   instructions:
     "Call bookHotel for the named demo hotel. If the tool refuses, explain that no reservation was made.",
-  tools: {bookHotel},
+  tools: {
+    bookHotel: asyncTool({
+      description: "Book the quoted demo hotel. The application supplies the authoritative price.",
+      input: z.object({hotelId: z.string().min(1)}),
+      *before({hotelId}, {context}) {
+        if (hotelId !== context.hotelId) return "Only the quoted hotel can be booked";
+        if (context.quotedTotalCents > context.maxTotalCents) return "The quote exceeds the budget";
+      },
+      async execute({hotelId}, {context}) {
+        return {hotelId, totalCents: context.quotedTotalCents, status: "reserved", demo: true};
+      },
+    }),
+  },
 });
 
 export const guardedBooking = restate.service({

@@ -2,8 +2,8 @@
 // Reimplements restatedev/ai-examples' competitive racing with embedded operations.
 import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
-import {z} from "zod";
 import {agent} from "@restate-agents/core";
+import {z} from "zod";
 import {completedOutput, exampleModel as model} from "../shared.js";
 
 const candidates = {
@@ -21,6 +21,14 @@ const candidates = {
       "Thorough answer. Check assumptions and edge cases, then give a practical answer.",
   }),
 };
+
+type Candidate = (typeof candidates)[keyof typeof candidates];
+
+function* answerWith(name: string, candidate: Candidate, question: string) {
+  const result = yield* candidate.run(question, {name});
+  return completedOutput(result);
+}
+
 export const racingAgents = restate.service({
   name: "RacingAgents",
   handlers: {
@@ -37,12 +45,7 @@ export const racingAgents = restate.service({
       },
       function* ({question}) {
         const tasks = Object.entries(candidates).map(([name, candidate]) =>
-          restate.spawn(
-            (function* () {
-              const result = yield* candidate.run(question, {name});
-              return completedOutput(result);
-            })(),
-          ),
+          restate.spawn(answerWith(name, candidate, question)),
         );
         try {
           // any waits for success: a fast failure must not defeat a healthy peer.

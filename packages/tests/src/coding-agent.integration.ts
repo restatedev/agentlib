@@ -44,6 +44,7 @@ class Sandbox {
   async terminate() {
     calls.terminate++;
   }
+  detach() {}
 }
 class ModalClient {
   apps = {fromName: async () => ({appId: "app"})};
