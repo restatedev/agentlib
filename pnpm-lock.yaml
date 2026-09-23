@@ -110,6 +110,9 @@ importers:
       minisearch:
         specifier: 7.2.0
         version: 7.2.0
+      modal:
+        specifier: 0.10.1
+        version: 0.10.1
       openai:
         specifier: ^7.17.0
         version: 7.17.0(undici@7.29.1)(zod@4.6.5)

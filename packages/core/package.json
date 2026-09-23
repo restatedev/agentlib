@@ -39,10 +39,6 @@
     "./discovery": {
       "types": "./dist/discovery.d.ts",
       "import": "./dist/discovery.js"
-    },
-    "./sandbox": {
-      "types": "./dist/sandbox.d.ts",
-      "import": "./dist/sandbox.js"
     }
   },
   "scripts": {

@@ -5,8 +5,7 @@
 - **Change course while running.** Steer or interrupt a turn with durable
   signals, even while a tool or human decision is pending.
 - **Give agents powerful tools.** Combine programmatic and background tool
-  calls, tool search, MCP, sub-agents, handoffs, and remote sandboxes for
-  coding agents.
+  calls, tool search, MCP, sub-agents, and handoffs between agents.
 - **Stay in control.** Add guardrails, Zod-validated output, and human approval
   to the steps that need them.
 - **Fit your Restate service.** Run an agent as one step of any handler, next
@@ -114,26 +113,6 @@ root agent's guardrails and budgets still apply. For full isolation, put an agen
 behind its own Restate service and call it with `serviceTool` or `handlerTool`,
 as a separate invocation.
 
-**Sandboxes.** `sandboxTools()` from `@restate-agents/core/sandbox` gives a
-coding agent `readFile`, `writeFile`, `editFile`, `listFiles`, `search`,
-`executeCommand`, and `runInBackground` inside a remote sandbox. The handler
-creates the sandbox once in a journaled step, keeping only its ID. It then
-connects outside the journal, so every attempt and every resumed invocation
-gets a fresh handle, which connects on first use. A provider is three methods
-(`create`, `connect`, `terminate`), and the examples include Docker and
-[Modal](https://modal.com) providers. Commands run at most once per tool call:
-after a crash, the retried call reattaches to the process it already started.
-
-```ts
-const coder = agent<SandboxContext>({model, tools: sandboxTools()});
-
-function* turn(message: string) {
-  const sandboxId = yield* restate.run(() => provider.create({name: "session-42"}));
-  const sandbox = provider.connect(sandboxId); // not journaled; no I/O until first use
-  return yield* coder.run(message, {context: {sandbox}});
-}
-```
-
 **Human approval.** `needsApproval: true` pauses a tool until a person decides.
 The run waits durably for minutes or days, without holding a process.
 
@@ -182,7 +161,7 @@ structured output, a draft-and-review loop, human approval, service tools,
 racing agents, parallel research workers, and a session that uses handoffs,
 steering, interruption, PTC, tool search, and MCP together. Goal-based recipes
 then show how to route to specialists, enforce a tool policy, and answer with
-current web sources. A coding lesson uses a Docker or Modal sandbox.
+current web sources. A coding lesson gives an agent tools backed by a Modal sandbox.
 
 Start a Restate server, then:
 

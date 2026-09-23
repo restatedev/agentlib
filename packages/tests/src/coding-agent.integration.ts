@@ -1,61 +1,96 @@
 import assert from "node:assert/strict";
-import {execFileSync} from "node:child_process";
+import {execFile} from "node:child_process";
+import {mkdtemp, mkdir, readFile, writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {dirname, join} from "node:path";
 import {after, before, mock, test} from "node:test";
+import {promisify} from "node:util";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
-import type {Message, Model, ModelResponse} from "@restate-agents/core";
+import type {Message, Model} from "@restate-agents/core";
 
-// The coding lesson against a real Restate server and a real Docker sandbox.
-process.env.SANDBOX_PROVIDER = "docker";
-process.env.SANDBOX_IMAGE = "node:24-slim";
+// The coding lesson against a real Restate server, with Modal replaced by a local directory.
+const root = await mkdtemp(join(tmpdir(), "coding-agent-"));
+const local = (path: string) => join(root, path.replace(/^\/workspace\/?/, ""));
+const calls = {create: 0, terminate: 0};
 
-const command = (id: string, command: string): ModelResponse => ({
-  type: "tool_calls",
-  calls: [{id, name: "executeCommand", input: {command}}],
-});
+class SandboxFilesystemNotFoundError extends Error {}
+const sandbox = {
+  filesystem: {
+    readText: (path: string) =>
+      readFile(local(path), "utf8").catch(() => {
+        throw new SandboxFilesystemNotFoundError(path);
+      }),
+    async writeText(content: string, path: string) {
+      await mkdir(dirname(local(path)), {recursive: true});
+      await writeFile(local(path), content);
+    },
+  },
+  async exec(argv: string[]) {
+    const result = promisify(execFile)(argv[0]!, argv.slice(1), {cwd: root}).then(
+      ({stdout, stderr}) => ({exitCode: 0, stdout, stderr}),
+      (error: {code: number; stdout: string; stderr: string}) => ({
+        exitCode: error.code,
+        stdout: error.stdout,
+        stderr: error.stderr,
+      }),
+    );
+    return {
+      stdout: {readText: async () => (await result).stdout},
+      stderr: {readText: async () => (await result).stderr},
+      wait: async () => (await result).exitCode,
+    };
+  },
+  async terminate() {
+    calls.terminate++;
+  },
+};
+class ModalClient {
+  apps = {fromName: async () => ({appId: "app"})};
+  images = {fromRegistry: () => ({})};
+  sandboxes = {
+    async create() {
+      calls.create++;
+      return {sandboxId: "sb-1"};
+    },
+    fromId: async () => sandbox,
+  };
+}
+mock.module("modal", {namedExports: {ModalClient, SandboxFilesystemNotFoundError}});
 
-// Turn 1 writes and runs a script; turn 2 finds it again in the same sandbox.
+// Write a script, read it back, run it, and report its output.
 const coder: Model = function* (request) {
-  const turn = request.messages.filter((message) => message.role === "user").length;
   const last = request.messages.at(-1) as Message;
-  if (last.role === "user" && turn === 1)
+  if (last.role === "user") {
+    const content = "console.log([2, 3, 5, 7].join(','));\n";
     return {
       type: "tool_calls",
-      calls: [
-        {
-          id: "write",
-          name: "writeFile",
-          input: {path: "primes.js", content: "console.log([2, 3, 5, 7].join(','));\n"},
-        },
-      ],
+      calls: [{id: "write", name: "writeFile", input: {path: "/workspace/primes.js", content}}],
     };
-  if (last.role === "tool" && last.callId === "write") return command("run", "node primes.js");
-  if (last.role === "user") return command(`list-${turn}`, "ls");
+  }
   assert.equal(last.role, "tool");
-  if (last.result.status !== "success") assert.fail("the command should succeed");
+  if (last.result.status !== "success") assert.fail(`${last.name} failed`);
+  if (last.callId === "write")
+    return {
+      type: "tool_calls",
+      calls: [{id: "read", name: "readFile", input: {path: "/workspace/primes.js"}}],
+    };
+  if (last.callId === "read")
+    return {
+      type: "tool_calls",
+      calls: [{id: "run", name: "runCommand", input: {command: "node primes.js"}}],
+    };
   const {stdout} = last.result.output as {stdout: string};
   return {type: "final", text: stdout.trim()};
 };
 mock.module("@restate-agents/core/openai", {namedExports: {openAIModel: () => coder}});
-const {codingSession} = await import("@restate-agents/examples/gensdk/coding-agent");
-
-const running = (id: string) => {
-  try {
-    return execFileSync("docker", ["inspect", "--format", "{{.State.Running}}", id], {
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "gone";
-  }
-};
+const {codingAgent} = await import("@restate-agents/examples/gensdk/coding-agent");
 
 let env: RestateTestEnvironment;
 before(
   async () => {
     env = await RestateTestEnvironment.start({
-      services: [codingSession],
+      services: [codingAgent],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
   },
@@ -65,23 +100,11 @@ after(async () => {
   await env?.stop();
 });
 
-void test(
-  "a coding session keeps its sandbox between turns and closes it",
-  {timeout: 180000},
-  async () => {
-    const session = connect({url: env.baseUrl()}).client(codingSession, "alice");
-    const state = env.stateOf(codingSession, "alice");
-
-    assert.equal(await session.turn("Write a script that prints primes and run it."), "2,3,5,7");
-    const sandboxId = await state.get<string>("sandbox");
-    assert.ok(sandboxId);
-    assert.equal(running(sandboxId), "true");
-
-    assert.equal(await session.turn("What files are there?"), "primes.js");
-    assert.equal(await state.get("sandbox"), sandboxId);
-
-    assert.equal(await session.close(), true);
-    assert.equal(await state.get("sandbox"), null);
-    assert.equal(running(sandboxId), "gone");
-  },
-);
+void test("the coding agent works in one sandbox and releases it", async () => {
+  const result = await connect({url: env.baseUrl()})
+    .client(codingAgent)
+    .ask("Write primes.js and run it.");
+  assert.equal(result, "2,3,5,7");
+  // Replayed on every suspension, yet created and released exactly once.
+  assert.deepEqual(calls, {create: 1, terminate: 1});
+});

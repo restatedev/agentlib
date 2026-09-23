@@ -25,7 +25,7 @@ the request body required; object fields use `.default(...)`.
 | 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/gensdk/08_research_report.ts)         |
 | 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         |
 | 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               |
-| 11     | A coding agent in a remote sandbox    | [11_coding_agent.ts](src/gensdk/11_coding_agent.ts)               |
+| 11     | A coding agent in a Modal sandbox     | [11_coding_agent.ts](src/gensdk/11_coding_agent.ts)               |
 | 12     | Route to a specialist                 | [12_routing.ts](src/gensdk/12_routing.ts)                         |
 | 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/gensdk/13_tool_guardrail.ts)           |
 | 14     | Search the public web                 | [14_web_search.ts](src/gensdk/14_web_search.ts)                   |
@@ -292,44 +292,35 @@ curl --globoff "$RESTATE_CALL_URL/RefundAgent/ask" \
 Each call is a durable child invocation. Interrupting the run cancels an
 unfinished call, and a failed handler is reported to the model as a tool error.
 
-## 11 — Code in a remote sandbox
+## 11 — Code in a Modal sandbox
 
-`CodingSession` is a virtual object that owns one sandbox per session key. Each
-turn reuses the session's sandbox, or creates one inside a journaled step and
-stores only its ID. The handler then calls `provider.connect(id)` outside the
-journal and passes the handle as run context. That code runs again on every
-attempt and after every resume, so each process gets its own connection, and
-the handle connects only when a tool first uses it. A replay of steps that are
-already journaled never connects at all. `sandboxTools()` gives the agent
-`readFile`, `writeFile`, `editFile`, `listFiles`, `search`, `executeCommand`,
-and `runInBackground`.
+`CodingAgent` gives an agent three tools, `readFile`, `writeFile`, and
+`runCommand`, backed by a [Modal Sandbox](https://modal.com/docs/guide/sandbox).
+The handler opens a sandbox, runs the agent, and releases the sandbox:
 
-It uses Docker by default, so you only need Docker running. Set
-`SANDBOX_PROVIDER=modal` to use [Modal Sandboxes](https://modal.com/docs/guide/sandbox),
-with credentials from `modal token new` or `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`,
-and `SANDBOX_IMAGE` to change the image (`node:24-bookworm` by default).
-
-```sh
-curl --globoff "$RESTATE_CALL_URL/CodingSession/alice/turn" \
-  --json '"Create a Node.js module that returns the first n primes, add a node:test test for it, and run the test."'
-# While a turn runs, from another terminal:
-curl --globoff "$RESTATE_CALL_URL/CodingSession/alice/steer" --json '"Use TypeScript instead of JavaScript."'
-# When you are done:
-curl --globoff --request POST "$RESTATE_CALL_URL/CodingSession/alice/close"
+```ts
+const sandbox = yield * connect();
+try {
+  return replyText(yield * coder.run(task, {context: {sandbox}}));
+} finally {
+  yield * sandbox.release();
+}
 ```
 
-A command runs at most once per tool call. The tool starts it detached in the
-sandbox, in a directory named after the call, and waits in short journaled
-steps. If the handler crashes or is redeployed mid-command, the retried call
-finds that directory and waits for the same process instead of running
-`npm install` twice. Long commands survive restarts between wait steps, a
-timeout or an interruption stops the whole process group, and output beyond
-16 KB keeps its beginning and end, with the full log left in the sandbox.
-A non-zero exit code is an ordinary result the model can react to.
+`connect` creates the sandbox in a journaled step, so a retried or replayed
+request reuses it instead of creating another. Only the sandbox ID is
+journaled. The object passed as run context opens its Modal handle when a tool
+first needs it, in whichever process runs the request. Each tool is an
+`asyncTool`, so its result is journaled like any other. `runCommand` makes one
+attempt: a failure goes back to the model instead of running the command again.
 
-After each turn, the session sends itself a `shutdownIfIdle` call delayed by 30
-minutes, a durable timer. It terminates the sandbox unless a newer turn has
-started by then. `close` terminates it right away.
+Authenticate with `modal token new`, or set `MODAL_TOKEN_ID` and
+`MODAL_TOKEN_SECRET`, then:
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/CodingAgent/ask" \
+  --json '"Write primes.js that prints the first 10 primes, then run it."'
+```
 
 ## 12 — Route a request to a specialist
 
