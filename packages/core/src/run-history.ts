@@ -33,8 +33,11 @@ function modelTranscript(events: readonly Message[]): Message[] {
 }
 
 /** Owns the append-only event history and its persistence cursor. The run saves
- * a model-valid transcript at finalization; earlier failures save nothing. */
+ * a model-valid transcript at finalization; earlier failures save nothing.
+ * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
+  private readonly provisional = new Set<Message>();
+
   private constructor(
     private readonly input: string,
     private readonly messages: Message[],
@@ -61,23 +64,32 @@ export class RunHistory {
     return run;
   }
 
+  /** What the model sees during this run, including provisional feedback. */
   snapshot(): Message[] {
     return modelTranscript(this.messages);
+  }
+
+  /** What the turn commits: the persisted and returned transcript. */
+  committed(): Message[] {
+    return modelTranscript(this.messages.filter((message) => !this.provisional.has(message)));
   }
 
   append(...messages: Message[]): void {
     this.messages.push(...messages);
   }
 
+  /** Model-visible for the rest of the run, but never saved or returned. */
+  appendProvisional(...messages: Message[]): void {
+    for (const message of messages) this.provisional.add(message);
+    this.messages.push(...messages);
+  }
+
   *save(): Operation<void> {
-    if (this.conversation && this.messages.length > this.persisted) {
-      const transcript = this.snapshot();
-      this.version = yield* this.conversation.append(
-        transcript.slice(this.persisted),
-        this.version,
-      );
-      this.persisted = transcript.length;
-    }
+    if (!this.conversation) return;
+    const transcript = this.committed();
+    if (transcript.length === this.persisted) return;
+    this.version = yield* this.conversation.append(transcript.slice(this.persisted), this.version);
+    this.persisted = transcript.length;
   }
 
   *compact(): Operation<void> {

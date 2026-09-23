@@ -10,6 +10,7 @@ import {
   type Message,
   type Model,
 } from "@restate-agents/core";
+import {z} from "zod";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
 const context = () =>
@@ -53,6 +54,32 @@ void test("output policies replace the answer in persisted and returned conversa
       const saved = yield* convo.load();
       assert.deepEqual(saved.messages, result.messages);
       assert.deepEqual(saved.messages.at(-1), {role: "assistant", content: "public answer"});
+    })(),
+  );
+});
+
+void test("a rejected structured answer reaches the retry but is never persisted or returned", async () => {
+  const convo = new LazyStateConversation({store: memory().store});
+  let requests = 0;
+  const a = agent({
+    output: z.object({answer: z.string()}),
+    *model(request) {
+      requests++;
+      if (requests === 1) return {type: "final", text: "not json"};
+      assert.match(JSON.stringify(request.messages), /not json/);
+      assert.match(JSON.stringify(request.messages), /output-invalid/);
+      return {type: "final", text: JSON.stringify({answer: "ok"})};
+    },
+  });
+  await r.execute(
+    context(),
+    (function* () {
+      const result = yield* a.run("go", {conversation: convo});
+      assert.deepEqual(result.output, {answer: "ok"});
+      assert.equal(requests, 2);
+      assert.doesNotMatch(JSON.stringify(result.messages), /not json|output-invalid/);
+      const saved = yield* convo.load();
+      assert.deepEqual(saved.messages, result.messages);
     })(),
   );
 });

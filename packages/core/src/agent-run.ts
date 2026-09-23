@@ -258,7 +258,8 @@ class AgentRun<C, O> {
     }
     const parsed = this.parseOutput(action);
     if (!parsed) {
-      this.history.append(
+      // The model needs its rejected answer to correct it; the turn must not keep it.
+      this.history.appendProvisional(
         {role: "assistant", content: action.text},
         {
           role: "user",
@@ -276,7 +277,7 @@ class AgentRun<C, O> {
         status: "completed",
         output: parsed.output,
         steps: this.step,
-        messages: this.history.snapshot(),
+        messages: this.history.committed(),
       }),
     );
     return result && (yield* this.finish(result));
@@ -327,7 +328,7 @@ class AgentRun<C, O> {
     this.history.append(...this.tools.settlePending(reason));
     const end = {
       steps: Math.min(this.step, this.config.maxSteps),
-      messages: this.history.snapshot(),
+      messages: this.history.committed(),
     };
     const result: RunResult<O> = interruption
       ? {...end, status: "interrupted", reason: interruption.message}
@@ -354,6 +355,6 @@ class AgentRun<C, O> {
       });
     }
     yield* this.history.save();
-    return {...result, messages: this.history.snapshot()};
+    return {...result, messages: this.history.committed()};
   }
 }
