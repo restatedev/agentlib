@@ -149,9 +149,9 @@ again or repeat side effects, and it carries on from the next step.
   handler, so you can race agents, fan out workers, or chain a draft-and-review
   loop alongside ordinary durable code.
 
-Agents run inside Restate's generator SDK (`@restate-agents/core`) or the regular
-promise-based SDK (`@restate-agents/promise`). Both share the same models,
-tools, and runtime.
+Agents run inside Restate's generator SDK. A promise-based entry point for the
+regular SDK existed earlier and was removed for now;
+[PROMISE_SDK.md](PROMISE_SDK.md) explains how to bring it back.
 
 ## Examples
 
@@ -171,15 +171,14 @@ pnpm dlx @restatedev/restate deployments register http://localhost:9080
 curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
 ```
 
-`pnpm dev:gensdk` and `pnpm dev:promise` serve one flavor each. After updating
-the SDK, restart the endpoint and rediscover it so Restate sees changed services.
+After updating the SDK, restart the endpoint and rediscover it so Restate sees
+changed services.
 
 ## Workspace
 
 | Package                                         | Purpose                                                              |
 | ----------------------------------------------- | -------------------------------------------------------------------- |
 | [`@restate-agents/core`](packages/core)         | The agent SDK, plus optional model, MCP, PTC, and discovery adapters |
-| [`@restate-agents/promise`](packages/promise)   | Agents and tools for regular promise-based Restate handlers          |
 | [`@restate-agents/examples`](packages/examples) | Numbered tutorials, from a first run to multi-agent workflows        |
 | [`@restate-agents/tests`](packages/tests)       | Unit, replay, and type tests, plus integration tests against Restate |
 

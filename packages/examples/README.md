@@ -1,36 +1,30 @@
 # Agent tutorial
 
-Choose a flavor and read its numbered files from `01` onward:
-
-- [gensdk](src/gensdk): `@restate-agents/core`, generator tools, and `yield* agent.run(...)`.
-- [Promise](src/promise): `@restate-agents/promise`, regular SDK tools, and `await agent.run(ctx, ...)`.
-
-The first six lessons match across both flavors, and so does the service-tool
-lesson (gensdk 10, promise 08). Each file stands alone and
-introduces one concept using what you learned earlier; you do not need to import
-or edit previous lessons. Later lessons combine those concepts into workflows.
-Each flavor's `services.ts` lists its services in tutorial order; the `app.ts`
-files serve them, and [shared.ts](src/shared.ts) configures the model.
+Read the numbered files in [src/gensdk](src/gensdk) from `01` onward. Each file
+stands alone and introduces one concept using what you learned earlier; you do
+not need to import or edit previous lessons. Later lessons combine those
+concepts into workflows. [services.ts](src/gensdk/services.ts) lists the
+services in tutorial order, [app.ts](src/app.ts) serves them, and
+[shared.ts](src/shared.ts) configures the model.
 
 Each prompt handler declares a Zod input schema with a scenario-specific
-default for the request editor. Matching lessons use the same defaults
-in both flavors. The research example also supplies demo sources. Rediscover
+default for the request editor. The research example also supplies demo sources. Rediscover
 the endpoint after changing a schema so Restate receives the updated defaults.
 String bodies use `.meta({default: ...})` to prefill the editor while keeping
 the request body required; object fields use `.default(...)`.
 
-| Lesson | New concept                             | gensdk source                                                     | Promise source                                                     |
-| ------ | --------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 01     | One agent, one request                  | [01_hello.ts](src/gensdk/01_hello.ts)                             | [01_hello.ts](src/promise/01_hello.ts)                             |
-| 02     | A tool with validated arguments         | [02_tools.ts](src/gensdk/02_tools.ts)                             | [02_tools.ts](src/promise/02_tools.ts)                             |
-| 03     | Conversation history between requests   | [03_conversation.ts](src/gensdk/03_conversation.ts)               | [03_conversation.ts](src/promise/03_conversation.ts)               |
-| 04     | Validated, typed output                 | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     | [04_structured_output.ts](src/promise/04_structured_output.ts)     |
-| 05     | A bounded draft-and-review loop         | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) | [05_evaluator_optimizer.ts](src/promise/05_evaluator_optimizer.ts) |
-| 06     | Human approval                          | [06_human_approval.ts](src/gensdk/06_human_approval.ts)           | [06_human_approval.ts](src/promise/06_human_approval.ts)           |
-| 07     | Concurrent agents / support integration | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             | [07_support_session.ts](src/promise/07_support_session.ts)         |
-| 08     | Parallel worker RPCs and synthesis      | [08_research_report.ts](src/gensdk/08_research_report.ts)         | —                                                                  |
-| 09     | Handoffs and session controls           | [09_support_session.ts](src/gensdk/09_support_session.ts)         | —                                                                  |
-| 10     | A whole Restate service as one tool     | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               | [08_service_tool.ts](src/promise/08_service_tool.ts)               |
+| Lesson | New concept                           | Source                                                            |
+| ------ | ------------------------------------- | ----------------------------------------------------------------- |
+| 01     | One agent, one request                | [01_hello.ts](src/gensdk/01_hello.ts)                             |
+| 02     | A tool with validated arguments       | [02_tools.ts](src/gensdk/02_tools.ts)                             |
+| 03     | Conversation history between requests | [03_conversation.ts](src/gensdk/03_conversation.ts)               |
+| 04     | Validated, typed output               | [04_structured_output.ts](src/gensdk/04_structured_output.ts)     |
+| 05     | A bounded draft-and-review loop       | [05_evaluator_optimizer.ts](src/gensdk/05_evaluator_optimizer.ts) |
+| 06     | Human approval                        | [06_human_approval.ts](src/gensdk/06_human_approval.ts)           |
+| 07     | Concurrent agents                     | [07_racing_agents.ts](src/gensdk/07_racing_agents.ts)             |
+| 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/gensdk/08_research_report.ts)         |
+| 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         |
+| 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               |
 
 ## Start
 
@@ -40,9 +34,7 @@ From the workspace root, with a Restate server running:
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
 # Optional: export AGENT_MODEL=...
-pnpm dev:gensdk
-# Or: pnpm dev:promise
-# Or: pnpm dev          # Both flavors
+pnpm dev
 ```
 
 In another terminal, register or rediscover the endpoint:
@@ -58,11 +50,6 @@ If your server uses a scoped call prefix, use that instead, for example:
 RESTATE_CALL_URL='http://[fd07:b51a:cc66::2]:8080/restate/call'
 ```
 
-The commands below show the gensdk endpoints. For lessons 01–06, prepend
-`Promise` to the service name to call the promise version: `Hello/ask` becomes
-`PromiseHello/ask`, and `ChatSession/bob/ask` becomes `PromiseChatSession/bob/ask`.
-The request bodies are identical.
-
 ## 01 — Run your first agent
 
 Start with `agent({model})` and a single handler. The handler passes the request
@@ -71,8 +58,6 @@ conversation history.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/Hello/ask" --json '"Say hello in one sentence."'
-# Promise flavor:
-curl --globoff "$RESTATE_CALL_URL/PromiseHello/ask" --json '"Say hello in one sentence."'
 ```
 
 The response is just the answer, such as `"Hello!"`. The `replyText` helper
@@ -90,7 +75,7 @@ curl --globoff "$RESTATE_CALL_URL/TicketLookup/ask" \
   --json '"What is the status of ticket T-42?"'
 ```
 
-Both flavors use `asyncTool` with an ordinary `async execute(...)` callback.
+The lesson uses `asyncTool` with an ordinary `async execute(...)` callback.
 The SDK journals its result, so you can replace the fixed record with an async
 API call directly. The optional second argument supplies application context,
 call metadata, and an `AbortSignal` for cancellable I/O.
@@ -104,9 +89,8 @@ Both tools set `retry` explicitly: up to five attempts, starting with a 250 ms
 retry delay and doubling between attempts. See [retry policies](#retry-policies)
 for model calls, individual actions, and handler calls.
 
-Use `tool` when execution needs to compose SDK operations: a generator with
-`yield*` in gensdk, or a callback returning a `RestatePromise` in the promise
-flavor. Use `handlerTool` for typed calls to other Restate handlers.
+Use `tool` when execution needs to compose SDK operations in a generator with
+`yield*`. Use `handlerTool` for typed calls to other Restate handlers.
 
 ## 03 — Remember previous turns
 
@@ -120,7 +104,7 @@ curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '"What is my name?
 ```
 
 Both requests use `bob`, so the second sees the first turn. A different key gets
-its own history. This lesson stores the full history; the final gensdk lesson
+its own history. This lesson stores the full history; the support-session lesson
 adds conversation compaction and lifecycle controls.
 
 ## 04 — Return structured data
@@ -160,8 +144,7 @@ run. This loop starts fresh runs for successive drafts. See the
 
 ## 06 — Wait for human approval
 
-Both [gensdk](src/gensdk/06_human_approval.ts) and
-[promise](src/promise/06_human_approval.ts) add `needsApproval: true` to one
+[The lesson](src/gensdk/06_human_approval.ts) adds `needsApproval: true` to one
 `closeTicket` tool. The tool simulates an async API call; no external ticketing
 system is involved.
 
@@ -204,38 +187,12 @@ It does not check whether that request is still pending.
 state entry and clears it after the run returns a result. The SDK has no default
 approval timeout; this lesson waits until a decision or invocation cancellation.
 
-For the promise flavor, run `pnpm dev:promise` and use `PromiseTicketApproval`
-in all three URLs. It declares its controls with
-`createObjectSharedHandler`. The callback is synchronous; callbacks that need
-to wait on SDK work return a `RestatePromise` directly.
-
 `onApproval` is also available on the agent definition. It receives a copy of the
-request and the application's run context; the promise flavor also receives the
-regular SDK context. The SDK awaits publication before waiting for a decision.
+request and the application's run context. The SDK awaits publication before waiting for a decision.
 To publish to an event bus, use a journaled `run` operation or a durable service
 call in the callback.
 
-## Promise 07 — Put tools and history together
-
-The promise support lesson combines lessons 02 and 03, then adds a guard and a
-typed service call. `lookupTicket` uses `asyncTool`; `refundPolicy` uses
-`handlerTool` and `ctx.serviceClient(supportPolicies).refundPolicy()`.
-
-```sh
-curl --globoff "$RESTATE_CALL_URL/RegularSdkSupport/bob/ask" \
-  --json '{"message":"Look up ticket T-42 and tell me the refund policy."}'
-```
-
-The handler loads history, runs the agent, then saves history and its actual
-status, returning only the reply. A thrown failure skips those state writes. `handlerTool` cancels an
-unfinished child call when interrupted. Both services are registered by
-`pnpm dev:promise` and `pnpm dev`.
-
-Tool `before`, `after`, and dynamic `needsApproval` hooks return synchronous
-values or `RestatePromise`s. Model adapters are shared with core. Conversation
-abstractions and agent-level generator hooks come from `@restate-agents/core`.
-
-## gensdk 07 — Race concurrent agents
+## 07 — Race concurrent agents
 
 Spawn two agents and use `restate.any` to take the first successful answer. An
 error or exhausted run cannot win. Interrupt and join the other task so its
@@ -250,7 +207,7 @@ The response is the winning answer as a string. Both agents start, so the patter
 consume more tokens than a single run. They share a model with different
 instructions; change their `model` fields to compare providers.
 
-## gensdk 08 — Delegate to parallel workers
+## 08 — Delegate to parallel workers
 
 The planner returns 2–4 questions. Start a `ResearchWorker` RPC for each, await
 them concurrently, and synthesize the findings. Each worker gets its own source
@@ -279,7 +236,7 @@ The response is the final report as a string. Worker findings remain internal. T
 supplied documents and does not browse the web. Citation IDs are checked against
 tool reads; factual quality and final prose still depend on the model.
 
-## gensdk 09 — Build a controlled support session
+## 09 — Build a controlled support session
 
 The final lesson combines persisted conversations and compaction, deferred tool
 search, programmatic tool calls, handoffs, background tools, approvals, steering,
@@ -302,7 +259,7 @@ closing the demo ticket. `steer` and `interrupt` have example messages too.
 For `approve`, copy `invocationId` and `signalName` from `status().approval` and set
 `approved` to `true` to allow the action; its default is `false`.
 
-## gensdk 10 / Promise 08 — Expose a service as one tool
+## 10 — Expose a service as one tool
 
 `serviceTool(refundIface)` turns a Restate interface into a single tool. The
 model picks a handler (`getPolicy` or `issueRefund`) and passes its input; the
@@ -312,9 +269,6 @@ to one handler instead. Virtual objects and workflows also take a `key`.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/RefundAgent/ask" \
-  --json '"Refund order O-99 for $12.50 and tell me the refund policy."'
-# Promise flavor:
-curl --globoff "$RESTATE_CALL_URL/PromiseRefundAgent/ask" \
   --json '"Refund order O-99 for $12.50 and tell me the refund policy."'
 ```
 
@@ -329,24 +283,20 @@ Luna model's Chat Completions tool/reasoning compatibility error. Explicit model
 settings are preserved. Change an agent's `model` field to use another adapter
 or gateway.
 
-The promise adapter uses the local `adopt` backport, so the workspace pins the
-generator SDK to 1.17.2 until upstream `internal.adopt` is released.
-
 ## Retry policies
 
 Configure retries at the operation that can fail; there is no agent-wide retry
 default. `maxSteps` limits the model/tool loop, not retries.
 
-| Operation                     | Where to configure it                                  | Example                                                              |
-| ----------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------- |
-| Ordinary async tool           | `asyncTool({retry, ...})` in either flavor             | [gensdk](src/gensdk/02_tools.ts), [promise](src/promise/02_tools.ts) |
-| Model call                    | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)                                           |
-| Individual gensdk action      | `restate.run(action, {name, retry})`                   | Below                                                                |
-| Individual regular SDK action | `ctx.run(name, action, options)`                       | Below                                                                |
-| Handler-backed tool           | `retryPolicy` on the called service or handler         | [supportPolicies.refundPolicy](src/promise/07_support_session.ts)    |
+| Operation           | Where to configure it                                  | Example                               |
+| ------------------- | ------------------------------------------------------ | ------------------------------------- |
+| Ordinary async tool | `asyncTool({retry, ...})`                              | [02_tools.ts](src/gensdk/02_tools.ts) |
+| Model call          | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)            |
+| Individual action   | `restate.run(action, {name, retry})`                   | Below                                 |
+| Handler-backed tool | `retryPolicy` on the called service or handler         | —                                     |
 
 The tool lessons use this policy; the same shape works for model adapters and
-gensdk actions:
+individual actions:
 
 ```ts
 const retry = {
@@ -357,23 +307,10 @@ const retry = {
   maxDuration: {seconds: 30},
 };
 
-// Compose this operation from a gensdk handler or tool.
+// Compose this operation from a handler or tool.
 function* performWithRetry() {
   return yield* restate.run(() => performAction(), {name: "Perform action", retry});
 }
-```
-
-The regular SDK uses different option names for `ctx.run`. These can also be
-used inside a promise `tool` by returning the `ctx.run(...)` promise directly:
-
-```ts
-const result = await ctx.run("Perform action", () => performAction(), {
-  maxRetryAttempts: 5,
-  initialRetryInterval: {milliseconds: 250},
-  retryIntervalFactor: 2,
-  maxRetryInterval: {seconds: 5},
-  maxRetryDuration: {seconds: 30},
-});
 ```
 
 Without an explicit policy, `asyncTool` and the model adapters use three
@@ -393,10 +330,10 @@ retries, or from a failed child handler) does not fail the agent. The model
 receives `{status: "error", code: "tool_failed", message}` and decides what to
 do next. Restate cancellation and agent limits still end the run.
 
-`handlerTool` relies on the called handler's invocation policy. The promise
-support example sets `retryPolicy` through `createServiceHandler`, with
-`onMaxAttempts: "kill"` to terminate after exhaustion. Use `"pause"` instead
-to leave the invocation paused for manual intervention.
+`handlerTool` relies on the called handler's invocation policy: set
+`retryPolicy` on the called service or handler, with `onMaxAttempts: "kill"`
+to terminate after exhaustion or `"pause"` to leave the invocation paused for
+manual intervention.
 
 ## Provenance and validation
 

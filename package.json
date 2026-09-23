@@ -14,9 +14,7 @@
     "test:integration": "turbo run test:integration",
     "check": "pnpm build && pnpm test && pnpm test:integration",
     "dev": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev",
-    "start": "pnpm --filter @restate-agents/examples start",
-    "dev:gensdk": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev:gensdk",
-    "dev:promise": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev:promise"
+    "start": "pnpm --filter @restate-agents/examples start"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",
