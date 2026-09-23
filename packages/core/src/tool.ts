@@ -224,10 +224,12 @@ export function agentTool<C, O>(
     ...options,
     input: delegatedTask,
     *execute({task}, context) {
-      // A run name unique to this call keeps approval signals of concurrent sub-agents apart.
-      const runOptions: RunOptions<C> = {
+      const runOptions = {
         context: context.context,
+        // A run name unique to this call keeps approval signals of concurrent sub-agents apart.
         name: `${context.name}/${context.callId}`,
+        // The sub-agent's approval requests reach whoever the parent run publishes to.
+        onApproval: context.publishApproval,
       } as RunOptions<C>;
       const run = subAgent.run as (
         input: string,

@@ -188,3 +188,44 @@ void test("a sub-agent's model calls are journaled and not repeated on replay", 
   assert.deepEqual(replay.output, live.output);
   assert.equal(subCalls, 1);
 });
+
+void test("a sub-agent's approval requests reach the parent run's handler", async () => {
+  const published: string[] = [];
+  const refunder = agent({
+    tools: {
+      refund: tool({
+        description: "Refund an order.",
+        input: z.object({}),
+        needsApproval: true,
+        *execute() {
+          return "refunded";
+        },
+      }),
+    },
+    *onHumanApproval() {
+      return true;
+    },
+    *model(request) {
+      if (request.step === 1)
+        return {type: "tool_calls", calls: [{id: "x", name: "refund", input: {}}]};
+      return {type: "final", text: "Refunded."};
+    },
+  });
+  const lead = agent({
+    tools: {research: agentTool(refunder, {description: "Handle refunds."})},
+    *model(request) {
+      if (request.step === 1) return delegate("d1", "Refund the order");
+      return {type: "final", text: "Done."};
+    },
+  });
+  const result = await execute(
+    context(),
+    lead.run("Refund it", {
+      *onApproval(request) {
+        published.push(request.signalName);
+      },
+    }),
+  );
+  assert.equal(result.status, "completed");
+  assert.deepEqual(published, ["agent/d1:approval:x:0"]);
+});

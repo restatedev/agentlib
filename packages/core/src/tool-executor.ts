@@ -64,6 +64,13 @@ export function createToolExecutor<C>({
     let nestedCalls = 0;
     let approvals = 0;
     let info: ToolInfo = {name: call.name, details: structuredClone(call.input)};
+    // Every handler publishes the request; the most specific decider answers it.
+    function* publishApproval(request: ApprovalRequest): Operation<void> {
+      for (const policy of policies) {
+        if (policy.onApproval) yield* policy.onApproval(structuredClone(request), context.context);
+      }
+      if (onApproval) yield* onApproval(structuredClone(request), context.context);
+    }
     const toolContext: ToolContext<C> = {
       ...context,
       callId: call.id,
@@ -98,10 +105,7 @@ export function createToolExecutor<C>({
           signalName: `${context.name}:approval:${call.id}:${approvals++}`,
           ...(question === undefined ? {} : {question}),
         };
-        // Every handler publishes the request; the most specific decider answers it.
-        for (const publish of [...policies.map((p) => p.onApproval), onApproval]) {
-          if (publish) yield* publish(structuredClone(request), context.context);
-        }
+        yield* publishApproval(request);
         const decider = policies.findLast((p) => p.onHumanApproval);
         const approved = decider
           ? yield* decider.onHumanApproval!(request, toolContext)
@@ -126,6 +130,7 @@ export function createToolExecutor<C>({
           result.status === "error" ? result.code : result.status,
         );
       },
+      publishApproval,
       cancelOperation,
     };
     try {
