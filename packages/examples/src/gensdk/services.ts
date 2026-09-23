@@ -9,6 +9,7 @@ import {racingAgents} from "./07_racing_agents.js";
 import {researchReport, researchWorker} from "./08_research_report.js";
 import {aiSession} from "./09_support_session.js";
 import {refundAgent, refundService} from "./10_service_tool.js";
+import {codingSession} from "./11_coding_agent.js";
 
 export const gensdkServices = [
   hello,
@@ -23,4 +24,5 @@ export const gensdkServices = [
   aiSession,
   refundService,
   refundAgent,
+  codingSession,
 ];

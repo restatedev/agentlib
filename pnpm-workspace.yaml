@@ -3,6 +3,7 @@ packages:
 
 allowBuilds:
   # Optional native speedups and a version check; none are needed at runtime.
+  cbor-extract: false
   cpu-features: false
   esbuild: false
   protobufjs: false

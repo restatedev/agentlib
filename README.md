@@ -2,9 +2,9 @@
 
 A TypeScript SDK for building AI agents that don't lose their work. It has the
 harness features modern agents need: programmatic tool calling, live steering,
-tool search, MCP, sub-agents, human approval, and background tools. It runs on
-[Restate](https://restate.dev), so every model call, tool result, and decision
-is durable. An agent survives crashes, deploys, and hours-long waits, and it
+tool search, MCP, sub-agents, sandboxes, human approval, and background tools.
+It runs on [Restate](https://restate.dev), so every model call, tool result,
+and decision is durable. An agent survives crashes, deploys, and hours-long waits, and it
 resumes exactly where it stopped.
 
 ```ts
@@ -105,6 +105,24 @@ root agent's guardrails and budgets still apply. For full isolation, put an agen
 behind its own Restate service and call it with `serviceTool` or `handlerTool`,
 as a separate invocation.
 
+**Sandboxes.** `sandboxTools(provider)` from `@restate-agents/core/sandbox`
+gives a coding agent `readFile`, `writeFile`, `editFile`, `listFiles`,
+`search`, `executeCommand`, and `runInBackground` inside a remote sandbox. The
+handler creates the sandbox in a journaled step and passes its ID as run
+context; each tool reconnects by ID. A provider is three methods (`create`,
+`connect`, `terminate`), and the examples include Docker and
+[Modal](https://modal.com) providers. Commands run at most once per tool call:
+after a crash, the retried call reattaches to the process it already started.
+
+```ts
+const coder = agent<SandboxContext>({model, tools: sandboxTools(provider)});
+
+function* turn(message: string) {
+  const sandboxId = yield* restate.run(() => provider.create({name: "session-42"}));
+  return yield* coder.run(message, {context: {sandboxId}});
+}
+```
+
 **Human approval.** `needsApproval: true` pauses a tool until a person decides.
 The run waits durably for minutes or days, without holding a process.
 
@@ -151,7 +169,8 @@ The [tutorial](packages/examples/README.md) builds up from a single agent call
 to a full support session. Along the way it adds tools, conversation history,
 structured output, a draft-and-review loop, human approval, service tools,
 racing agents, parallel research workers, and a session that uses handoffs,
-steering, interruption, PTC, tool search, and MCP together.
+steering, interruption, PTC, tool search, and MCP together. The last lesson is
+a coding agent that works in a Docker or Modal sandbox.
 
 Start a Restate server, then:
 

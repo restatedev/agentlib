@@ -25,6 +25,7 @@ the request body required; object fields use `.default(...)`.
 | 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/gensdk/08_research_report.ts)         |
 | 09     | Handoffs and session controls         | [09_support_session.ts](src/gensdk/09_support_session.ts)         |
 | 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/gensdk/10_service_tool.ts)               |
+| 11     | A coding agent in a remote sandbox    | [11_coding_agent.ts](src/gensdk/11_coding_agent.ts)               |
 
 ## Start
 
@@ -274,6 +275,42 @@ curl --globoff "$RESTATE_CALL_URL/RefundAgent/ask" \
 
 Each call is a durable child invocation. Interrupting the run cancels an
 unfinished call, and a failed handler is reported to the model as a tool error.
+
+## 11 — Code in a remote sandbox
+
+`CodingSession` is a virtual object that owns one sandbox per session key. Each
+turn reuses the session's sandbox, or creates one inside a journaled step and
+stores only its ID. The agent gets that ID as its run context, and
+`sandboxTools(provider)` gives it `readFile`, `writeFile`, `editFile`,
+`listFiles`, `search`, `executeCommand`, and `runInBackground`. Every tool call
+reconnects to the sandbox by ID.
+
+It uses Docker by default, so you only need Docker running. Set
+`SANDBOX_PROVIDER=modal` to use [Modal Sandboxes](https://modal.com/docs/guide/sandbox),
+with credentials from `modal token new` or `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`,
+and `SANDBOX_IMAGE` to change the image (`node:24-bookworm` by default).
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/CodingSession/alice/turn" \
+  --json '"Create a Node.js module that returns the first n primes, add a node:test test for it, and run the test."'
+# While a turn runs, from another terminal:
+curl --globoff "$RESTATE_CALL_URL/CodingSession/alice/steer" --json '"Use TypeScript instead of JavaScript."'
+# When you are done:
+curl --globoff --request POST "$RESTATE_CALL_URL/CodingSession/alice/close"
+```
+
+A command runs at most once per tool call. The tool starts it detached in the
+sandbox, in a directory named after the call, and waits in short journaled
+steps. If the handler crashes or is redeployed mid-command, the retried call
+finds that directory and waits for the same process instead of running
+`npm install` twice. Long commands survive restarts between wait steps, a
+timeout or an interruption stops the whole process group, and output beyond
+16 KB keeps its beginning and end, with the full log left in the sandbox.
+A non-zero exit code is an ordinary result the model can react to.
+
+After each turn, the session sends itself a `shutdownIfIdle` call delayed by 30
+minutes, a durable timer. It terminates the sandbox unless a newer turn has
+started by then. `close` terminates it right away.
 
 ## Model configuration
 
