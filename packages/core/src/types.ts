@@ -74,6 +74,9 @@ export type ToolContext<Context> = RunContext<Context> & {
   searchTools(query: string): Operation<{name: string; description: string}[]>;
   step: number;
   approve(input: JsonValue, question?: string): Operation<boolean>;
+  /** Publish an approval request through this run's handlers without waiting for it,
+   * e.g. one raised inside a sub-agent. */
+  readonly publishApproval: (request: ApprovalRequest) => Operation<void>;
   /** Nested calls share validation, policy, approval, and the run's budgets. */
   callTool(name: string, input: JsonValue): Operation<JsonValue>;
   cancelOperation(id: string, reason?: string): Operation<boolean>;
@@ -86,6 +89,9 @@ export type Tool<Context = unknown> = {
   readonly deferred?: boolean;
   readonly provider?: string;
   readonly search?: true;
+  /** A program runs other tools and may wait for minutes. When steering arrives,
+   * the run moves it to background work instead of waiting for it. */
+  readonly program?: true;
   readonly handoff?: () => AgentRuntime<Context>;
   execute(input: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
 };

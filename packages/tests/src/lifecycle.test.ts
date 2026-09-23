@@ -8,16 +8,15 @@ import {
   asyncTool,
   cancelOperationTool,
   GuardrailError,
+  humanApprovalTool,
   tool,
   ToolError,
   type ModelResponse,
 } from "@restate-agents/core";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
-const ctx = () =>
-  ({
-    request: () => ({id: "test", attemptCompletedSignal: new AbortController().signal}),
-  }) as unknown as Context;
+import {testContext} from "./helpers.js";
+const ctx = () => testContext();
 const done: ModelResponse = {type: "final", text: "done"};
 const call = (name: string, id = name, input = {}) => ({id, name, input});
 const batch = (...calls: ReturnType<typeof call>[]): ModelResponse => ({type: "tool_calls", calls});
@@ -641,3 +640,37 @@ for (const failure of [new Error("source failed"), null, undefined]) {
     assert.equal(modelCleaned, true);
   });
 }
+
+void test("humanApprovalTool puts the model's question on the approval request", async () => {
+  let step = 0;
+  const questions: (string | undefined)[] = [];
+  const a = agent({
+    tools: {ask: humanApprovalTool()},
+    *onHumanApproval(request) {
+      questions.push(request.question);
+      return false;
+    },
+    *model() {
+      if (++step === 1) return batch(call("ask", "ask", {question: "Refund $40?"}));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status, "completed");
+  assert.match(JSON.stringify(result.messages), /background-tool-result.*denied/);
+  assert.deepEqual(questions, ["Refund $40?"]);
+});
+
+void test("an instructions function is called as a method", async () => {
+  const definition = {
+    tone: "brief",
+    *instructions(this: {tone: string}) {
+      return `Be ${this.tone}.`;
+    },
+    *model(req: {instructions?: string}): Generator<never, ModelResponse> {
+      assert.equal(req.instructions, "Be brief.");
+      return done;
+    },
+  };
+  assert.equal((await r.execute(ctx(), agent(definition).run("go"))).status, "completed");
+});

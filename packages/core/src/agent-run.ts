@@ -197,10 +197,13 @@ class AgentRun<C, O> {
   }
 
   private *plan(messages: Message[]): Operation<ModelResponse> {
-    const {instructions} = this.active;
+    const {active} = this;
     const request = {
+      // Called as a method, so an instructions function can use `this`.
       instructions:
-        typeof instructions === "function" ? yield* instructions(this.context) : instructions,
+        typeof active.instructions === "function"
+          ? yield* active.instructions(this.context)
+          : active.instructions,
       outputSchema: this.config.outputSchema,
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
@@ -219,11 +222,16 @@ class AgentRun<C, O> {
 
   /** Runs one native tool-call batch. The model cannot read a partial batch, so
    * the phase lasts until every foreground call settles; background calls were
-   * acknowledged as pending and report later through collectBackground(). */
+   * acknowledged as pending and report later through collectBackground().
+   * Steering does not wait for a running program: it continues in the background. */
   private *toolPhase(action: ModelToolCallsResponse): Operation<void> {
     const foreground = this.tools.startBatch(action, this.step, this.active, this.catalog);
     while (Object.keys(foreground).length > 0) {
       const {tag} = yield* this.race({...foreground, ...this.tools.pendingTasks()});
+      if (tag === "steering") {
+        for (const name of this.tools.handOffPrograms()) delete foreground[name];
+        continue;
+      }
       delete foreground[tag];
       this.collectBackground();
     }
@@ -336,11 +344,17 @@ class AgentRun<C, O> {
   /** Validates the accepted result, commits its output, and saves the turn. */
   private *finish(result: RunResult<O>): Operation<RunResult<O>> {
     if (result.status === "completed") {
-      if (this.root.output) result = {...result, output: this.root.output.parse(result.output)};
-      else if (typeof result.output !== "string")
+      if (this.root.output) {
+        const parsed = this.root.output.safeParse(result.output);
+        if (!parsed.success)
+          throw new GuardrailError(
+            `Run output does not match the output schema: ${parsed.error.message}`,
+          );
+        result = {...result, output: parsed.data};
+      } else if (typeof result.output !== "string")
         throw new GuardrailError("A completed text run must have a string output");
     }
-    const output = result.output === undefined ? undefined : jsonSchema.parse(result.output);
+    const output = result.output === undefined ? undefined : finalOutput(result.output);
     if (output !== undefined && JSON.stringify(output).length > this.config.maxOutputChars)
       throw new AgentLimitError("Final output exceeds maxOutputChars");
     // Only accepted output reaches history: a discarded candidate never does,
@@ -354,4 +368,10 @@ class AgentRun<C, O> {
     yield* this.history.save();
     return {...result, messages: this.history.committed()};
   }
+}
+
+function finalOutput(value: unknown) {
+  const parsed = jsonSchema.safeParse(value);
+  if (!parsed.success) throw new GuardrailError("Run output must be JSON");
+  return parsed.data;
 }

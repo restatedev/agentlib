@@ -83,9 +83,6 @@ importers:
 
   packages/tests:
     devDependencies:
-      '@opentelemetry/api':
-        specifier: 1.9.0
-        version: 1.9.0
       '@restate-agents/core':
         specifier: workspace:*
         version: link:../core

@@ -6,12 +6,9 @@ import {channel, execute, gen, type Channel} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {agent, agentTool, tool, type Message, type ModelResponse} from "@restate-agents/core";
 import {runHandler} from "./replay-harness.mjs";
+import {testContext} from "./helpers.js";
 
-function context(): Context {
-  return {
-    request: () => ({id: "agent-tool", attemptCompletedSignal: new AbortController().signal}),
-  } as unknown as Context;
-}
+const context = () => testContext("agent-tool");
 
 const delegate = (id: string, task: string): ModelResponse => ({
   type: "tool_calls",
@@ -128,14 +125,19 @@ void test("concurrent sub-agents run under distinct names", async () => {
 
 void test("interrupting the parent cancels a running sub-agent", async () => {
   let interrupt!: Channel<string>;
+  let unwound = false;
   const researcher = agent({
     tools: {
       wait: tool({
         description: "fixture",
         input: z.object({}),
         *execute() {
-          yield* interrupt.send("stop now");
-          return yield* channel<null>().receive;
+          try {
+            yield* interrupt.send("stop now");
+            return yield* channel<null>().receive;
+          } finally {
+            unwound = true;
+          }
         },
       }),
     },
@@ -158,6 +160,8 @@ void test("interrupting the parent cancels a running sub-agent", async () => {
   );
   assert.equal(result.status, "interrupted");
   assert.deepEqual(toolResults(result.messages), [{status: "cancelled", message: "stop now"}]);
+  // The sub-agent's own tool was interrupted, not left running.
+  assert.equal(unwound, true);
 });
 
 void test("a sub-agent's model calls are journaled and not repeated on replay", async () => {
@@ -187,4 +191,45 @@ void test("a sub-agent's model calls are journaled and not repeated on replay", 
   const replay = await runHandler(handler, {replay: live.journal});
   assert.deepEqual(replay.output, live.output);
   assert.equal(subCalls, 1);
+});
+
+void test("a sub-agent's approval requests reach the parent run's handler", async () => {
+  const published: string[] = [];
+  const refunder = agent({
+    tools: {
+      refund: tool({
+        description: "Refund an order.",
+        input: z.object({}),
+        needsApproval: true,
+        *execute() {
+          return "refunded";
+        },
+      }),
+    },
+    *onHumanApproval() {
+      return true;
+    },
+    *model(request) {
+      if (request.step === 1)
+        return {type: "tool_calls", calls: [{id: "x", name: "refund", input: {}}]};
+      return {type: "final", text: "Refunded."};
+    },
+  });
+  const lead = agent({
+    tools: {research: agentTool(refunder, {description: "Handle refunds."})},
+    *model(request) {
+      if (request.step === 1) return delegate("d1", "Refund the order");
+      return {type: "final", text: "Done."};
+    },
+  });
+  const result = await execute(
+    context(),
+    lead.run("Refund it", {
+      *onApproval(request) {
+        published.push(request.signalName);
+      },
+    }),
+  );
+  assert.equal(result.status, "completed");
+  assert.deepEqual(published, ["agent/d1:approval:x:0"]);
 });

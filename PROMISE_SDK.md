@@ -59,23 +59,27 @@ experimental), so the backport is no longer needed.
    `@restatedev/restate-sdk-gen`. Keep the promise package's own guard that
    rejects values which are not `RestatePromise`s, and its `adoptInvocation`,
    which adds the invocation handle the SDK's version leaves out.
-3. **Re-export from core** (`packages/core/src/index.ts`): from
-   `service-tool.ts`, `makeServiceTool` and the `MakeCall` type. `serviceTool`
-   now builds its call inline; split it back into
-   `makeServiceTool(arg, makeCallFor)` plus a generator-SDK `callFor`.
+3. **Split `serviceTool` in core.** It now calls handlers through a private
+   `callHandler(descriptor, handler, key, arg)` in `service-tool.ts`. Add an
+   exported `MakeCall` type with that shape (minus the descriptor), pass it
+   through the tool builders, and export a `makeServiceTool(arg, makeCallFor)`
+   that `serviceTool` calls with `callHandler`. Then export `makeServiceTool`
+   and `MakeCall` from `packages/core/src/index.ts`.
 4. **Wire the workspace:**
    - add `"@restate-agents/promise": "workspace:*"` to the examples and tests
      packages, then `pnpm install`;
    - restore the `./promise/*` subpath exports in
      `packages/examples/package.json`, and serve `promiseServices` from
-     `packages/examples/src/app.ts`;
+     `packages/examples/src/app.ts` next to the lessons' `services`. The
+     generator lessons have since moved from `src/gensdk` to `src/lessons`, and
+     their exports lost the `gensdk/` prefix;
    - restore the promise cases in `packages/tests/src/examples.integration.ts`
      and `packages/tests/src/types.ts` (`git show 61ec2d8:<path>` shows them).
 5. **Catch up with core.** Diff `packages/core/src/index.ts` against
    `61ec2d8` and decide, for each new export, whether promise users need a
    version. `agentTool`, for example, needs a variant whose sub-agent is a
    promise `Agent`.
-6. **Docs:** restore `packages/promise/README.md`, the promise columns and
+6. **Docs:** restore the promise columns and
    `Promise*` service names in `packages/examples/README.md`, the package row
    in the root README, and the `dev:promise` scripts.
 7. **Verify** with `pnpm check`. The integration tests cover approvals,

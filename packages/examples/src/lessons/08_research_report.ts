@@ -2,15 +2,8 @@
 // Reimplements the orchestrator-worker pattern from restatedev/ai-examples.
 // Source links and the differences are documented in ../../README.md.
 import * as restate from "@restatedev/restate-sdk-gen";
+import {agent, awaitChild, GuardrailError, tool, ToolError} from "@restate-agents/core";
 import {z} from "zod";
-import {
-  agent,
-  awaitChild,
-  GuardrailError,
-  tool,
-  ToolError,
-  type ToolContext,
-} from "@restate-agents/core";
 import {completedOutput, exampleModel as model} from "../shared.js";
 
 const sourceSchema = z.object({
@@ -67,7 +60,7 @@ Available sources: ${JSON.stringify(context.sources.map(({id, title}) => ({id, t
     readSource: tool({
       description: "Read one of the sources supplied with this request.",
       input: z.object({id: z.string()}),
-      *execute({id}, {context}: ToolContext<ResearchContext>) {
+      *execute({id}, {context}) {
         const source = context.sources.find((source) => source.id === id);
         if (!source) throw new ToolError(`Unknown source: ${id}`, "unknown_source");
         context.readSourceIds.add(id);

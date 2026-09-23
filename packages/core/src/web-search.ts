@@ -2,6 +2,8 @@ import {z} from "zod";
 import {asyncTool} from "./tool.js";
 import {ToolError} from "./errors.js";
 
+const searchResult = z.object({title: z.string(), url: z.url(), content: z.string()});
+
 /** A small optional Tavily adapter; credentials remain outside model input. */
 export function webSearch(options: {apiKey: string; fetch?: typeof fetch}) {
   return asyncTool({
@@ -21,16 +23,15 @@ export function webSearch(options: {apiKey: string; fetch?: typeof fetch}) {
           `Web search returned HTTP ${response.status}`,
           "web_search_unavailable",
         );
-      const result = z
-        .object({
-          results: z.array(
-            z.object({title: z.string(), url: z.string().url(), content: z.string()}),
-          ),
-        })
-        .parse(await response.json());
-      return result.results
-        .slice(0, 5)
-        .map((item) => ({...item, content: item.content.slice(0, 4000)}));
+      const body = z.object({results: z.array(z.unknown())}).safeParse(await response.json());
+      if (!body.success)
+        throw new ToolError("Web search returned an unexpected response", "web_search_unavailable");
+      // Drop malformed items rather than failing the whole search.
+      const results = body.data.results.flatMap((item) => {
+        const parsed = searchResult.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      });
+      return results.slice(0, 5).map((item) => ({...item, content: item.content.slice(0, 4000)}));
     },
   });
 }

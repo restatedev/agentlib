@@ -1,6 +1,5 @@
 // 09: Combine tools, handoffs, approvals, and controls in an application-owned session.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {z} from "zod";
 import {
   agent,
   asyncTool,
@@ -14,7 +13,13 @@ import {
 } from "@restate-agents/core";
 import {mcpTools, type McpToolSet} from "@restate-agents/core/mcp";
 import {programTool} from "@restate-agents/core/program";
+import {z} from "zod";
 import {exampleModel as model, replyText} from "../shared.js";
+
+// Read once at startup. Whether the MCP catalog is fetched decides which steps
+// the journal holds, so every replica must run with the same setting.
+const mcpServerUrl = process.env.MCP_SERVER_URL;
+const mcpProtocol = process.env.MCP_PROTOCOL === "stateful" ? "stateful" : "stateless";
 
 type SessionContext = {sessionKey: string};
 type ActiveTurn = {invocationId: string};
@@ -33,7 +38,7 @@ const closeTicket = asyncTool({
   input: z.object({ticket: z.string().min(1)}),
   needsApproval: true,
   *before({ticket}) {
-    return ticket !== "locked" || "The locked ticket cannot be changed";
+    if (ticket === "locked") return "The locked ticket cannot be changed";
   },
   async execute({ticket}, context) {
     return {
@@ -101,11 +106,11 @@ export const aiSession = restate.object({
         restate.state().set("active", {invocationId});
         let remote: McpToolSet<SessionContext> | undefined;
         try {
-          if (process.env.MCP_SERVER_URL)
+          if (mcpServerUrl)
             remote = yield* mcpTools<SessionContext>({
-              url: process.env.MCP_SERVER_URL,
+              url: mcpServerUrl,
               namespace: "remote",
-              protocol: process.env.MCP_PROTOCOL === "stateful" ? "stateful" : "stateless",
+              protocol: mcpProtocol,
               *token() {
                 return process.env.MCP_TOKEN;
               },
@@ -130,7 +135,7 @@ export const aiSession = restate.object({
     ),
     *status() {
       return {
-        active: yield* restate.sharedState().get("active"),
+        active: yield* restate.sharedState().get<ActiveTurn>("active"),
         approval: yield* restate.sharedState().get<ApprovalRequest>("approval"),
       };
     },

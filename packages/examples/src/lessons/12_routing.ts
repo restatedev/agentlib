@@ -41,7 +41,8 @@ export const supportRouter = restate.service({
       },
       function* (question) {
         const {specialist} = completedOutput(yield* route.run(question));
-        return replyText(yield* specialists[specialist].run(question));
+        const result = yield* specialists[specialist].run(question);
+        return replyText(result);
       },
     ),
   },

@@ -5,30 +5,16 @@ import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
   ConversationConflictError,
+  GuardrailError,
   LazyStateConversation,
-  type ConversationStore,
   type Message,
   type Model,
 } from "@restate-agents/core";
 import {z} from "zod";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
-const context = () =>
-  ({
-    request: () => ({id: "conversation", attemptCompletedSignal: new AbortController().signal}),
-  }) as unknown as Context;
-function memory() {
-  const values = new Map<string, unknown>();
-  const store: ConversationStore = {
-    *get<T>(key: string) {
-      return structuredClone(values.get(key)) as T | undefined;
-    },
-    *set(key, value) {
-      values.set(key, structuredClone(value));
-    },
-  };
-  return {store, values};
-}
+import {testContext, memoryStore} from "./helpers.js";
+const context = () => testContext("conversation");
 const pairs = (n: number): Message[] =>
   Array.from({length: n}, (_, i) => [
     {role: "user" as const, content: `question ${i}`},
@@ -36,7 +22,7 @@ const pairs = (n: number): Message[] =>
   ]).flat();
 
 void test("output policies replace the answer in persisted and returned conversation history", async () => {
-  const convo = new LazyStateConversation({store: memory().store});
+  const convo = new LazyStateConversation({store: memoryStore().store});
   const a = agent({
     *model() {
       return {type: "final", text: "private candidate"};
@@ -59,7 +45,7 @@ void test("output policies replace the answer in persisted and returned conversa
 });
 
 void test("a rejected structured answer reaches the retry but is never persisted or returned", async () => {
-  const convo = new LazyStateConversation({store: memory().store});
+  const convo = new LazyStateConversation({store: memoryStore().store});
   let requests = 0;
   const a = agent({
     output: z.object({answer: z.string()}),
@@ -85,7 +71,7 @@ void test("a rejected structured answer reaches the retry but is never persisted
 });
 
 void test("a conversation lazily persists chunks and supplies history across embedded runs", async () => {
-  const {store, values} = memory();
+  const {store, values} = memoryStore();
   const convo = new LazyStateConversation({store, metaKey: "meta", stateKey: "convo"});
   assert.equal(values.size, 0);
   await r.execute(
@@ -117,7 +103,7 @@ void test("a conversation lazily persists chunks and supplies history across emb
 });
 
 void test("compaction retains complete tool exchanges and leaves the original log available", async () => {
-  const {store} = memory();
+  const {store} = memoryStore();
   const convo = new LazyStateConversation({store});
   await r.execute(
     context(),
@@ -148,7 +134,7 @@ void test("compaction retains complete tool exchanges and leaves the original lo
 });
 
 void test("compaction tolerates concurrent appends but refuses an overlapping stale summary", async () => {
-  const {store} = memory();
+  const {store} = memoryStore();
   const convo = new LazyStateConversation({store});
   await r.execute(
     context(),
@@ -197,7 +183,7 @@ void test("automatic model compaction and conversation writes are replayable", a
     r.execute(
       ctx,
       (function* () {
-        const {store} = memory();
+        const {store} = memoryStore();
         const convo = new LazyStateConversation({
           store,
           compaction: {model: summarize, policy: {maxMessages: 8, retainMessages: 4}},
@@ -223,7 +209,7 @@ void test("automatic model compaction and conversation writes are replayable", a
 });
 
 void test("a failed compactor never removes history or installs a partial checkpoint", async () => {
-  const {store} = memory();
+  const {store} = memoryStore();
   const convo = new LazyStateConversation({
     store,
     compaction: {
@@ -250,7 +236,7 @@ void test("a failed compactor never removes history or installs a partial checkp
 
 void test("beforeRun rejection precedes all model work, including automatic compaction", async () => {
   let summarized = false;
-  const {store} = memory();
+  const {store} = memoryStore();
   const convo = new LazyStateConversation({
     store,
     compaction: {
@@ -275,6 +261,6 @@ void test("beforeRun rejection precedes all model work, including automatic comp
       assert.fail("blocked model");
     },
   });
-  await assert.rejects(r.execute(context(), a.run("go", {conversation: convo})));
+  await assert.rejects(r.execute(context(), a.run("go", {conversation: convo})), GuardrailError);
   assert.equal(summarized, false);
 });

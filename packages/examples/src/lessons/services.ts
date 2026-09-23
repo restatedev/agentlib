@@ -1,4 +1,4 @@
-// Every gensdk lesson's services, in tutorial order.
+// Every lesson's services, in tutorial order.
 import {hello} from "./01_hello.js";
 import {ticketLookup} from "./02_tools.js";
 import {chatSession} from "./03_conversation.js";
@@ -14,7 +14,7 @@ import {supportRouter} from "./12_routing.js";
 import {guardedBooking} from "./13_tool_guardrail.js";
 import {webResearch} from "./14_web_search.js";
 
-export const gensdkServices = [
+export const services = [
   hello,
   ticketLookup,
   chatSession,

@@ -4,8 +4,7 @@ import type {Message, Model} from "./types.js";
 import {history, modelResponse} from "./validation.js";
 
 export type ConversationSnapshot = {messages: Message[]; version: number};
-/** `void` retains compatibility with adapters that always reload after compaction. */
-export type ConversationCompactionStatus = "skipped" | "applied" | "stale" | void;
+export type ConversationCompactionStatus = "skipped" | "applied" | "stale";
 export interface Conversation {
   load(): Operation<ConversationSnapshot>;
   append(messages: readonly Message[], expectedVersion: number): Operation<number>;
@@ -166,7 +165,7 @@ export class LazyStateConversation implements Conversation {
     return true;
   }
 
-  *compact(): Operation<Exclude<ConversationCompactionStatus, void>> {
+  *compact(): Operation<ConversationCompactionStatus> {
     if (!this.options.compaction) return "skipped";
     const plan = yield* this.prepareCompaction(this.options.compaction.policy);
     if (!plan) return "skipped";

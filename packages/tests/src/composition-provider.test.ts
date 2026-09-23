@@ -7,10 +7,8 @@ import {z} from "zod";
 import {agent, handoff, tool, type ModelResponse} from "@restate-agents/core";
 import {aiModel} from "@restate-agents/core/provider";
 import {runHandler} from "./replay-harness.mjs";
-const ctx = () =>
-  ({
-    request: () => ({id: "compose", attemptCompletedSignal: new AbortController().signal}),
-  }) as unknown as Context;
+import {testContext} from "./helpers.js";
+const ctx = () => testContext("compose");
 const usage = {
   inputTokens: {total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0},
   outputTokens: {total: 1, text: 1, reasoning: 0},
@@ -39,6 +37,7 @@ void test("a failed tool-free finalizer preserves an honest stopped result", asy
   });
   const result = await r.execute(ctx(), a.run("go"));
   assert.equal(result.status, "stopped");
+  assert.equal(result.status === "stopped" && result.reason, "max_steps");
   assert.match(result.output!, /final summary could not be generated/);
 });
 

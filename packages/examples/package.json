@@ -4,65 +4,65 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./gensdk/hello": {
-      "types": "./dist/gensdk/01_hello.d.ts",
-      "import": "./dist/gensdk/01_hello.js"
+    "./hello": {
+      "types": "./dist/lessons/01_hello.d.ts",
+      "import": "./dist/lessons/01_hello.js"
     },
-    "./gensdk/tools": {
-      "types": "./dist/gensdk/02_tools.d.ts",
-      "import": "./dist/gensdk/02_tools.js"
+    "./tools": {
+      "types": "./dist/lessons/02_tools.d.ts",
+      "import": "./dist/lessons/02_tools.js"
     },
-    "./gensdk/conversation": {
-      "types": "./dist/gensdk/03_conversation.d.ts",
-      "import": "./dist/gensdk/03_conversation.js"
+    "./conversation": {
+      "types": "./dist/lessons/03_conversation.d.ts",
+      "import": "./dist/lessons/03_conversation.js"
     },
-    "./gensdk/structured-output": {
-      "types": "./dist/gensdk/04_structured_output.d.ts",
-      "import": "./dist/gensdk/04_structured_output.js"
+    "./structured-output": {
+      "types": "./dist/lessons/04_structured_output.d.ts",
+      "import": "./dist/lessons/04_structured_output.js"
     },
-    "./gensdk/human-approval": {
-      "types": "./dist/gensdk/06_human_approval.d.ts",
-      "import": "./dist/gensdk/06_human_approval.js"
+    "./evaluator-optimizer": {
+      "types": "./dist/lessons/05_evaluator_optimizer.d.ts",
+      "import": "./dist/lessons/05_evaluator_optimizer.js"
     },
-    "./gensdk/session": {
-      "types": "./dist/gensdk/09_support_session.d.ts",
-      "import": "./dist/gensdk/09_support_session.js"
+    "./human-approval": {
+      "types": "./dist/lessons/06_human_approval.d.ts",
+      "import": "./dist/lessons/06_human_approval.js"
     },
-    "./gensdk/research-report": {
-      "types": "./dist/gensdk/08_research_report.d.ts",
-      "import": "./dist/gensdk/08_research_report.js"
+    "./racing-agents": {
+      "types": "./dist/lessons/07_racing_agents.d.ts",
+      "import": "./dist/lessons/07_racing_agents.js"
     },
-    "./gensdk/evaluator-optimizer": {
-      "types": "./dist/gensdk/05_evaluator_optimizer.d.ts",
-      "import": "./dist/gensdk/05_evaluator_optimizer.js"
+    "./research-report": {
+      "types": "./dist/lessons/08_research_report.d.ts",
+      "import": "./dist/lessons/08_research_report.js"
     },
-    "./gensdk/racing-agents": {
-      "types": "./dist/gensdk/07_racing_agents.d.ts",
-      "import": "./dist/gensdk/07_racing_agents.js"
+    "./support-session": {
+      "types": "./dist/lessons/09_support_session.d.ts",
+      "import": "./dist/lessons/09_support_session.js"
     },
-    "./gensdk/service-tool": {
-      "types": "./dist/gensdk/10_service_tool.d.ts",
-      "import": "./dist/gensdk/10_service_tool.js"
+    "./service-tool": {
+      "types": "./dist/lessons/10_service_tool.d.ts",
+      "import": "./dist/lessons/10_service_tool.js"
     },
-    "./gensdk/coding-agent": {
-      "types": "./dist/gensdk/11_coding_agent.d.ts",
-      "import": "./dist/gensdk/11_coding_agent.js"
+    "./coding-agent": {
+      "types": "./dist/lessons/11_coding_agent.d.ts",
+      "import": "./dist/lessons/11_coding_agent.js"
     },
-    "./gensdk/routing": {
-      "types": "./dist/gensdk/12_routing.d.ts",
-      "import": "./dist/gensdk/12_routing.js"
+    "./routing": {
+      "types": "./dist/lessons/12_routing.d.ts",
+      "import": "./dist/lessons/12_routing.js"
     },
-    "./gensdk/tool-guardrail": {
-      "types": "./dist/gensdk/13_tool_guardrail.d.ts",
-      "import": "./dist/gensdk/13_tool_guardrail.js"
+    "./tool-guardrail": {
+      "types": "./dist/lessons/13_tool_guardrail.d.ts",
+      "import": "./dist/lessons/13_tool_guardrail.js"
     },
-    "./gensdk/web-search": {
-      "types": "./dist/gensdk/14_web_search.d.ts",
-      "import": "./dist/gensdk/14_web_search.js"
+    "./web-search": {
+      "types": "./dist/lessons/14_web_search.d.ts",
+      "import": "./dist/lessons/14_web_search.js"
     }
   },
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
+    "compile": "rm -rf dist && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/app.ts",
     "start": "node dist/app.js"

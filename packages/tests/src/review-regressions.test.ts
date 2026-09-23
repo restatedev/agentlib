@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
@@ -9,14 +8,11 @@ import {
   handoff,
   LazyStateConversation,
   tool,
-  type ConversationStore,
   type ModelResponse,
 } from "@restate-agents/core";
+import {testContext, memoryStore} from "./helpers.js";
 
-const context = () =>
-  ({
-    request: () => ({id: "review", attemptCompletedSignal: new AbortController().signal}),
-  }) as unknown as Context;
+const context = () => testContext("review");
 const final: ModelResponse = {type: "final", text: "accepted answer"};
 const toolCall: ModelResponse = {
   type: "tool_calls",
@@ -24,16 +20,7 @@ const toolCall: ModelResponse = {
 };
 
 function conversation() {
-  const values = new Map<string, unknown>();
-  const store: ConversationStore = {
-    *get<T>(key: string) {
-      return structuredClone(values.get(key)) as T | undefined;
-    },
-    *set(key, value) {
-      values.set(key, structuredClone(value));
-    },
-  };
-  return new LazyStateConversation({store});
+  return new LazyStateConversation({store: memoryStore().store});
 }
 
 void test("steering rejects stale tool plans before they can cause effects", async () => {

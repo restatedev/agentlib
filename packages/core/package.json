@@ -28,10 +28,6 @@
       "types": "./dist/provider.d.ts",
       "import": "./dist/provider.js"
     },
-    "./telemetry": {
-      "types": "./dist/telemetry.d.ts",
-      "import": "./dist/telemetry.js"
-    },
     "./web-search": {
       "types": "./dist/web-search.d.ts",
       "import": "./dist/web-search.js"
@@ -42,7 +38,7 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
+    "compile": "rm -rf dist && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

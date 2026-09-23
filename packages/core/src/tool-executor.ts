@@ -19,7 +19,7 @@ import type {
   ToolResult,
 } from "./types.js";
 import type {ToolCatalog} from "./tool-catalog.js";
-import {jsonSchema} from "./validation.js";
+import {jsonSchema, toolOutput} from "./validation.js";
 
 export type ToolExecutionLimits = Readonly<{
   maxToolCalls: number;
@@ -60,10 +60,17 @@ export function createToolExecutor<C>({
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
     // Root policies wrap the owner's: they check first and post-process last.
-    const policies = owner === root ? [root] : [root, owner];
+    const policies = [...new Set([root, owner])];
     let nestedCalls = 0;
     let approvals = 0;
     let info: ToolInfo = {name: call.name, details: structuredClone(call.input)};
+    // Every handler publishes the request; the most specific decider answers it.
+    function* publishApproval(request: ApprovalRequest): Operation<void> {
+      for (const policy of policies) {
+        if (policy.onApproval) yield* policy.onApproval(structuredClone(request), context.context);
+      }
+      if (onApproval) yield* onApproval(structuredClone(request), context.context);
+    }
     const toolContext: ToolContext<C> = {
       ...context,
       callId: call.id,
@@ -98,10 +105,7 @@ export function createToolExecutor<C>({
           signalName: `${context.name}:approval:${call.id}:${approvals++}`,
           ...(question === undefined ? {} : {question}),
         };
-        // Every handler publishes the request; the most specific decider answers it.
-        for (const publish of [...policies.map((p) => p.onApproval), onApproval]) {
-          if (publish) yield* publish(structuredClone(request), context.context);
-        }
+        yield* publishApproval(request);
         const decider = policies.findLast((p) => p.onHumanApproval);
         const approved = decider
           ? yield* decider.onHumanApproval!(request, toolContext)
@@ -126,6 +130,7 @@ export function createToolExecutor<C>({
           result.status === "error" ? result.code : result.status,
         );
       },
+      publishApproval,
       cancelOperation,
     };
     try {
@@ -138,7 +143,7 @@ export function createToolExecutor<C>({
       for (const policy of policies.toReversed()) {
         if (policy.afterTool) output = yield* policy.afterTool(output, toolContext);
       }
-      output = jsonSchema.parse(output);
+      output = toolOutput(output);
       if (JSON.stringify(output).length > maxOutputChars)
         throw new ToolError("Tool output exceeds maxOutputChars", "output_limit");
       return {status: "success", output};

@@ -19,7 +19,7 @@ export const refundIface = restate.iface.service("RefundService", {
   }),
 });
 
-// The implementation — an ordinary Restate service bound in app.ts.
+// The implementation: an ordinary Restate service, registered in services.ts.
 export const refundService = restate.implement(refundIface, {
   handlers: {
     *getPolicy() {

@@ -5,11 +5,10 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/*.test.ts",
-    "test:integration": "node --experimental-test-module-mocks --import tsx --test src/*.integration.ts"
+    "test": "node --import tsx --test --test-timeout=60000 'src/*.test.ts'",
+    "test:integration": "node --experimental-test-module-mocks --import tsx --test --test-timeout=180000 'src/*.integration.ts'"
   },
   "devDependencies": {
-    "@opentelemetry/api": "1.9.0",
     "@restate-agents/core": "workspace:*",
     "@restate-agents/examples": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",

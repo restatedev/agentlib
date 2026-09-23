@@ -16,7 +16,9 @@ import type {
 
 type Entry = {
   readonly call: ToolCall;
-  readonly background: boolean;
+  readonly program: boolean;
+  /** Set for background calls, and for a program once steering hands it off. */
+  background: boolean;
   task?: Task<ToolResult>;
   result?: ToolResult;
 };
@@ -98,7 +100,12 @@ export class RunTools<C> {
 
     const tasks: FutureBranches = {};
     for (const call of action.calls) {
-      const entry: Entry = {call, background: catalog.registry.get(call.name)?.background ?? false};
+      const definition = catalog.registry.get(call.name);
+      const entry: Entry = {
+        call,
+        program: definition?.program ?? false,
+        background: definition?.background ?? false,
+      };
       // The launching agent, catalog, and step stay fixed even if the run later hands off.
       entry.task = this.tasks.spawn(this.invoke(entry, step, owner, catalog));
       if (entry.background) {
@@ -110,6 +117,22 @@ export class RunTools<C> {
       }
     }
     return tasks;
+  }
+
+  /** Moves the batch's still-running programs to background work, so steering
+   * reaches the model without waiting for them. Each gets a pending result now
+   * and reports like any background call. Returns their foreground task names. */
+  handOffPrograms(): string[] {
+    const batch = this.batch;
+    if (!batch) return [];
+    const running = batch.foreground.filter((entry) => entry.program && !entry.result);
+    for (const entry of running) {
+      entry.background = true;
+      this.background.set(entry.call.id, entry);
+      this.record(entry.call, {status: "pending", operationId: entry.call.id});
+    }
+    batch.foreground = batch.foreground.filter((entry) => !running.includes(entry));
+    return running.map((entry) => `tool:${entry.call.id}`);
   }
 
   /** Closes the batch, cancelling calls that never produced a result. Returns

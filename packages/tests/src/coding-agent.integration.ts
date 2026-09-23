@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
-import {mkdtemp, mkdir, readFile, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join} from "node:path";
 import {after, before, mock, test} from "node:test";
@@ -16,6 +16,10 @@ const calls = {create: 0, terminate: 0};
 
 class SandboxFilesystemNotFoundError extends Error {}
 class Sandbox {
+  constructor(_client: unknown, sandboxId: string) {
+    // The handle must point at the sandbox that connect created.
+    assert.equal(sandboxId, "sb-1");
+  }
   filesystem = {
     readText: (path: string) =>
       readFile(local(path), "utf8").catch(() => {
@@ -44,6 +48,7 @@ class Sandbox {
   async terminate() {
     calls.terminate++;
   }
+  detach() {}
 }
 class ModalClient {
   apps = {fromName: async () => ({appId: "app"})};
@@ -55,6 +60,8 @@ class ModalClient {
     },
   };
 }
+// mock.module matches the resolved file, so this only replaces the lesson's modal
+// while both packages pin the same version (0.10.1).
 mock.module("modal", {namedExports: {ModalClient, Sandbox, SandboxFilesystemNotFoundError}});
 
 // Write a script, read it back, run it, and report its output.
@@ -83,7 +90,7 @@ const coder: Model = function* (request) {
   return {type: "final", text: stdout.trim()};
 };
 mock.module("@restate-agents/core/openai", {namedExports: {openAIModel: () => coder}});
-const {codingAgent} = await import("@restate-agents/examples/gensdk/coding-agent");
+const {codingAgent} = await import("@restate-agents/examples/coding-agent");
 
 let env: RestateTestEnvironment;
 before(
@@ -97,6 +104,7 @@ before(
 );
 after(async () => {
   await env?.stop();
+  await rm(root, {recursive: true, force: true});
 });
 
 void test("the coding agent works in one sandbox and releases it", async () => {

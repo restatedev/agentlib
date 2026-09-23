@@ -1,4 +1,4 @@
 import {serve} from "@restatedev/restate-sdk";
-import {gensdkServices} from "./gensdk/services.js";
+import {services} from "./lessons/services.js";
 
-await serve({services: gensdkServices, port: 9080});
+await serve({services, port: 9080});

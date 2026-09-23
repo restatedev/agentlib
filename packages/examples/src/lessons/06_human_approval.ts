@@ -30,13 +30,17 @@ export const ticketApproval = restate.object({
         output: z.string(),
       },
       function* (message) {
-        const result = yield* support.run(message, {
-          *onApproval(request) {
-            restate.state().set("approval", request);
-          },
-        });
-        restate.state().clear("approval");
-        return replyText(result);
+        try {
+          const result = yield* support.run(message, {
+            *onApproval(request) {
+              restate.state().set("approval", request);
+            },
+          });
+          return replyText(result);
+        } finally {
+          // A failed run must not leave a request that nobody is waiting for.
+          restate.state().clear("approval");
+        }
       },
     ),
     *status() {

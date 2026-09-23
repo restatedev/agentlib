@@ -1,8 +1,8 @@
 // 05: Compose structured agent runs in a bounded draft-and-review loop.
 // Reimplements restatedev/ai-examples' evaluator-optimizer using typed agent outputs.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {z} from "zod";
 import {agent} from "@restate-agents/core";
+import {z} from "zod";
 import {completedOutput, exampleModel as model} from "../shared.js";
 
 const MAX_ITERATIONS = 3;

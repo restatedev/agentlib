@@ -1,8 +1,8 @@
 // 11: A coding agent whose tools work in a Modal sandbox for the length of one request.
 import * as restate from "@restatedev/restate-sdk-gen";
 import {ModalClient, Sandbox, SandboxFilesystemNotFoundError} from "modal";
-import {z} from "zod";
 import {agent, asyncTool, ToolError} from "@restate-agents/core";
+import {z} from "zod";
 import {exampleModel as model, replyText} from "../shared.js";
 
 // Created on first use, so the other lessons run without Modal credentials.
@@ -25,12 +25,15 @@ function* connect(): restate.Operation<Sandbox> {
     {name: "Create sandbox"},
   );
   // What sandboxes.fromId does, without its promise: a handle for the ID, no I/O.
-  // It is rebuilt on every attempt, in whichever process runs the request.
+  // It is rebuilt on every attempt, in whichever process runs the request. The
+  // constructor is internal to Modal's SDK, so modal is pinned to an exact version.
   return new Sandbox(modal(), id);
 }
 
 function* release(sandbox: Sandbox): restate.Operation<void> {
   yield* restate.run(() => sandbox.terminate(), {name: "Release sandbox"});
+  // Frees the local client resources; no I/O, so it needs no journal entry.
+  sandbox.detach();
 }
 
 type CodingContext = {sandbox: Sandbox};
@@ -69,14 +72,14 @@ const coder = agent<CodingContext>({
       // One attempt: a failure goes to the model instead of running the command again.
       retry: {maxAttempts: 1},
       async execute({command}, {context}) {
-        const process = await context.sandbox.exec(["sh", "-c", command], {
+        const child = await context.sandbox.exec(["sh", "-c", command], {
           workdir: "/workspace",
           timeoutMs: 5 * 60 * 1000,
         });
         const [stdout, stderr, exitCode] = await Promise.all([
-          process.stdout.readText(),
-          process.stderr.readText(),
-          process.wait(),
+          child.stdout.readText(),
+          child.stderr.readText(),
+          child.wait(),
         ]);
         // Keep the end of long output, where errors usually are.
         return {exitCode, stdout: stdout.slice(-8000), stderr: stderr.slice(-8000)};

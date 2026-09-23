@@ -1,10 +1,16 @@
 export {agent} from "./agent.js";
-export {tool, asyncTool, handlerTool, awaitChild, handoff, agentTool, buildTool} from "./tool.js";
-export type {AgentToolOptions, BuildToolSpec, ToolLifecycle, ParseResult} from "./tool.js";
+export {tool, asyncTool, handlerTool, awaitChild, handoff, agentTool} from "./tool.js";
+export type {AgentToolOptions} from "./tool.js";
 export {serviceTool} from "./service-tool.js";
 export type {ServiceToolOptions, KeyArg} from "./service-tool.js";
 export {journaledModel} from "./model.js";
-export {ModelProtocolError, ToolError, GuardrailError, AgentLimitError} from "./errors.js";
+export {
+  ModelProtocolError,
+  ToolError,
+  GuardrailError,
+  AgentLimitError,
+  RunInputError,
+} from "./errors.js";
 export type {
   Agent,
   AgentOptions,

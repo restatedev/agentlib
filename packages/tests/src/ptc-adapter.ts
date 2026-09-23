@@ -1,4 +1,3 @@
-// Ported from the replit-final PTC regression suite.
 import {type Context, TerminalError} from "@restatedev/restate-sdk";
 import {execute, gen, run} from "@restatedev/restate-sdk-gen";
 import type {GuestLimits, Json, Outcome} from "../../core/src/ptc/guest.js";

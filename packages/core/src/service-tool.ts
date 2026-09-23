@@ -47,13 +47,6 @@ export type ServiceToolOptions<H extends Record<string, HandlerDescriptor>> = Ov
       }
   );
 
-/** Issue the request for a resolved key and (unwrapped) argument, returning the awaitable child. */
-type MakeCall = (
-  handler: string,
-  key: string | undefined,
-  callArg: JsonValue | undefined,
-) => ClientFuture<JsonValue>;
-
 function isPlainObjectSchema(schema: Record<string, unknown>): boolean {
   return (schema as {type?: unknown}).type === "object";
 }
@@ -76,7 +69,7 @@ function callArgFor(
   handler: HandlerDescriptor,
   value: JsonValue | undefined,
 ): JsonValue | undefined {
-  if (handler._inputSerde !== undefined) return value ?? undefined;
+  if (handler._inputSerde !== undefined) return value;
   return isNullishOrEmptyObject(value) ? undefined : value;
 }
 
@@ -103,7 +96,6 @@ function buildSingleHandlerTool<C>(
   handlerName: string,
   overrides: Overrides,
   resolveKey: ((input: JsonValue | undefined) => string) | undefined,
-  makeCall: MakeCall,
 ): Tool<C> {
   const handler = descriptor._handlers[handlerName];
   if (!handler)
@@ -146,7 +138,7 @@ function buildSingleHandlerTool<C>(
       needsApproval: overrides.needsApproval,
       *execute(data) {
         const output = yield* awaitChild(
-          makeCall(handlerName, resolveKey?.(data), callArgFor(handler, data)),
+          callHandler(descriptor, handlerName, resolveKey?.(data), callArgFor(handler, data)),
         );
         // z.json() output validation rejects `undefined` (a void-output handler).
         return output ?? null;
@@ -162,7 +154,6 @@ function buildMultiplexedTool<C>(
   descriptor: AnyDescriptor,
   overrides: Overrides,
   resolveKey: ((input: JsonValue | undefined) => string) | undefined,
-  makeCall: MakeCall,
 ): Tool<C> {
   const names = Object.keys(descriptor._handlers);
 
@@ -215,7 +206,12 @@ function buildMultiplexedTool<C>(
       *execute(data) {
         const handler = descriptor._handlers[data.handler];
         const output = yield* awaitChild(
-          makeCall(data.handler, resolveKey?.(data.input), callArgFor(handler, data.input)),
+          callHandler(
+            descriptor,
+            data.handler,
+            resolveKey?.(data.input),
+            callArgFor(handler, data.input),
+          ),
         );
         return output ?? null;
       },
@@ -232,16 +228,19 @@ function isDescriptor(arg: unknown): arg is AnyDescriptor {
 type Handlers = Record<string, HandlerDescriptor>;
 type HandlerClient = Record<string, (arg?: JsonValue) => ClientFuture<JsonValue>>;
 
-/** The free `client()` reads the ambient operation context. */
-const callFor =
-  (descriptor: AnyDescriptor): MakeCall =>
-  (handler, key, callArg) => {
-    const handlers =
-      key === undefined
-        ? client(descriptor as Descriptor<string, Handlers, "service">)
-        : client(descriptor as Descriptor<string, Handlers, "object" | "workflow">, key);
-    return (handlers as HandlerClient)[handler](callArg);
-  };
+/** Call a handler for a resolved key; the free `client()` reads the ambient operation context. */
+function callHandler(
+  descriptor: AnyDescriptor,
+  handler: string,
+  key: string | undefined,
+  callArg: JsonValue | undefined,
+): ClientFuture<JsonValue> {
+  const handlers =
+    key === undefined
+      ? client(descriptor as Descriptor<string, Handlers, "service">)
+      : client(descriptor as Descriptor<string, Handlers, "object" | "workflow">, key);
+  return (handlers as HandlerClient)[handler](callArg);
+}
 
 /**
  * Turn a Restate interface into a single agent tool.
@@ -278,8 +277,7 @@ export function serviceTool<C = unknown>(
   const {iface, handler, key, ...overrides} = options;
   const descriptor = iface as AnyDescriptor;
   const resolveKey = normalizeKey(descriptor, key);
-  const makeCall = callFor(descriptor);
   return handler === undefined
-    ? buildMultiplexedTool<C>(descriptor, overrides, resolveKey, makeCall)
-    : buildSingleHandlerTool<C>(descriptor, handler, overrides, resolveKey, makeCall);
+    ? buildMultiplexedTool<C>(descriptor, overrides, resolveKey)
+    : buildSingleHandlerTool<C>(descriptor, handler, overrides, resolveKey);
 }

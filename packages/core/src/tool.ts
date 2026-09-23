@@ -19,7 +19,7 @@ import type {
   ToolDefinition,
   ToolInfo,
 } from "./types.js";
-import {jsonSchema} from "./validation.js";
+import {jsonSchema, toolOutput} from "./validation.js";
 
 /** Outcome of parsing raw tool input into the definition's validated shape. */
 export type ParseResult<T> = {ok: true; data: T} | {ok: false; error: string};
@@ -87,7 +87,7 @@ export function buildTool<Data, Context = unknown>(
         throw new ToolDenied("Human approval denied");
       let result = yield* lifecycle.execute(data, context);
       if (lifecycle.after) result = yield* lifecycle.after(result, context);
-      return jsonSchema.parse(result);
+      return toolOutput(result);
     },
   };
 }
@@ -124,19 +124,15 @@ export function asyncTool<S extends z.ZodType, C = unknown>(
         async ({signal}) => {
           try {
             const {invocationId, name, callId, step} = context;
-            return {
-              ok: true as const,
-              value: jsonSchema.parse(
-                await definition.execute(input, {
-                  context: context.context,
-                  invocationId,
-                  name,
-                  callId,
-                  step,
-                  signal,
-                }),
-              ),
-            };
+            const output = await definition.execute(input, {
+              context: context.context,
+              invocationId,
+              name,
+              callId,
+              step,
+              signal,
+            });
+            return {ok: true as const, value: toolOutput(output)};
           } catch (error) {
             if (error instanceof ToolError)
               return {ok: false as const, message: error.message, code: error.code};
@@ -224,10 +220,12 @@ export function agentTool<C, O>(
     ...options,
     input: delegatedTask,
     *execute({task}, context) {
-      // A run name unique to this call keeps approval signals of concurrent sub-agents apart.
-      const runOptions: RunOptions<C> = {
+      const runOptions = {
         context: context.context,
+        // A run name unique to this call keeps approval signals of concurrent sub-agents apart.
         name: `${context.name}/${context.callId}`,
+        // The sub-agent's approval requests reach whoever the parent run publishes to.
+        onApproval: context.publishApproval,
       } as RunOptions<C>;
       const run = subAgent.run as (
         input: string,

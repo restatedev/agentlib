@@ -1,5 +1,4 @@
-// Adapted from replit-final's PTC tests. Exercise the real Restate v7 journal
-// protocol in process, recording run entries for full/partial replay.
+// Exercise the real Restate v7 journal protocol in process, recording run entries for full/partial replay.
 // This intentionally supports only the protocol frames needed by these tests.
 import assert from "node:assert/strict";
 import {createEndpointHandler, service} from "@restatedev/restate-sdk/fetch";
