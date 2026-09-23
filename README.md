@@ -1,180 +1,144 @@
 # Restate Agents
 
-- **Keep working through failures.** Journal model calls, tool results, and
-  approvals so agents resume after crashes, deploys, or long waits.
-- **Change course while running.** Steer or interrupt a turn with durable
-  signals, even while a tool or human decision is pending.
-- **Give agents powerful tools.** Combine programmatic and background tool
-  calls, tool search, MCP, sub-agents, and handoffs between agents.
-- **Stay in control.** Add guardrails, Zod-validated output, and human approval
-  to the steps that need them.
-- **Fit your Restate service.** Run an agent as one step of any handler, next
-  to your own durable code.
+**TypeScript agents built for durable execution on [Restate](https://restate.dev).**
+Run an agent inside a service handler, alongside ordinary application code.
+Restate records its progress, so a crash, deploy, or long wait does not mean
+starting the work over.
 
-Restate Agents is a TypeScript agent library built for durable execution on
-[Restate](https://restate.dev). It runs inside your service handlers, so an agent
-can pick up from its journal instead of repeating completed work.
+- **Survive the real world.** Model calls, tool results, and approvals are
+  journaled; completed work is reused when an invocation resumes.
+- **Stay in control while it runs.** Steer or interrupt an agent, enforce tool
+  policies, and pause for human approval.
+- **Compose agents like services.** Call other handlers through durable RPC,
+  delegate to sub-agents, or hand a conversation to a specialist.
+- **Bring the tools you need.** Use async functions, Restate services, MCP,
+  tool search, background work, and programmatic tool calling.
+
+[Run the tutorial](#try-it) · [Explore the capabilities](#capabilities) ·
+[Browse the numbered examples](packages/examples/README.md)
+
+## The shape of an agent
+
+An agent runs inside your Restate service. Your handler decides when to run it
+and what happens before and after. The agent can call a model, use tools, wait
+for a person, and continue from the journal when the invocation resumes.
+
+```mermaid
+flowchart LR
+  Caller[Caller] --> Handler[Restate handler]
+  Handler --> Agent[Agent run]
+  Agent <--> Model[Model]
+  Agent <--> Tools[Tools and services]
+  Agent -. progress .-> Journal[(Restate journal)]
+  Journal -. replay .-> Agent
+```
+
+Start with one agent and one handler:
 
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool, searchToolsTool} from "@restate-agents/core";
+import {agent} from "@restate-agents/core";
 import {openAIModel} from "@restate-agents/core/openai";
-import {programTool} from "@restate-agents/core/program";
-import {z} from "zod";
 
-const support = agent({
-  model: openAIModel({model: "gpt-5.6-luna"}),
-  instructions: "Resolve support tickets. Search for tools you don't know yet.",
-  tools: {
-    lookupTicket: asyncTool({
-      description: "Look up a ticket's status.",
-      input: z.object({ticketId: z.string()}),
-      async execute({ticketId}) {
-        return {ticketId, status: "open"}; // Any async API call; the result is journaled.
-      },
-    }),
-    program: programTool(), // The model writes code that orchestrates many tool calls.
-    searchTools: searchToolsTool(), // Deferred tools stay hidden until the model finds them.
-  },
-});
+const assistant = agent({model: openAIModel({model: "gpt-5.6-luna"})});
 
-export const tickets = restate.service({
-  name: "Tickets",
+export const hello = restate.service({
+  name: "Hello",
   handlers: {
     *ask(question: string) {
-      const result = yield* support.run(question);
+      const result = yield* assistant.run(question);
       return result.status === "completed" ? result.output : result.reason;
     },
   },
 });
 ```
 
-## Agent capabilities
+Each request starts a fresh run. Add a [conversation](packages/examples/src/gensdk/03_conversation.ts)
+when the agent needs to remember earlier turns, or add
+[tools](packages/examples/src/gensdk/02_tools.ts) when it needs to act.
 
-**Programmatic tool calling (PTC).** `programTool()` lets the model answer with a
-short JavaScript program instead of one tool call at a time. The program runs in
-a QuickJS sandbox with no network, filesystem, clock, or randomness, and calls the
-agent's tools with `Promise.all`, `race`, and friends. Every tool call inside it
-goes through the same policies and approvals as a direct call, and every call is
-journaled.
+## Try it
 
-**Steering and interruption.** Send a message to a running agent and it changes
-course: a model call in flight is discarded and the agent re-plans with the new
-instruction, while running tools keep going. Interrupting stops the run cleanly.
-Unfinished tools are cancelled, and the agent can summarize what it got done.
-Both are durable signals, so they work even while the agent waits on a tool or a
-human.
-
-```ts
-function* turn(message: string) {
-  return yield* support.run(message, {
-    steeringSignal: "steering",
-    interruptSignal: "interrupt",
-  });
-}
-
-// From any other handler, steer the running turn by its invocation ID:
-function steer(invocationId: string) {
-  restate.invocation(invocationId).signal("steering").resolve("Only look at ticket T-42.");
-}
-```
-
-**Tool search.** Mark tools `deferred: true` and add `searchToolsTool()`. The
-model starts with a small catalog, searches by name, provider, or parameters, and
-loads full schemas only when it needs them. MCP tools are deferred by default,
-so large remote catalogs stay out of the prompt.
-
-**MCP.** `mcpTools({url, namespace, protocol})` snapshots a remote MCP server's
-catalog into ordinary agent tools, over stateless or stateful Streamable HTTP.
-Calls are journaled and carry idempotency keys, and authorization can pause for a
-human to refresh credentials.
-
-**Sub-agents.** `agentTool(subAgent, {description})` turns an agent into a tool.
-The model delegates a self-contained task, and the sub-agent works on it with its
-own fresh conversation, tools, and limits. Its answer, text or structured output,
-comes back as the tool result. Sub-agents run in the same durable invocation, so
-every step is journaled and interrupting the parent cancels them. Add
-`background: true` to keep the parent working in the meantime.
-
-```ts
-const researcher = agent({
-  model,
-  instructions: "Research the question thoroughly and cite your sources.",
-});
-const lead = agent({
-  model,
-  instructions: "Plan the work and delegate research questions.",
-  tools: {research: agentTool(researcher, {description: "Research one question."})},
-});
-```
-
-`handoff(specialist)` transfers the conversation itself to another agent, and the
-root agent's guardrails and budgets still apply. For full isolation, put an agent
-behind its own Restate service and call it with `serviceTool` or `handlerTool`,
-as a separate invocation.
-
-**Human approval.** `needsApproval: true` pauses a tool until a person decides.
-The run waits durably for minutes or days, without holding a process.
-
-**Background tools.** Tools marked `background: true` return a pending result
-right away. The model keeps working and sees the result when it arrives. It can
-also cancel pending work with `cancelOperationTool()`.
-
-**More.**
-
-- Structured output validated with Zod.
-- `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, and `afterRun` guardrails.
-- Conversations stored in Restate state, with automatic compaction.
-- Tools generated from any Restate service contract, or discovered from
-  annotated handlers.
-- Web search.
-- OpenAI and [AI SDK](https://ai-sdk.dev) model adapters, plus a gateway for
-  routing model calls through a Restate service.
-- OpenTelemetry model tracing.
-
-## Durable by default
-
-Restate records every step of a run in its journal: model responses, tool
-results, approvals, and steering messages. On a crash or redeploy, the agent
-replays that journal instead of redoing the work. It doesn't call the model
-again or repeat side effects, and it carries on from the next step.
-
-- **Retries where they belong.** Model calls and tools retry transient failures
-  with their own policies. A tool that fails for good becomes an error the model
-  can react to, instead of crashing the run.
-- **Cancellation that propagates.** Interrupting or cancelling a run cancels its
-  model call, its tools, and any child invocations it started.
-- **Waiting is free.** Approvals, sleeps, and slow tools suspend the run durably.
-- **Composable with workflows.** An agent run is just a step in a Restate
-  handler, so you can race agents, fan out workers, or chain a draft-and-review
-  loop alongside ordinary durable code.
-
-Agents run inside Restate's generator SDK. A promise-based entry point for the
-regular SDK existed earlier and was removed for now;
-[PROMISE_SDK.md](PROMISE_SDK.md) explains how to bring it back.
-
-## Examples
-
-The [tutorial](packages/examples/README.md) builds up from a single agent call
-to a full support session. Along the way it adds tools, conversation history,
-structured output, a draft-and-review loop, human approval, service tools,
-racing agents, parallel research workers, and a session that uses handoffs,
-steering, interruption, PTC, tool search, and MCP together. Goal-based recipes
-then show how to route to specialists, enforce a tool policy, and answer with
-current web sources. A coding lesson gives an agent tools backed by a Modal sandbox.
-
-Start a Restate server, then:
+The [numbered tutorial](packages/examples/README.md) starts with this smallest
+agent and builds toward approvals, multi-agent workflows, and a support session
+with live controls. Start a Restate server, then run the example endpoint:
 
 ```sh
-export OPENAI_API_KEY=...
 pnpm install --frozen-lockfile
+export OPENAI_API_KEY=...
 pnpm dev
+```
+
+In another terminal:
+
+```sh
 pnpm dlx @restatedev/restate deployments register http://localhost:9080
 curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
 ```
 
+The same service also has a typed TypeScript client. From a program in this
+workspace:
+
+```ts
+import {connect} from "@restatedev/restate-sdk-clients";
+import {hello} from "@restate-agents/examples/gensdk/hello";
+
+const answer = await connect({url: "http://localhost:8080"})
+  .client(hello)
+  .ask("Say hello in one sentence.");
+console.log(answer);
+```
+
 After updating the SDK, restart the endpoint and rediscover it so Restate sees
 changed services.
+
+## What you can build
+
+- **Support that remembers and adapts.** Keep conversation history in a keyed
+  object, and steer or interrupt an active turn.
+  [See the support session](packages/examples/src/gensdk/09_support_session.ts).
+- **Actions with a human in the loop.** Pause a tool for approval or check a
+  budget before it runs.
+  [See human approval](packages/examples/src/gensdk/06_human_approval.ts) and
+  [tool policy](packages/examples/src/gensdk/13_tool_guardrail.ts).
+- **Research across workers.** Fan out typed Restate RPCs and synthesize their
+  results. [See the research report](packages/examples/src/gensdk/08_research_report.ts).
+- **Coding in a sandbox.** Give an agent sandbox operations as tools inside a
+  durable handler. [See the coding agent](packages/examples/src/gensdk/11_coding_agent.ts).
+
+The [tutorial](packages/examples/README.md) develops these patterns one lesson
+at a time, from a single call through multi-agent workflows.
+
+## Why it keeps working
+
+Restate journals model responses, tool results, and workflow decisions. After a
+crash or redeploy, an invocation replays completed steps and continues from the
+next one. Your agent does not have to reconstruct its place in a workflow or
+repeat a completed model call.
+
+- **Retries are explicit.** Set policies on model calls and tools; a terminal
+  tool failure becomes a result the agent can handle.
+- **Cancellation propagates.** An interrupted run cancels unfinished tools and
+  child invocations.
+- **Waiting does not occupy a process.** Approvals, sleeps, and slow work
+  suspend durably.
+- **Composition stays in application code.** Race agents, fan out workers, or
+  add an agent to a larger Restate workflow.
+
+## Capabilities
+
+- **Control:** Durable steering and interruption signals, human approval, and
+  run and tool guardrails.
+- **Compose:** Sub-agents as tools, conversation handoffs, and typed RPC to
+  other Restate services.
+- **Extend:** Async and service-backed tools, background calls, deferred tool
+  search, MCP, web search, and sandboxed programmatic tool calling.
+- **Integrate:** Restate-backed conversations, Zod-validated output, OpenAI and
+  [AI SDK](https://ai-sdk.dev) model adapters, a model gateway, and OpenTelemetry
+  tracing.
+
+The current entry point targets Restate's generator SDK. See
+[PROMISE_SDK.md](PROMISE_SDK.md) for the promise SDK design.
 
 ## Workspace
 
