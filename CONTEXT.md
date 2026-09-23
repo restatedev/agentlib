@@ -57,7 +57,9 @@ _Avoid_: Conversation, model context
 
 **Steering**:
 Additional input that changes the task while a run is active. It invalidates
-unexecuted plans without undoing effects of tools that already started.
+unexecuted plans without undoing effects of tools that already started. The model
+reads it once the current tool batch settles; a running program does not hold it
+back, but continues as background work the model can cancel.
 _Avoid_: Interruption, cancellation
 
 **Interruption**:

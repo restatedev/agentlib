@@ -4,7 +4,14 @@ import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import MiniSearch from "minisearch";
 import {z} from "zod";
-import {agent, searchToolsTool, tool, type ModelResponse} from "@restate-agents/core";
+import {
+  agent,
+  cancelOperationTool,
+  searchToolsTool,
+  tool,
+  type ModelResponse,
+  type ToolResult,
+} from "@restate-agents/core";
 import {programTool} from "@restate-agents/core/program";
 import {runHandler} from "./replay-harness.mjs";
 const done: ModelResponse = {type: "final", text: "done"};
@@ -217,4 +224,75 @@ void test("PTC runs and nested durable effects replay without invoking the host 
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);
   assert.equal(effects, 2);
+});
+
+void test("steering hands a still-running program to the background instead of waiting for it", async () => {
+  let cleaned = false,
+    step = 0;
+  await r.execute(
+    context(),
+    (function* () {
+      const change = r.channel<string>(),
+        never = r.channel<string>();
+      let listens = 0;
+      const a = agent({
+        tools: {
+          program: programTool({tools: ["wait"]}),
+          // Blocks until cancelled, like a long sleep inside a program.
+          wait: tool({
+            description: "wait",
+            input: z.object({}),
+            *execute() {
+              try {
+                yield* change.send("Don't wait, actually");
+                yield* r.channel().receive;
+                return 0;
+              } finally {
+                cleaned = true;
+              }
+            },
+          }),
+          lookup: tool({
+            description: "lookup",
+            input: z.object({}),
+            *execute() {
+              return "sunny";
+            },
+          }),
+          cancel: cancelOperationTool(),
+        },
+        *model(req): Generator<never, ModelResponse> {
+          if (++step === 1)
+            return {
+              type: "tool_calls",
+              calls: [
+                {id: "p", name: "program", input: {source: "async tools => await tools.wait({})"}},
+                {id: "l", name: "lookup", input: {}},
+              ],
+            };
+          const results = new Map<string, ToolResult>();
+          for (const m of req.messages) if (m.role === "tool") results.set(m.callId, m.result);
+          if (step === 2) {
+            // The steer arrives while the program still runs; its handle is pending.
+            assert.match(JSON.stringify(req.messages), /Don't wait, actually/);
+            assert.deepEqual(results.get("p"), {status: "pending", operationId: "p"});
+            assert.deepEqual(results.get("l"), {status: "success", output: "sunny"});
+            return {
+              type: "tool_calls",
+              calls: [{id: "c", name: "cancel", input: {operationId: "p"}}],
+            };
+          }
+          assert.deepEqual(results.get("c"), {status: "success", output: {cancelled: true}});
+          assert.match(JSON.stringify(req.messages), /background-tool-result/);
+          return done;
+        },
+      });
+      const result = yield* a.run("go", {
+        controls: {steering: () => (listens++ === 0 ? change.receive : never.receive)},
+      });
+      assert.equal(result.status, "completed");
+    })(),
+  );
+  assert.equal(cleaned, true);
+  assert.equal(step, 3);
 });

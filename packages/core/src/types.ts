@@ -89,6 +89,9 @@ export type Tool<Context = unknown> = {
   readonly deferred?: boolean;
   readonly provider?: string;
   readonly search?: true;
+  /** A program runs other tools and may wait for minutes. When steering arrives,
+   * the run moves it to background work instead of waiting for it. */
+  readonly program?: true;
   readonly handoff?: () => AgentRuntime<Context>;
   execute(input: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
 };

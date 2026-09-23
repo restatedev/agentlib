@@ -10,7 +10,7 @@ function isObject(value: Json): value is {[key: string]: Json} {
 
 /** QuickJS orchestrates the same permitted, policy-checked tools as direct calls. */
 export function programTool(options: {tools?: string[]; limits?: GuestLimits} = {}) {
-  return tool({
+  const program = tool({
     description:
       "Run JavaScript: async tools => { return await tools.name({...}); }. Use exactly one input object per tool. Supports Promise.all/any/race/allSettled. No network, filesystem, process, timers or random. Return compact JSON; tool errors reject. Search for unfamiliar tools before writing code.",
     input: z.object({source: z.string().min(1).max(64000)}),
@@ -49,5 +49,6 @@ export function programTool(options: {tools?: string[]; limits?: GuestLimits} = 
       }
     },
   });
+  return {...program, program: true as const};
 }
 export type {GuestLimits} from "./ptc/guest.js";

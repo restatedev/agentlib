@@ -219,11 +219,16 @@ class AgentRun<C, O> {
 
   /** Runs one native tool-call batch. The model cannot read a partial batch, so
    * the phase lasts until every foreground call settles; background calls were
-   * acknowledged as pending and report later through collectBackground(). */
+   * acknowledged as pending and report later through collectBackground().
+   * Steering does not wait for a running program: it continues in the background. */
   private *toolPhase(action: ModelToolCallsResponse): Operation<void> {
     const foreground = this.tools.startBatch(action, this.step, this.active, this.catalog);
     while (Object.keys(foreground).length > 0) {
       const {tag} = yield* this.race({...foreground, ...this.tools.pendingTasks()});
+      if (tag === "steering") {
+        for (const name of this.tools.handOffPrograms()) delete foreground[name];
+        continue;
+      }
       delete foreground[tag];
       this.collectBackground();
     }
