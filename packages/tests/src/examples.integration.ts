@@ -201,6 +201,29 @@ const fixtureModel: Model = function* (request) {
     }
     return {type: "final", text: `Session answer; previous turns: ${turns.length - 1}`};
   }
+  if (instructions.startsWith("Choose the one specialist")) {
+    const specialist = prompt(request).includes("feature") ? "product" : "account";
+    return answer({specialist});
+  }
+  if (instructions.startsWith("Help with sign-in")) {
+    assert.equal(request.messages.filter((message) => message.role === "user").length, 1);
+    return {type: "final", text: "Use the account recovery flow."};
+  }
+  if (instructions.startsWith("Explain product features"))
+    return {type: "final", text: "Here is how the feature works."};
+  if (instructions.startsWith("Call bookHotel")) {
+    const result = request.messages.find((message) => message.role === "tool");
+    if (!result)
+      return {
+        type: "tool_calls",
+        calls: [{id: "booking", name: "bookHotel", input: {hotelId: "H-42"}}],
+      };
+    assert.equal(result.role, "tool");
+    if (result.result.status === "denied")
+      return {type: "final", text: "No reservation was made: the quote exceeds the budget."};
+    assert.equal(result.result.status, "success");
+    return {type: "final", text: "Demo hotel H-42 was reserved."};
+  }
   const last = request.messages.at(-1);
   if (last?.role === "user" && last.content.startsWith("The run stopped:"))
     return {type: "final", text: "Stopped as requested."};
@@ -232,6 +255,8 @@ const [
   {racingAgents},
   {aiSession},
   {ticketApproval},
+  {supportRouter},
+  {guardedBooking},
 ] = await Promise.all([
   import("@restate-agents/examples/gensdk/hello"),
   import("@restate-agents/examples/gensdk/tools"),
@@ -242,6 +267,8 @@ const [
   import("@restate-agents/examples/gensdk/racing-agents"),
   import("@restate-agents/examples/gensdk/session"),
   import("@restate-agents/examples/gensdk/human-approval"),
+  import("@restate-agents/examples/gensdk/routing"),
+  import("@restate-agents/examples/gensdk/tool-guardrail"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -260,6 +287,8 @@ before(
         racingAgents,
         aiSession,
         ticketApproval,
+        supportRouter,
+        guardedBooking,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -309,6 +338,30 @@ for (const tutorial of tutorialExamples) {
     });
   });
 }
+
+void test("routing chooses a specialist and gives it a fresh run", async () => {
+  const client = connect({url: env.baseUrl()}).client(supportRouter);
+  assert.equal(
+    await client.answer("I cannot log into my account."),
+    "Use the account recovery flow.",
+  );
+  assert.equal(
+    await client.answer("How does this feature work?"),
+    "Here is how the feature works.",
+  );
+});
+
+void test("tool policy denies an over-budget booking and permits one within budget", async () => {
+  const client = connect({url: env.baseUrl()}).client(guardedBooking);
+  assert.match(
+    await client.ask({hotelId: "H-42", quotedTotalCents: 12500, maxTotalCents: 10000}),
+    /No reservation was made/,
+  );
+  assert.equal(
+    await client.ask({hotelId: "H-42", quotedTotalCents: 12500, maxTotalCents: 15000}),
+    "Demo hotel H-42 was reserved.",
+  );
+});
 
 const approvalExamples = [
   {
