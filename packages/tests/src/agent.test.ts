@@ -17,7 +17,6 @@ import {
   tool,
   ToolError,
   ModelProtocolError,
-  type AgentUpdate,
   type Message,
   type Model,
   type ModelResponse,
@@ -82,7 +81,7 @@ void test("tools infer validated inputs and receive private per-run context", as
 });
 
 void test(
-  "tool calls run concurrently and results keep request order",
+  "tool calls run concurrently and results enter history as they complete",
   {timeout: 5000},
   async () => {
     const result = await execute(
@@ -132,7 +131,7 @@ void test(
     );
     assert.deepEqual(
       result.messages.filter((m) => m.role === "tool").map((m) => m.callId),
-      ["a", "b"],
+      ["b", "a"],
     );
   },
 );
@@ -379,30 +378,6 @@ void test("history is copied and incomplete protocol histories fail before infer
     /unfinished/,
   );
   assert.equal(invoked, false);
-});
-
-void test("update hooks are ordered operations and cannot mutate the transcript", async () => {
-  const events: AgentUpdate[] = [];
-  const a = agent({model: scripted(call("a", "missing"), final)});
-  const result = await execute(
-    context(),
-    a.run("Go", {
-      *onUpdate(update) {
-        events.push(structuredClone(update));
-        if (update.type === "tool-start") update.call.name = "changed";
-        if (update.type === "tool-end") update.result = {status: "success", output: "changed"};
-      },
-    }),
-  );
-  assert.deepEqual(
-    events.map((e) => e.type),
-    ["step-start", "tool-start", "tool-end", "step-start", "run-end"],
-  );
-  assert.deepEqual(
-    events.map((e) => e.sequence),
-    [1, 2, 3, 4, 5],
-  );
-  assert.ok(!JSON.stringify(result).includes("changed"));
 });
 
 void test("the same agent definition supports independent concurrent runs", async () => {

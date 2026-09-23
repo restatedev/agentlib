@@ -8,7 +8,6 @@ import {
   ToolError,
 } from "./errors.js";
 import type {
-  AgentEvent,
   AgentRuntime,
   ApprovalHandler,
   ApprovalRequest,
@@ -30,7 +29,6 @@ export type ToolExecutionLimits = Readonly<{
 type ToolExecutorOptions<C> = ToolExecutionLimits & {
   root: AgentRuntime<C>;
   context: RunContext<C>;
-  update: (event: AgentEvent) => Operation<void>;
   onApproval?: ApprovalHandler<C>;
   cancelOperation: ToolContext<C>["cancelOperation"];
 };
@@ -43,7 +41,6 @@ export function createToolExecutor<C>({
   maxToolCalls,
   maxToolDepth,
   maxOutputChars,
-  update,
   onApproval,
   cancelOperation,
 }: ToolExecutorOptions<C>) {
@@ -81,7 +78,6 @@ export function createToolExecutor<C>({
         if (JSON.stringify(snapshot).length > maxOutputChars)
           throw new AgentLimitError("Tool display information exceeds maxOutputChars");
         info = snapshot;
-        yield* update({type: "tool-info", step: callStep, callId: call.id, info});
       },
       step: callStep,
       availableTools: () => [...registry.registry.keys()],
@@ -92,14 +88,6 @@ export function createToolExecutor<C>({
         });
         return registry.search.load(selected);
       },
-      *progress(value) {
-        yield* update({
-          type: "progress",
-          step: callStep,
-          callId: call.id,
-          value: jsonSchema.parse(value),
-        });
-      },
       *approve(input, question) {
         const request: ApprovalRequest = {
           invocationId: context.invocationId,
@@ -107,7 +95,6 @@ export function createToolExecutor<C>({
           signalName: `${context.name}:approval:${call.id}:${approval++}`,
           ...(question === undefined ? {} : {question}),
         };
-        yield* update({type: "approval-required", step: callStep, request});
         if (root.onApproval) yield* root.onApproval(structuredClone(request), context.context);
         if (owner !== root && owner.onApproval)
           yield* owner.onApproval(structuredClone(request), context.context);
@@ -122,14 +109,7 @@ export function createToolExecutor<C>({
         if (registry.registry.get(name)?.handoff)
           throw new ToolError("Handoffs must be direct model calls");
         const child = {id: `${call.id}/nested-${nested++}`, name, input: jsonSchema.parse(input)};
-        yield* update({
-          type: "tool-start",
-          step: callStep,
-          call: child,
-          info: {name, details: child.input},
-        });
         const result = yield* executeCall(child, callStep, owner, registry, depth + 1);
-        yield* update({type: "tool-end", step: callStep, call: child, result});
         if (result.status === "success") return result.output;
         if (result.status === "cancelled") throw new ToolCancelled(result.message);
         throw new ToolError(

@@ -1,6 +1,5 @@
 import {SpanStatusCode, type Tracer} from "@opentelemetry/api";
-import {run, type Operation} from "@restatedev/restate-sdk-gen";
-import type {AgentUpdate, ModelRequest, ModelResponse} from "./types.js";
+import type {ModelRequest, ModelResponse} from "./types.js";
 
 /** Called inside journaled model I/O. Completed attempts do not emit again on replay. */
 export async function traceModel(
@@ -24,19 +23,4 @@ export async function traceModel(
       }
     },
   );
-}
-/** Metadata-only event hook. Configure an OTel/Braintrust exporter in the host. */
-export function otelUpdates(tracer: Tracer) {
-  return function* (event: AgentUpdate): Operation<void> {
-    yield* run(
-      async () => {
-        const span = tracer.startSpan(`agent.${event.type}`, {
-          attributes: {"agent.event_id": event.id, "agent.step": event.step},
-        });
-        span.end();
-        return null;
-      },
-      {name: `otel:${event.id}`, retry: {maxAttempts: 1}},
-    );
-  };
 }

@@ -63,12 +63,6 @@ const promiseAgent = promise.agent<TenantContext>({
       void tenant;
     });
   },
-  onUpdate(update, ctx, context) {
-    const tenant: string = context.tenant;
-    return ctx.run(`Observe ${update.type}`, () => {
-      void tenant;
-    });
-  },
   tools: {
     asyncLookup: promise.asyncTool({
       description: "Lookup through an ordinary async API",
@@ -112,21 +106,6 @@ void promiseAgent.run(ctx, "Go", {
     void tenant;
     void approval;
   },
-  onUpdate(update, _ctx, context) {
-    const tenant: string = context.tenant;
-    const event: promise.AgentUpdate = update;
-    void tenant;
-    void event;
-  },
-});
-promise.agent({
-  model,
-  // @ts-expect-error Update hooks must return synchronously or return a RestatePromise.
-  async onUpdate() {},
-});
-void promise.agent({model}).run(ctx, "Go", {
-  // @ts-expect-error Generator update hooks belong to the gensdk entry point.
-  *onUpdate() {},
 });
 promise.agent({
   model,

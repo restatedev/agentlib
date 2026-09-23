@@ -211,7 +211,7 @@ to wait on SDK work return a `RestatePromise` directly.
 request and the application's run context; the promise flavor also receives the
 regular SDK context. The SDK awaits publication before waiting for a decision.
 To publish to an event bus, use a journaled `run` operation or a durable service
-call in the callback. No `onUpdate` filtering is needed.
+call in the callback.
 
 ## Promise 07 — Put tools and history together
 
@@ -230,7 +230,7 @@ unfinished child call when interrupted. Both services are registered by
 `pnpm dev:promise` and `pnpm dev`.
 
 Tool `before`, `after`, and dynamic `needsApproval` hooks return synchronous
-values or `RestatePromise`s. Model adapters are shared with core; streaming,
+values or `RestatePromise`s. Model adapters are shared with core;
 conversation abstractions, and agent-level generator hooks use
 `@restate-agents/core`.
 

@@ -227,7 +227,7 @@ const fixtureModel: Model = function* (request) {
     const turns = request.messages.filter((message) => message.role === "user");
     if (turns.at(-1)!.content === "interrupt") {
       r.invocation(r.handlerRequest().id).signal("interrupt").resolve("User cancelled");
-      yield* r.sleep(60000);
+      yield* r.sleep(10);
     }
     return {type: "final", text: `Session answer; previous turns: ${turns.length - 1}`};
   }

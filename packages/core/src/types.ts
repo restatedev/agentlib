@@ -1,4 +1,4 @@
-import type {Future, Operation, RetryOptions, Task} from "@restatedev/restate-sdk-gen";
+import type {Future, Operation, RetryOptions} from "@restatedev/restate-sdk-gen";
 import type {z} from "zod";
 
 /** Values that can cross a model or durable journal boundary. */
@@ -75,7 +75,6 @@ export type ToolContext<Context> = RunContext<Context> & {
   availableTools(): string[];
   searchTools(query: string): Operation<{name: string; description: string}[]>;
   step: number;
-  progress(value: JsonValue): Operation<void>;
   approve(input: JsonValue, question?: string): Operation<boolean>;
   /** Nested calls share validation, policy, approval, and the run's budgets. */
   callTool(name: string, input: JsonValue): Operation<JsonValue>;
@@ -148,22 +147,6 @@ export type OutputDecision<Output = string> = {
   reason?: never;
   messages?: never;
 };
-export type AgentEvent = {step: number} & (
-  | {type: "step-start"}
-  | {type: "tool-start"; call: ToolCall; info?: ToolInfo}
-  | {type: "tool-info"; callId: string; info: ToolInfo}
-  | {type: "tool-end"; call: ToolCall; result: ToolResult}
-  | {type: "tool-pending"; call: ToolCall; operationId: string}
-  | {type: "approval-required"; request: ApprovalRequest}
-  | {type: "progress"; callId: string; value: JsonValue}
-  | {type: "steering"; message: string}
-  | {type: "handoff"; from: string; to: string}
-  | {type: "model-chunk"; chunk: ModelChunk}
-  | {type: "output-invalid"; reason: string}
-  | {type: "run-end"; status: RunResult["status"]; output?: JsonValue}
-);
-export type AgentUpdate = AgentEvent & {sequence: number; id: string};
-export type UpdateHandler<Context> = (update: AgentUpdate, context: Context) => Operation<void>;
 export type SteeringSource = () => Future<string>;
 export type RunControls = {steering?: SteeringSource; interrupt?: Future<string>};
 export type RunOptions<Context> = {
@@ -171,7 +154,6 @@ export type RunOptions<Context> = {
   messages?: readonly Message[];
   conversation?: import("./conversation.js").Conversation;
   name?: string;
-  onUpdate?: UpdateHandler<Context>;
   onApproval?: ApprovalHandler<Context>;
   steeringSignal?: string;
   interruptSignal?: string;
@@ -207,18 +189,12 @@ export type AgentOptions<Context, Output = string> = {
   onApproval?: ApprovalHandler<Context>;
   /** Override the decision mechanism; onApproval only publishes the request. */
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
-  onUpdate?: UpdateHandler<Context>;
   /** Optional tool-free final model call after interruption or a step limit. */
   finalize?: Model;
 };
 export type RunArguments<Context> = undefined extends Context
   ? [options?: RunOptions<Context>]
   : [options: RunOptions<Context>];
-export type AgentStream<Output = string> = {
-  next(): Operation<IteratorResult<AgentUpdate>>;
-  result: Task<RunResult<Output>>;
-  close(): Operation<void>;
-};
 export type AgentRuntime<C> = Pick<
   AgentOptions<C, unknown>,
   | "name"
@@ -234,5 +210,4 @@ export type AgentRuntime<C> = Pick<
 export type Agent<Context, Output = string> = {
   readonly definition: AgentRuntime<Context>;
   run(input: string, ...options: RunArguments<Context>): Operation<RunResult<Output>>;
-  stream(input: string, ...options: RunArguments<Context>): Operation<AgentStream<Output>>;
 };

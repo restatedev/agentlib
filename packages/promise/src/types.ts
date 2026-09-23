@@ -5,7 +5,6 @@ import type {
 } from "@restatedev/restate-sdk";
 import type {
   AgentOptions as CoreAgentOptions,
-  AgentUpdate,
   ApprovalRequest,
   AsyncToolDefinition as CoreAsyncToolDefinition,
   GuardrailResult,
@@ -41,16 +40,8 @@ export type AgentOptions<Context = undefined, Output = string> = Pick<
 > & {
   instructions?: string;
   tools?: Record<string, Tool<Context>>;
-  onUpdate?: UpdateHandler<Context>;
   onApproval?: ApprovalHandler<Context>;
 };
-
-/** Observe updates synchronously or return a durable SDK promise; do not use async. */
-export type UpdateHandler<Context = unknown> = (
-  update: AgentUpdate,
-  ctx: RestateContext,
-  context: Context,
-) => void | RestatePromise<void>;
 
 /** Publish synchronously or return durable SDK work before waiting for the decision. */
 export type ApprovalHandler<Context = unknown> = (
@@ -65,7 +56,6 @@ export type RunOptions<Context = undefined> = {
   steeringSignal?: string;
   interruptSignal?: string;
   tools?: Record<string, Tool<Context>>;
-  onUpdate?: UpdateHandler<Context>;
   onApproval?: ApprovalHandler<Context>;
 } & (undefined extends Context ? {context?: Context} : {context: Context});
 

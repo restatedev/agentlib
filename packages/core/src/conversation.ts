@@ -4,10 +4,12 @@ import type {Message, Model} from "./types.js";
 import {history, modelResponse} from "./validation.js";
 
 export type ConversationSnapshot = {messages: Message[]; version: number};
+/** `void` retains compatibility with adapters that always reload after compaction. */
+export type ConversationCompactionStatus = "skipped" | "applied" | "stale" | void;
 export interface Conversation {
   load(): Operation<ConversationSnapshot>;
   append(messages: readonly Message[], expectedVersion: number): Operation<number>;
-  compact?(): Operation<unknown>;
+  compact?(): Operation<ConversationCompactionStatus>;
 }
 export interface ConversationStore {
   get<T>(key: string): Operation<T | undefined>;

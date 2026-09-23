@@ -157,7 +157,6 @@ void test("background work keeps its launching agent's tool context after a hand
 
 void test("structured output repairs invalid candidates and publishes only the guarded final value", async () => {
   let step = 0;
-  const emitted: unknown[] = [];
   const a = agent({
     output: z.object({answer: z.string()}),
     *model(req) {
@@ -169,13 +168,9 @@ void test("structured output repairs invalid candidates and publishes only the g
       if (result.status === "completed")
         return {output: {answer: result.output.answer.toUpperCase()}};
     },
-    *onUpdate(event) {
-      if (event.type === "run-end") emitted.push(event.output);
-    },
   });
   const result = await r.execute(ctx(), a.run("go"));
   assert.deepEqual(result.output, {answer: "YES"});
-  assert.deepEqual(emitted, [{answer: "YES"}]);
   assert.equal(step, 2);
 });
 
@@ -264,17 +259,11 @@ void test("live chunks occur only during provider I/O while recorded chunks reco
     r.execute(
       context,
       (function* () {
-        const chunks: string[] = [];
-        const result = yield* a.run("go", {
-          *onUpdate(event) {
-            if (event.type === "model-chunk") chunks.push(event.chunk.text);
-          },
-        });
-        return {result, chunks};
+        return yield* a.run("go");
       })(),
     );
   const first = await runHandler(handler);
-  assert.deepEqual(first.output.chunks, ["hello"]);
+  assert.equal(first.output.output, "hello");
   assert.deepEqual(live, ["start", "text-delta", "finish"]);
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);

@@ -9,7 +9,6 @@ import {
   LazyStateConversation,
   searchToolsTool,
   sleepTool,
-  type AgentUpdate,
   type ApprovalRequest,
   type AsyncToolContext,
 } from "@restate-agents/core";
@@ -91,7 +90,6 @@ export const aiSession = restate.object({
         const conversation = new LazyStateConversation({
           compaction: {model, policy: {maxMessages: 64, retainMessages: 12}},
         });
-        const updates: AgentUpdate[] = [];
         restate.state().set("active", {invocationId});
         let remote: McpToolSet<SessionContext> | undefined;
         try {
@@ -113,11 +111,6 @@ export const aiSession = restate.object({
             *onApproval(request) {
               restate.state().set("approval", request);
             },
-            *onUpdate(update) {
-              updates.push(update);
-              if (updates.length > 128) updates.shift();
-              restate.state().set("updates", updates);
-            },
           });
           return replyText(result);
         } finally {
@@ -131,7 +124,6 @@ export const aiSession = restate.object({
       return {
         active: yield* restate.sharedState().get("active"),
         approval: yield* restate.sharedState().get<ApprovalRequest>("approval"),
-        updates: (yield* restate.sharedState().get("updates")) ?? [],
       };
     },
     *history() {

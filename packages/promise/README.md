@@ -38,13 +38,6 @@ or `RestatePromise`s. Metadata exposes application context, run/call IDs, step,
 display information, and available tool names. Core-only generator helpers are
 not part of this interface.
 
-Define `onUpdate(update, ctx, context)` on the agent or an individual run to
-observe progress and approval requests. The callback receives the regular SDK
-context and your application context. It can return synchronously or return a
-`RestatePromise<void>`; an `async` callback returns a native promise and is rejected.
-When both callbacks are supplied, the agent callback finishes before the run
-callback receives the same event.
-
 Define `onApproval(request, ctx, context)` on the agent or an individual run to
 store or publish approval requests. Each request contains `invocationId`,
 `signalName`, the tool call, and an optional question. The callback can return
@@ -59,7 +52,7 @@ its durable signal from a shared handler. `onApproval` publishes the request;
 it does not return a decision. Core's `onHumanApproval` remains an optional override
 for the decision mechanism.
 
-Use `@restate-agents/core` for generator composition, streaming, conversation
+Use `@restate-agents/core` for generator composition, conversation
 abstractions, and the remaining agent-level generator hooks. The local `adopt` compatibility
 helper currently pins the coroutine SDK to 1.17.1.
 
