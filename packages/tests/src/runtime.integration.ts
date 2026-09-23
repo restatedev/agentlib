@@ -298,6 +298,12 @@ const runner = r.service({
           fail: tool({
             ...base,
             *execute() {
+              throw new Error("unexpected tool failure");
+            },
+          }),
+          failTerminal: tool({
+            ...base,
+            *execute() {
               throw new TerminalError("expected terminal failure");
             },
           }),
@@ -352,6 +358,9 @@ const runner = r.service({
             switch (scenario) {
               case "failure":
                 names = ["wait", "fail"];
+                break;
+              case "terminal-tool":
+                names = ["failTerminal"];
                 break;
               case "approval":
                 names = ["approval"];
@@ -678,13 +687,14 @@ for (const scenario of [
   "steering-tools",
   "interrupt",
   "failure",
+  "terminal-tool",
   "program",
   "rpc-cancel",
 ]) {
   void test(`native always-replay: ${scenario}`, {timeout: 20000}, async () => {
     const result = await connect({url: env.baseUrl()}).client(runner).run(scenario);
     if (scenario === "failure") {
-      assert.match(result.error!, /expected terminal failure/);
+      assert.match(result.error!, /unexpected tool failure/);
       return;
     }
     assert.ok(result.result, JSON.stringify(result));
@@ -695,6 +705,14 @@ for (const scenario of [
     if (scenario === "interrupt") {
       assert.equal(result.modelCleaned, true);
       assert.equal(result.modelReturned, false);
+    }
+    if (scenario === "terminal-tool") {
+      const failure = result.result.messages.find((m) => m.role === "tool");
+      assert.deepEqual(failure?.role === "tool" && failure.result, {
+        status: "error",
+        code: "tool_failed",
+        message: "expected terminal failure",
+      });
     }
     if (scenario === "parallel" || scenario === "program") assert.equal(effects.get(scenario), 1);
     if (scenario === "steering-tools") assert.equal(effects.get(scenario) ?? 0, 0);

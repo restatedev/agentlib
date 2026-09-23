@@ -363,9 +363,14 @@ execution time of one attempt.
 
 For `asyncTool`, an ordinary thrown `Error` follows the retry policy.
 `ToolError` is a business error returned to the model without retrying the
-callback; `TerminalError` fails without retrying. The policy covers `execute`;
-SDK operations in `before` and `after` configure their own retries. Exhausting
-an action's retry policy raises a `TerminalError`.
+callback; `TerminalError` stops retrying. The policy covers `execute`; SDK
+operations in `before` and `after` configure their own retries. Exhausting an
+action's retry policy raises a `TerminalError`.
+
+A tool that ends with a `TerminalError` (thrown directly, after exhausted
+retries, or from a failed child handler) does not fail the agent. The model
+receives `{status: "error", code: "tool_failed", message}` and decides what to
+do next. Restate cancellation and agent limits still end the run.
 
 `handlerTool` relies on the called handler's invocation policy. The promise
 support example sets `retryPolicy` through `createServiceHandler`, with

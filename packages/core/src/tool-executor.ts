@@ -1,3 +1,4 @@
+import {CancelledError, TerminalError} from "@restatedev/restate-sdk";
 import {run as journal, signal, type Operation} from "@restatedev/restate-sdk-gen";
 import {
   AgentLimitError,
@@ -157,13 +158,22 @@ export function createToolExecutor<C>({
   };
 }
 
-/** Maps model-recoverable failures to results; anything else fails the run. */
+/** Maps settled tool failures to results the model can act on. A terminal
+ * failure (including exhausted retries or a failed child handler) is final for
+ * the tool, not the run. Native cancellation, run budgets, and retryable errors
+ * still propagate: Restate owns those. */
 function failedResult(error: unknown): ToolResult {
   if (error instanceof RunInterrupted || error instanceof ToolCancelled)
     return {status: "cancelled", message: error.message};
   if (error instanceof ToolDenied) return {status: "denied", message: error.message};
   if (error instanceof ToolError)
     return {status: "error", code: error.code, message: error.message};
+  if (
+    error instanceof TerminalError &&
+    !(error instanceof CancelledError) &&
+    !(error instanceof AgentLimitError)
+  )
+    return {status: "error", code: "tool_failed", message: error.message};
   throw error;
 }
 
