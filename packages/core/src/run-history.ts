@@ -1,6 +1,7 @@
 import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {Conversation} from "./conversation.js";
 import type {Message} from "./types.js";
+import {RunInputError} from "./errors.js";
 import {history} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
@@ -18,7 +19,7 @@ function modelTranscript(events: readonly Message[]): Message[] {
   for (const message of events) {
     if (message.role !== "tool") continue;
     const batch = batchByCall.get(message.callId);
-    if (batch === undefined) throw new TypeError("History contains an unmatched tool result");
+    if (batch === undefined) throw new RunInputError("History contains an unmatched tool result");
     const results = resultsByBatch.get(batch) ?? [];
     results.push(message);
     resultsByBatch.set(batch, results);
@@ -48,9 +49,10 @@ export class RunHistory {
 
   static *load(input: string, source: HistorySource = {}): Operation<RunHistory> {
     if (typeof input !== "string" || !input.trim())
-      throw new TypeError("Agent input must be a nonempty string");
+      throw new RunInputError("Agent input must be a nonempty string");
     const {conversation} = source;
-    if (conversation && source.messages) throw new TypeError("Use either conversation or messages");
+    if (conversation && source.messages)
+      throw new RunInputError("Use either conversation or messages");
     const snapshot = conversation ? yield* conversation.load() : undefined;
     const messages = history(snapshot?.messages ?? source.messages ?? []);
     const run = new RunHistory(

@@ -336,11 +336,17 @@ class AgentRun<C, O> {
   /** Validates the accepted result, commits its output, and saves the turn. */
   private *finish(result: RunResult<O>): Operation<RunResult<O>> {
     if (result.status === "completed") {
-      if (this.root.output) result = {...result, output: this.root.output.parse(result.output)};
-      else if (typeof result.output !== "string")
+      if (this.root.output) {
+        const parsed = this.root.output.safeParse(result.output);
+        if (!parsed.success)
+          throw new GuardrailError(
+            `Run output does not match the output schema: ${parsed.error.message}`,
+          );
+        result = {...result, output: parsed.data};
+      } else if (typeof result.output !== "string")
         throw new GuardrailError("A completed text run must have a string output");
     }
-    const output = result.output === undefined ? undefined : jsonSchema.parse(result.output);
+    const output = result.output === undefined ? undefined : finalOutput(result.output);
     if (output !== undefined && JSON.stringify(output).length > this.config.maxOutputChars)
       throw new AgentLimitError("Final output exceeds maxOutputChars");
     // Only accepted output reaches history: a discarded candidate never does,
@@ -354,4 +360,10 @@ class AgentRun<C, O> {
     yield* this.history.save();
     return {...result, messages: this.history.committed()};
   }
+}
+
+function finalOutput(value: unknown) {
+  const parsed = jsonSchema.safeParse(value);
+  if (!parsed.success) throw new GuardrailError("Run output must be JSON");
+  return parsed.data;
 }

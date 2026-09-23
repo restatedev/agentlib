@@ -19,7 +19,7 @@ import type {
   ToolResult,
 } from "./types.js";
 import type {ToolCatalog} from "./tool-catalog.js";
-import {jsonSchema} from "./validation.js";
+import {jsonSchema, toolOutput} from "./validation.js";
 
 export type ToolExecutionLimits = Readonly<{
   maxToolCalls: number;
@@ -143,7 +143,7 @@ export function createToolExecutor<C>({
       for (const policy of policies.toReversed()) {
         if (policy.afterTool) output = yield* policy.afterTool(output, toolContext);
       }
-      output = jsonSchema.parse(output);
+      output = toolOutput(output);
       if (JSON.stringify(output).length > maxOutputChars)
         throw new ToolError("Tool output exceeds maxOutputChars", "output_limit");
       return {status: "success", output};

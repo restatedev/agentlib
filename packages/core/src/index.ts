@@ -4,7 +4,13 @@ export type {AgentToolOptions, BuildToolSpec, ToolLifecycle, ParseResult} from "
 export {serviceTool} from "./service-tool.js";
 export type {ServiceToolOptions, KeyArg} from "./service-tool.js";
 export {journaledModel} from "./model.js";
-export {ModelProtocolError, ToolError, GuardrailError, AgentLimitError} from "./errors.js";
+export {
+  ModelProtocolError,
+  ToolError,
+  GuardrailError,
+  AgentLimitError,
+  RunInputError,
+} from "./errors.js";
 export type {
   Agent,
   AgentOptions,

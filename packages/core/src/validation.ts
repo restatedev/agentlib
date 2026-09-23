@@ -1,6 +1,6 @@
 import {z} from "zod";
-import {ModelProtocolError} from "./errors.js";
-import type {Message, ModelResponse} from "./types.js";
+import {ModelProtocolError, RunInputError, ToolError} from "./errors.js";
+import type {JsonValue, Message, ModelResponse} from "./types.js";
 
 export const jsonSchema = z.json();
 const callSchema = z.object({
@@ -54,29 +54,38 @@ export function modelResponse(value: unknown): ModelResponse {
   return result.data;
 }
 
+/** Tool output must be JSON. Anything else goes back to the model instead of being retried. */
+export function toolOutput(value: unknown): JsonValue {
+  const result = jsonSchema.safeParse(value);
+  if (!result.success) throw new ToolError("Tool output must be JSON", "invalid_output");
+  return result.data;
+}
+
 /** Clone and reject incomplete histories before making any model call. */
 export function history(value: readonly Message[]): Message[] {
-  const messages = z.array(messageSchema).parse(value);
+  const parsed = z.array(messageSchema).safeParse(value);
+  if (!parsed.success) throw new RunInputError(`Invalid history: ${parsed.error.message}`);
+  const messages = parsed.data;
   const ids = new Set<string>();
   const pending = new Map<string, string>();
   for (const message of messages) {
     if (message.role === "tool") {
       if (pending.get(message.callId) !== message.name) {
-        throw new TypeError("History contains an unmatched or duplicate tool result");
+        throw new RunInputError("History contains an unmatched or duplicate tool result");
       }
       pending.delete(message.callId);
       continue;
     }
     if (pending.size > 0)
-      throw new TypeError("History must answer every tool call before the next message");
+      throw new RunInputError("History must answer every tool call before the next message");
     if (message.role === "assistant") {
       for (const call of message.calls ?? []) {
-        if (ids.has(call.id)) throw new TypeError("History contains duplicate tool-call IDs");
+        if (ids.has(call.id)) throw new RunInputError("History contains duplicate tool-call IDs");
         ids.add(call.id);
         pending.set(call.id, call.name);
       }
     }
   }
-  if (pending.size > 0) throw new TypeError("History contains unfinished tool calls");
+  if (pending.size > 0) throw new RunInputError("History contains unfinished tool calls");
   return messages;
 }

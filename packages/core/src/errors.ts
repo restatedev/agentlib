@@ -19,6 +19,13 @@ export class ToolDenied extends ToolError {}
 export class ToolCancelled extends InterruptedError {}
 export class RunInterrupted extends InterruptedError {}
 export class GuardrailError extends TerminalError {}
+/** A caller or stored history that can never run: retrying would fail the same way. */
+export class RunInputError extends TerminalError {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunInputError";
+  }
+}
 export class AgentLimitError extends TerminalError {}
 /** Invalid model output must not dispatch partial or ambiguous tool batches. */
 export class ModelProtocolError extends TerminalError {
