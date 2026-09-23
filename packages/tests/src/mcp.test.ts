@@ -14,7 +14,12 @@ type Seen = {
 };
 function fixture(
   protocol: "stateless" | "stateful",
-  config: {unauthorized?: boolean; expired?: boolean; toolError?: boolean} = {},
+  config: {
+    unauthorized?: boolean;
+    expired?: boolean;
+    toolError?: boolean;
+    badSchema?: boolean;
+  } = {},
 ) {
   const seen: Seen[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -75,6 +80,15 @@ function fixture(
             description: "Not permitted",
             inputSchema: {type: "object", properties: {}},
           },
+          ...(config.badSchema
+            ? [
+                {
+                  name: "broken",
+                  description: "Dangling reference",
+                  inputSchema: {type: "object", properties: {x: {$ref: "#/definitions/missing"}}},
+                },
+              ]
+            : []),
         ],
       };
     else if (message.method === "tools/call") {
@@ -90,6 +104,28 @@ function fixture(
   };
   return {fetch, seen};
 }
+void test("MCP skips a tool whose input schema is unsupported and keeps the rest", async () => {
+  const mock = fixture("stateless", {badSchema: true});
+  const {output} = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        const mcp = yield* mcpTools({
+          url: "https://fixture.test/mcp",
+          namespace: "remote",
+          protocol: "stateless",
+          fetch: mock.fetch,
+        });
+        return {tools: Object.keys(mcp.tools), warnings: mcp.warnings};
+      })(),
+    ),
+  );
+  assert.deepEqual(output, {
+    tools: ["remote_lookup", "remote_forbidden"],
+    warnings: ["Ignored MCP tool with an unsupported input schema: remote_broken"],
+  });
+});
+
 for (const protocol of ["stateless", "stateful"] as const) {
   void test(`MCP ${protocol}: catalog, filtered tool, credentials, session, and replay`, async () => {
     const mock = fixture(protocol);

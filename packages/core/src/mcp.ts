@@ -35,6 +35,8 @@ type Session = {id?: string; version?: string};
 type Resume = {session: Session; prior: PriorDiscovery};
 export type McpToolSet<C = unknown> = {
   tools: Record<string, Tool<C>>;
+  /** Remote tools that were skipped, e.g. for an unsupported input schema. */
+  warnings: string[];
   close(): restate.Operation<void>;
 };
 // The original tools/list validated the tools capability. A reconstructed Client
@@ -167,20 +169,34 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
     }),
   );
   const tools = new Map<string, Tool<C>>();
+  const warnings: string[] = [];
+  // One bad remote tool is skipped; the rest of the catalog stays usable.
   for (const definition of catalog.tools) {
     if (options.allow && !options.allow(definition.name)) continue;
     const name = localToolName(`${options.namespace}_${definition.name}`);
-    if (!TOOL_NAME.test(name) || tools.has(name))
-      throw new TerminalError(`Invalid or duplicate MCP tool name: ${name}`);
-    if (JSON.stringify(definition.inputSchema).length > 64000)
-      throw new TerminalError("MCP input schema too large");
+    if (!TOOL_NAME.test(name) || tools.has(name)) {
+      warnings.push(`Ignored MCP tool with an invalid or duplicate name: ${name}`);
+      continue;
+    }
+    if (JSON.stringify(definition.inputSchema).length > 64000) {
+      warnings.push(`Ignored MCP tool with an input schema over 64000 characters: ${name}`);
+      continue;
+    }
+    let input: z.ZodType;
+    try {
+      input = z.fromJSONSchema(definition.inputSchema as Parameters<typeof z.fromJSONSchema>[0]);
+      z.toJSONSchema(input, {io: "input"});
+    } catch {
+      warnings.push(`Ignored MCP tool with an unsupported input schema: ${name}`);
+      continue;
+    }
     tools.set(
       name,
       tool({
         description: definition.description?.slice(0, 4000) ?? `Call ${definition.name}`,
         provider: options.namespace,
         deferred: options.deferred ?? true,
-        input: z.fromJSONSchema(definition.inputSchema as Parameters<typeof z.fromJSONSchema>[0]),
+        input,
         *execute(input, context) {
           const result = yield* authorized(`mcp-${name}`, (token, signal) =>
             withClient(token, signal, catalog, (client) =>
@@ -211,6 +227,7 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
   }
   return {
     tools: Object.fromEntries(tools),
+    warnings,
     *close() {
       if (!catalog.session.id) return;
       yield* authorized(`mcp-${options.namespace}-close`, (token, signal) =>
