@@ -141,7 +141,7 @@ export function asyncTool<S extends z.ZodType, C = unknown>(
             throw error;
           }
         },
-        {name: context.info.name, retry: definition.retry ?? {maxAttempts: 1}},
+        {name: context.info.name, retry: definition.retry ?? {maxAttempts: 3}},
       );
       if (!result.ok) throw new ToolError(result.message, result.code);
       return result.value;

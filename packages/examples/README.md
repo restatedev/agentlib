@@ -356,8 +356,8 @@ const result = await ctx.run("Perform action", () => performAction(), {
 });
 ```
 
-Without an explicit policy, `asyncTool` uses one attempt and the model adapters
-use three. A supplied policy replaces that default; specify `maxAttempts` when
+Without an explicit policy, `asyncTool` and the model adapters use three
+attempts. Pass `callId` as an idempotency key for external writes. A supplied policy replaces that default; specify `maxAttempts` when
 you want a fixed attempt limit. The retry duration limits retries, not the
 execution time of one attempt.
 

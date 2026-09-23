@@ -4,6 +4,7 @@ import {
   Client,
   InsufficientScopeError,
   type PriorDiscovery,
+  SdkHttpError,
   StreamableHTTPClientTransport,
   UnauthorizedError,
 } from "@modelcontextprotocol/client";
@@ -46,6 +47,14 @@ class ResumedToolClient extends Client {
 }
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const MAX_AUTH_ATTEMPTS = 3;
+
+/** Client errors other than timeouts, conflicts and rate limits do not improve on
+ * retry; an expired stateful session (404) must fail rather than loop. */
+function permanent(error: unknown): boolean {
+  if (!(error instanceof SdkHttpError)) return false;
+  const {status} = error;
+  return status >= 400 && status < 500 && ![408, 409, 429].includes(status);
+}
 
 /** Keeps valid names readable; others get a sanitized prefix and a stable hash. */
 function localToolName(original: string): string {
@@ -120,10 +129,12 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
           } catch (error) {
             if (error instanceof UnauthorizedError || error instanceof InsufficientScopeError)
               return {type: "auth" as const};
-            throw error;
+            throw permanent(error) ? new TerminalError(String(error)) : error;
           }
         },
-        {name, retry: {maxAttempts: 1}},
+        // Authorization failures return a value and are handled by this loop;
+        // thrown transport errors retry. Tool calls carry an Idempotency-Key.
+        {name, retry: {maxAttempts: 3}},
       );
       if (result.type === "ok") return result.value;
       if (attempt === MAX_AUTH_ATTEMPTS)

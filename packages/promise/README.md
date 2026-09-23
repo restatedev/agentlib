@@ -23,7 +23,7 @@ without an SDK context. Core handles result validation, business errors, and
 the optional `retry` policy.
 
 Set `retry: {maxAttempts: 5, initialInterval: {milliseconds: 250}}` on an
-`asyncTool` to retry its callback. The default is one attempt. For `tool`, set
+`asyncTool` to retry its callback. The default is three attempts. For `tool`, set
 retry options on its SDK operations; for `handlerTool`, set `retryPolicy` on
 the called service or handler. See [retry policies](../examples/README.md#retry-policies)
 for complete examples, model retries, and error behavior.
