@@ -38,14 +38,15 @@ If you have a specific goal, start here:
 | Remember earlier requests           | [03](src/lessons/03_conversation.ts)    |
 | Require a person before a tool runs | [06](src/lessons/06_human_approval.ts)  |
 | Split research across workers       | [08](src/lessons/08_research_report.ts) |
-| Steer or interrupt a running turn   | [09](src/lessons/09_support_session.ts) |
+| Steer or interrupt a running agent  | [09](src/lessons/09_support_session.ts) |
 | Route a request by its meaning      | [12](src/lessons/12_routing.ts)         |
 | Enforce a budget before an action   | [13](src/lessons/13_tool_guardrail.ts)  |
 | Answer with current public sources  | [14](src/lessons/14_web_search.ts)      |
 
 ## Start
 
-From the workspace root, with a Restate server running:
+Start a Restate server (for example `pnpm dlx @restatedev/restate-server`), then
+from the workspace root:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -97,19 +98,14 @@ The SDK journals its result, so you can replace the fixed record with an async
 API call directly. The optional second argument supplies application context,
 call metadata, and an `AbortSignal` for cancellable I/O.
 
-`describe` is optional. Tool display information defaults to the registered name
-(such as `lookupTicket`) and the call arguments; `asyncTool` also uses that name
-for its journal step. Add `describe` when you want a custom label or a smaller
-selection of display details. It does not change the model-facing `description`.
-
-Both tools set `retry` explicitly: up to five attempts, starting with a 250 ms
+The tool sets `retry` explicitly: up to five attempts, starting with a 250 ms
 retry delay and doubling between attempts. See [retry policies](#retry-policies)
 for model calls, individual actions, and handler calls.
 
 Use `tool` when execution needs to compose SDK operations in a generator with
 `yield*`. Use `handlerTool` for typed calls to other Restate handlers.
 
-## 03 — Remember previous turns
+## 03 — Remember earlier requests
 
 Change the service to a keyed Restate object. Before the run, load its saved
 messages. Pass them to the agent, then save `result.messages` afterward. Return
@@ -120,7 +116,7 @@ curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '"My name is Bob."
 curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '"What is my name?"'
 ```
 
-Both requests use `bob`, so the second sees the first turn. A different key gets
+Both requests use `bob`, so the second sees the first exchange. A different key gets
 its own history. This lesson stores the full history; the support-session lesson
 adds conversation compaction and lifecycle controls.
 
@@ -201,7 +197,7 @@ It does not check whether that request is still pending.
 
 `status` and `approve` are shared handlers, so they run while the exclusive
 `ask` handler is waiting. The example stores the latest approval request in one
-state entry and clears it after the run returns a result. The SDK has no default
+state entry and clears it when the run ends, whether or not it succeeded. The SDK has no default
 approval timeout; this lesson waits until a decision or invocation cancellation.
 
 `onApproval` is also available on the agent definition. It receives a copy of the
@@ -255,7 +251,7 @@ tool reads; factual quality and final prose still depend on the model.
 
 ## 09 — Build a controlled support session
 
-The final lesson combines persisted conversations and compaction, deferred tool
+This lesson combines persisted conversations and compaction, deferred tool
 search, programmatic tool calls, handoffs, background tools, approvals, steering,
 interruption, and optional MCP. The application's handlers expose history,
 approvals, controls, and run status. Ticket effects are demonstrations.
@@ -265,8 +261,8 @@ curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \
   --json '{"message":"What can you do?"}'
 ```
 
-Optional MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`.
-This is the full integration reference after the smaller lessons.
+Optional MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`,
+read once at startup. It is the largest lesson; read the smaller ones first.
 
 `doTurn` returns only the answer or interruption summary. Read conversation
 history through `history` and control details through `status` when needed.
@@ -299,18 +295,22 @@ unfinished call, and a failed handler is reported to the model as a tool error.
 The handler opens a sandbox, runs the agent, and releases the sandbox:
 
 ```ts
-const sandbox = yield * connect();
-try {
-  return replyText(yield * coder.run(task, {context: {sandbox}}));
-} finally {
-  yield * sandbox.release();
+function* (task) {
+  const sandbox = yield* connect();
+  try {
+    const result = yield* coder.run(task, {context: {sandbox}});
+    return replyText(result);
+  } finally {
+    yield* release(sandbox);
+  }
 }
 ```
 
 `connect` creates the sandbox in a journaled step, so a retried or replayed
 request reuses it instead of creating another. Only the sandbox ID is
 journaled; `connect` then wraps it in a Modal `Sandbox` handle, which needs no
-I/O, and the tools use that handle from the run context. Each tool is an
+I/O, and the tools use that handle from the run context. `release` terminates
+the sandbox in a journaled step, so it runs once even if the request fails. Each tool is an
 `asyncTool`, so its result is journaled like any other. `runCommand` makes one
 attempt: a failure goes back to the model instead of running the command again.
 
@@ -328,9 +328,10 @@ Use a small structured-output agent to choose `billing`, `account`, or `product`
 then let the chosen specialist answer. The application owns the branch:
 
 ```ts
-function* answer(question: string) {
+function* (question) {
   const {specialist} = completedOutput(yield* route.run(question));
-  return replyText(yield* specialists[specialist].run(question));
+  const result = yield* specialists[specialist].run(question);
+  return replyText(result);
 }
 ```
 
@@ -376,8 +377,9 @@ snippets as evidence, not instructions.
 ```ts
 const researcher = agent({
   model,
-  tools: {searchWeb: webSearch({apiKey})},
-  instructions: "Search before answering and cite returned URLs.",
+  maxSteps: 4,
+  instructions: "Search the web before answering. Cite URLs returned by searchWeb, ...",
+  tools: {searchWeb: webSearch({apiKey: apiKey ?? ""})},
 });
 ```
 
@@ -410,7 +412,7 @@ default. `maxSteps` limits the model/tool loop, not retries.
 | Individual action   | `restate.run(action, {name, retry})`                   | Below                                  |
 | Handler-backed tool | `retryPolicy` on the called service or handler         | —                                      |
 
-The tool lessons use this policy; the same shape works for model adapters and
+Lesson 02 uses this policy; the same shape works for model adapters and
 individual actions:
 
 ```ts
