@@ -1,6 +1,6 @@
 // 11: A coding agent whose tools work in a Modal sandbox for the length of one request.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {ModalClient, SandboxFilesystemNotFoundError, type Sandbox} from "modal";
+import {ModalClient, Sandbox, SandboxFilesystemNotFoundError} from "modal";
 import {z} from "zod";
 import {agent, asyncTool, ToolError} from "@restate-agents/core";
 import {exampleModel as model, replyText} from "../shared.js";
@@ -9,21 +9,8 @@ import {exampleModel as model, replyText} from "../shared.js";
 let client: ModalClient | undefined;
 const modal = () => (client ??= new ModalClient());
 
-/** Only the ID is journaled. Each process opens its own Modal handle on first use. */
-class CodingSandbox {
-  #handle: Promise<Sandbox> | undefined;
-  constructor(readonly id: string) {}
-
-  open(): Promise<Sandbox> {
-    return (this.#handle ??= modal().sandboxes.fromId(this.id));
-  }
-
-  *release(): restate.Operation<void> {
-    yield* restate.run(async () => (await this.open()).terminate(), {name: "Release sandbox"});
-  }
-}
-
-function* connect(): restate.Operation<CodingSandbox> {
+/** Create the sandbox once; replays get the journaled ID back instead of a new sandbox. */
+function* connect(): restate.Operation<Sandbox> {
   const id = yield* restate.run(
     async () => {
       const app = await modal().apps.fromName("restate-agents", {createIfMissing: true});
@@ -37,10 +24,16 @@ function* connect(): restate.Operation<CodingSandbox> {
     },
     {name: "Create sandbox"},
   );
-  return new CodingSandbox(id);
+  // What sandboxes.fromId does, without its promise: a handle for the ID, no I/O.
+  // It is rebuilt on every attempt, in whichever process runs the request.
+  return new Sandbox(modal(), id);
 }
 
-type CodingContext = {sandbox: CodingSandbox};
+function* release(sandbox: Sandbox): restate.Operation<void> {
+  yield* restate.run(() => sandbox.terminate(), {name: "Release sandbox"});
+}
+
+type CodingContext = {sandbox: Sandbox};
 
 const coder = agent<CodingContext>({
   model,
@@ -54,7 +47,7 @@ const coder = agent<CodingContext>({
       input: z.object({path: z.string()}),
       async execute({path}, {context}) {
         try {
-          return await (await context.sandbox.open()).filesystem.readText(path);
+          return await context.sandbox.filesystem.readText(path);
         } catch (error) {
           if (error instanceof SandboxFilesystemNotFoundError)
             throw new ToolError(`${path} does not exist.`, "not_found");
@@ -66,7 +59,7 @@ const coder = agent<CodingContext>({
       description: "Create or replace a text file.",
       input: z.object({path: z.string(), content: z.string()}),
       async execute({path, content}, {context}) {
-        await (await context.sandbox.open()).filesystem.writeText(content, path);
+        await context.sandbox.filesystem.writeText(content, path);
         return {path};
       },
     }),
@@ -76,8 +69,7 @@ const coder = agent<CodingContext>({
       // One attempt: a failure goes to the model instead of running the command again.
       retry: {maxAttempts: 1},
       async execute({command}, {context}) {
-        const sandbox = await context.sandbox.open();
-        const process = await sandbox.exec(["sh", "-c", command], {
+        const process = await context.sandbox.exec(["sh", "-c", command], {
           workdir: "/workspace",
           timeoutMs: 5 * 60 * 1000,
         });
@@ -110,7 +102,7 @@ export const codingAgent = restate.service({
           const result = yield* coder.run(task, {context: {sandbox}});
           return replyText(result);
         } finally {
-          yield* sandbox.release();
+          yield* release(sandbox);
         }
       },
     ),

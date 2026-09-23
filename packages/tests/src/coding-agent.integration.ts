@@ -15,8 +15,8 @@ const local = (path: string) => join(root, path.replace(/^\/workspace\/?/, ""));
 const calls = {create: 0, terminate: 0};
 
 class SandboxFilesystemNotFoundError extends Error {}
-const sandbox = {
-  filesystem: {
+class Sandbox {
+  filesystem = {
     readText: (path: string) =>
       readFile(local(path), "utf8").catch(() => {
         throw new SandboxFilesystemNotFoundError(path);
@@ -25,7 +25,7 @@ const sandbox = {
       await mkdir(dirname(local(path)), {recursive: true});
       await writeFile(local(path), content);
     },
-  },
+  };
   async exec(argv: string[]) {
     const result = promisify(execFile)(argv[0]!, argv.slice(1), {cwd: root}).then(
       ({stdout, stderr}) => ({exitCode: 0, stdout, stderr}),
@@ -40,11 +40,11 @@ const sandbox = {
       stderr: {readText: async () => (await result).stderr},
       wait: async () => (await result).exitCode,
     };
-  },
+  }
   async terminate() {
     calls.terminate++;
-  },
-};
+  }
+}
 class ModalClient {
   apps = {fromName: async () => ({appId: "app"})};
   images = {fromRegistry: () => ({})};
@@ -53,10 +53,9 @@ class ModalClient {
       calls.create++;
       return {sandboxId: "sb-1"};
     },
-    fromId: async () => sandbox,
   };
 }
-mock.module("modal", {namedExports: {ModalClient, SandboxFilesystemNotFoundError}});
+mock.module("modal", {namedExports: {ModalClient, Sandbox, SandboxFilesystemNotFoundError}});
 
 // Write a script, read it back, run it, and report its output.
 const coder: Model = function* (request) {

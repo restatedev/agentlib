@@ -309,8 +309,8 @@ try {
 
 `connect` creates the sandbox in a journaled step, so a retried or replayed
 request reuses it instead of creating another. Only the sandbox ID is
-journaled. The object passed as run context opens its Modal handle when a tool
-first needs it, in whichever process runs the request. Each tool is an
+journaled; `connect` then wraps it in a Modal `Sandbox` handle, which needs no
+I/O, and the tools use that handle from the run context. Each tool is an
 `asyncTool`, so its result is journaled like any other. `runCommand` makes one
 attempt: a failure goes back to the model instead of running the command again.
 
