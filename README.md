@@ -88,6 +88,10 @@ to Oxlint's type-aware rules; lint and formatting run as root tasks following th
 `require-yield` rule is disabled because a synchronous Restate operation still
 implements the generator contract.
 
+[CI](.github/workflows/ci.yml) runs the same checks on every pull request and
+push to `main`: formatting, TypeScript 7 type checking, type-aware Oxlint, unit
+tests on Node 22 and 24, and the integration suite.
+
 The integration suite starts a real Restate server with forced replay and removes
 its container afterward. It covers durable signals, approvals, interruption,
 child-call cancellation, PTC, gateways, discovery, service tools, and persisted

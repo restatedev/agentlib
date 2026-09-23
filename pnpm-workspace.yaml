@@ -2,7 +2,11 @@ packages:
   - packages/*
 
 allowBuilds:
+  # Optional native speedups and a version check; none are needed at runtime.
+  cpu-features: false
   esbuild: false
+  protobufjs: false
+  ssh2: false
 minimumReleaseAgeExclude:
   - openai@7.17.0
   - "@restatedev/restate-sdk-clients@1.17.2"
