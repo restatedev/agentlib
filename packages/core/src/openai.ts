@@ -36,7 +36,7 @@ export function openAIModel(options: OpenAIModelOptions): Model {
         .catch(classifyError);
       return parseCompletion(completion);
     },
-    {name: `Ask model: ${model}`, ...(retry ? {retry} : {})},
+    {name: `Ask model: ${model}`, retry},
   );
 }
 

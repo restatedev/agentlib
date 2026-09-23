@@ -1,4 +1,4 @@
-// Embeddable adapter informed by replit-final and the Giselle SDK extraction.
+// Remote MCP tools, with the catalog and session journaled so replays reconnect.
 import {createHash} from "node:crypto";
 import {
   Client,
@@ -84,7 +84,7 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
     const {session = {}, prior} = resume ?? {};
     const Constructor = session.id ? ResumedToolClient : Client;
     const client = new Constructor(
-      {name: "restate-agent-sdk", version: "0.1.0"},
+      {name: "restate-agents", version: "0.0.1"},
       {
         capabilities: {},
         cachePartition: token ? createHash("sha256").update(token).digest("hex") : "anonymous",

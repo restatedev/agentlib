@@ -60,7 +60,7 @@ export function createToolExecutor<C>({
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
     // Root policies wrap the owner's: they check first and post-process last.
-    const policies = owner === root ? [root] : [root, owner];
+    const policies = [...new Set([root, owner])];
     let nestedCalls = 0;
     let approvals = 0;
     let info: ToolInfo = {name: call.name, details: structuredClone(call.input)};

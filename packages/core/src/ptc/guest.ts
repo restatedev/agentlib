@@ -1,5 +1,5 @@
-// Adapted from the deterministic QuickJS handoff. Only the host scheduler may
-// deliver tool completions; asynchronous tool bodies never touch this runtime.
+// A deterministic QuickJS guest. Only the host scheduler may deliver tool
+// completions; asynchronous tool bodies never touch this runtime.
 import variant from "@jitl/quickjs-singlefile-cjs-release-sync";
 import {positiveInteger} from "../limits.js";
 import {

@@ -85,7 +85,7 @@ function byCodeUnits(left: string, right: string): number {
   return 0;
 }
 
-/** Snapshot annotated Restate handlers once per run, as in replit-final. */
+/** Snapshot annotated Restate handlers once per run. */
 export function* restateTools<C = unknown>(
   options: RestateDiscoveryOptions,
 ): Operation<{tools: Record<string, Tool<C>>; warnings: string[]}> {

@@ -1,4 +1,4 @@
-// Adapted from replit-final: journal selections, not a process-local search index.
+// Journal search selections, not a process-local search index.
 import MiniSearch from "minisearch";
 import type {ToolManifest} from "./types.js";
 
@@ -83,5 +83,3 @@ export function createToolSearch(catalog: ToolManifest[], providers: ReadonlyMap
     },
   };
 }
-
-export type TurnToolSearch = ReturnType<typeof createToolSearch>;
