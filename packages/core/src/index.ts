@@ -1,7 +1,7 @@
 export {agent} from "./agent.js";
 export {adopt} from "./adopt.js";
-export {tool, asyncTool, handlerTool, awaitChild, handoff, buildTool} from "./tool.js";
-export type {BuildToolSpec, ToolLifecycle, ParseResult} from "./tool.js";
+export {tool, asyncTool, handlerTool, awaitChild, handoff, agentTool, buildTool} from "./tool.js";
+export type {AgentToolOptions, BuildToolSpec, ToolLifecycle, ParseResult} from "./tool.js";
 export {serviceTool, makeServiceTool} from "./service-tool.js";
 export type {ServiceToolOptions, KeyArg, MakeCall} from "./service-tool.js";
 export {journaledModel} from "./model.js";

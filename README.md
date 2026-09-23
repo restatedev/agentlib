@@ -81,12 +81,29 @@ catalog into ordinary agent tools, over stateless or stateful Streamable HTTP.
 Calls are journaled and carry idempotency keys, and authorization can pause for a
 human to refresh credentials.
 
-**Sub-agents.** `handoff(specialist)` transfers the conversation to another agent
-with its own instructions and tools. The root agent's guardrails and budgets
-still apply. To delegate work instead, put an agent behind its own Restate
-service and expose it with `serviceTool` or `handlerTool`. Each sub-agent then
-runs as a separate durable invocation that you can observe, retry, or cancel, and
-cancelling the parent cancels it too.
+**Sub-agents.** `agentTool(subAgent, {description})` turns an agent into a tool.
+The model delegates a self-contained task, and the sub-agent works on it with its
+own fresh conversation, tools, and limits. Its answer, text or structured output,
+comes back as the tool result. Sub-agents run in the same durable invocation, so
+every step is journaled and interrupting the parent cancels them. Add
+`background: true` to keep the parent working in the meantime.
+
+```ts
+const researcher = agent({
+  model,
+  instructions: "Research the question thoroughly and cite your sources.",
+});
+const lead = agent({
+  model,
+  instructions: "Plan the work and delegate research questions.",
+  tools: {research: agentTool(researcher, {description: "Research one question."})},
+});
+```
+
+`handoff(specialist)` transfers the conversation itself to another agent, and the
+root agent's guardrails and budgets still apply. For full isolation, put an agent
+behind its own Restate service and call it with `serviceTool` or `handlerTool`,
+as a separate invocation.
 
 **Human approval.** `needsApproval: true` pauses a tool until a person decides.
 The run waits durably for minutes or days, without holding a process.
