@@ -1,11 +1,20 @@
 # Restate Agents
 
-A TypeScript SDK for building AI agents that don't lose their work. It has the
-harness features modern agents need: programmatic tool calling, live steering,
-tool search, MCP, sub-agents, sandboxes, human approval, and background tools.
-It runs on [Restate](https://restate.dev), so every model call, tool result,
-and decision is durable. An agent survives crashes, deploys, and hours-long waits, and it
-resumes exactly where it stopped.
+- **Keep working through failures.** Journal model calls, tool results, and
+  approvals so agents resume after crashes, deploys, or long waits.
+- **Change course while running.** Steer or interrupt a turn with durable
+  signals, even while a tool or human decision is pending.
+- **Give agents powerful tools.** Combine programmatic and background tool
+  calls, tool search, MCP, sub-agents, handoffs, and remote sandboxes for
+  coding agents.
+- **Stay in control.** Add guardrails, Zod-validated output, and human approval
+  to the steps that need them.
+- **Fit your Restate service.** Run an agent as one step of any handler, next
+  to your own durable code.
+
+Restate Agents is a TypeScript agent library built for durable execution on
+[Restate](https://restate.dev). It runs inside your service handlers, so an agent
+can pick up from its journal instead of repeating completed work.
 
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
@@ -41,7 +50,7 @@ export const tickets = restate.service({
 });
 ```
 
-## Harness features
+## Agent capabilities
 
 **Programmatic tool calling (PTC).** `programTool()` lets the model answer with a
 short JavaScript program instead of one tool call at a time. The program runs in
