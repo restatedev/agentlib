@@ -32,9 +32,12 @@ const barrier = r.object({
       const participants = (yield* r.state().get<string[]>("participants")) ?? [];
       participants.push(id);
       r.state().set("participants", participants);
-      if (participants.length === 2)
+      if (participants.length === 2) {
         for (const participant of participants)
           r.invocation(participant).signal("workers-ready").resolve(true);
+        // Ready for the next report's workers.
+        r.state().clear("participants");
+      }
     },
   },
 });
@@ -197,7 +200,8 @@ const fixtureModel: Model = function* (request) {
     const turns = request.messages.filter((message) => message.role === "user");
     if (turns.at(-1)!.content === "interrupt") {
       r.invocation(r.handlerRequest().id).signal("interrupt").resolve("User cancelled");
-      yield* r.sleep(10);
+      // Only the signal can end this wait; a short sleep would race it.
+      yield* r.sleep(60000);
     }
     return {type: "final", text: `Session answer; previous turns: ${turns.length - 1}`};
   }
@@ -299,45 +303,30 @@ after(async () => {
   await env?.stop();
 });
 
-const tutorialExamples = [
-  {
-    name: "gensdk",
-    hello: () => connect({url: env.baseUrl()}).client(hello),
-    tools: () => connect({url: env.baseUrl()}).client(ticketLookup),
-    conversation: (key: string) => connect({url: env.baseUrl()}).client(chatSession, key),
-    structuredOutput: () => connect({url: env.baseUrl()}).client(ticketTriage),
-  },
-];
-for (const tutorial of tutorialExamples) {
-  void test(`${tutorial.name} 01: each request starts a fresh run`, async () => {
-    const first = await tutorial.hello().ask("Hello");
-    assert.equal(first, "Hello");
-    const second = await tutorial.hello().ask("Another request");
-    assert.equal(second, "Another request");
-  });
+const ingress = () => connect({url: env.baseUrl()});
 
-  void test(`${tutorial.name} 02: the model receives the executed tool's result`, async () => {
-    const result = await tutorial.tools().ask("Look up ticket T-42");
-    assert.equal(result, "Ticket T-42 is open.");
-  });
+void test("01: each request starts a fresh run", async () => {
+  assert.equal(await ingress().client(hello).ask("Hello"), "Hello");
+  assert.equal(await ingress().client(hello).ask("Another request"), "Another request");
+});
 
-  void test(`${tutorial.name} 03: history persists between turns and is isolated by key`, async () => {
-    const first = await tutorial.conversation("bob").ask("My name is Bob.");
-    assert.equal(first, "My name is Bob.");
-    const second = await tutorial.conversation("bob").ask("What is my name?");
-    assert.equal(second, "My name is Bob. | What is my name?");
-    const other = await tutorial.conversation("alice").ask("What is my name?");
-    assert.equal(other, "What is my name?");
-  });
+void test("02: the model receives the executed tool's result", async () => {
+  const result = await ingress().client(ticketLookup).ask("Look up ticket T-42");
+  assert.equal(result, "Ticket T-42 is open.");
+});
 
-  void test(`${tutorial.name} 04: structured output reaches the caller as an object`, async () => {
-    const result = await tutorial.structuredOutput().classify("I was charged twice.");
-    assert.deepEqual(result, {
-      category: "billing",
-      summary: "Duplicate subscription charge.",
-    });
-  });
-}
+void test("03: history persists between requests and is isolated by key", async () => {
+  const bob = ingress().client(chatSession, "bob");
+  assert.equal(await bob.ask("My name is Bob."), "My name is Bob.");
+  assert.equal(await bob.ask("What is my name?"), "My name is Bob. | What is my name?");
+  const alice = ingress().client(chatSession, "alice");
+  assert.equal(await alice.ask("What is my name?"), "What is my name?");
+});
+
+void test("04: structured output reaches the caller as an object", async () => {
+  const result = await ingress().client(ticketTriage).classify("I was charged twice.");
+  assert.deepEqual(result, {category: "billing", summary: "Duplicate subscription charge."});
+});
 
 void test("routing chooses a specialist and gives it a fresh run", async () => {
   const client = connect({url: env.baseUrl()}).client(supportRouter);
@@ -363,13 +352,8 @@ void test("tool policy denies an over-budget booking and permits one within budg
   );
 });
 
-const approvalExamples = [
-  {
-    name: "gensdk",
-    client: (key: string) => connect({url: env.baseUrl()}).client(ticketApproval, key),
-  },
-];
-type ApprovalClient = ReturnType<(typeof approvalExamples)[number]["client"]>;
+const approvalClient = (key: string) => ingress().client(ticketApproval, key);
+type ApprovalClient = ReturnType<typeof approvalClient>;
 
 async function waitForApproval(client: ApprovalClient) {
   for (let attempt = 0; attempt < 250; attempt++) {
@@ -387,74 +371,70 @@ const approvalDecisions = [
     expected: "Approval denied; ticket T-42 was left unchanged.",
   },
 ];
-for (const example of approvalExamples) {
-  for (const {approved, expected} of approvalDecisions) {
-    void test(
-      `${example.name} human approval: decision ${approved} gates tool execution`,
-      {timeout: 20000},
-      async () => {
-        const key = `decision-${approved}`;
-        const client = example.client(key);
-        const [reply] = await Promise.all([
-          client.ask("Close ticket T-42 after I approve it."),
-          (async () => {
-            const request = await waitForApproval(client);
-            assert.equal(request.call.name, "closeTicket");
-            assert.deepEqual(request.call.input, {ticketId: "T-42"});
-            await client.approve({
-              invocationId: request.invocationId,
-              signalName: request.signalName,
-              approved,
-            });
-          })(),
-        ]);
-        assert.equal(reply, expected);
-        assert.equal(await client.status(), null);
-      },
-    );
-  }
-
+for (const {approved, expected} of approvalDecisions) {
   void test(
-    `${example.name} human approval: an earlier invocation cannot authorize a new request`,
+    `human approval: decision ${approved} gates tool execution`,
     {timeout: 20000},
     async () => {
-      const key = "stale-approval";
-      const client = example.client(key);
-      const [, previous] = await Promise.all([
-        client.ask("Close ticket T-42 after I approve it."),
-        (async () => {
-          const request = await waitForApproval(client);
-          await client.approve({
-            invocationId: request.invocationId,
-            signalName: request.signalName,
-            approved: false,
-          });
-          return request;
-        })(),
-      ]);
+      const client = approvalClient(`decision-${approved}`);
       const [reply] = await Promise.all([
         client.ask("Close ticket T-42 after I approve it."),
         (async () => {
           const request = await waitForApproval(client);
-          assert.equal(request.signalName, previous.signalName);
-          assert.notEqual(request.invocationId, previous.invocationId);
-          await client.approve({
-            invocationId: previous.invocationId,
-            signalName: previous.signalName,
-            approved: true,
-          });
+          assert.equal(request.call.name, "closeTicket");
+          assert.deepEqual(request.call.input, {ticketId: "T-42"});
           await client.approve({
             invocationId: request.invocationId,
             signalName: request.signalName,
-            approved: false,
+            approved,
           });
         })(),
       ]);
-      assert.equal(reply, "Approval denied; ticket T-42 was left unchanged.");
+      assert.equal(reply, expected);
       assert.equal(await client.status(), null);
     },
   );
 }
+
+void test(
+  "human approval: an earlier invocation cannot authorize a new request",
+  {timeout: 20000},
+  async () => {
+    const client = approvalClient("stale-approval");
+    const [, previous] = await Promise.all([
+      client.ask("Close ticket T-42 after I approve it."),
+      (async () => {
+        const request = await waitForApproval(client);
+        await client.approve({
+          invocationId: request.invocationId,
+          signalName: request.signalName,
+          approved: false,
+        });
+        return request;
+      })(),
+    ]);
+    const [reply] = await Promise.all([
+      client.ask("Close ticket T-42 after I approve it."),
+      (async () => {
+        const request = await waitForApproval(client);
+        assert.equal(request.signalName, previous.signalName);
+        assert.notEqual(request.invocationId, previous.invocationId);
+        await client.approve({
+          invocationId: previous.invocationId,
+          signalName: previous.signalName,
+          approved: true,
+        });
+        await client.approve({
+          invocationId: request.invocationId,
+          signalName: request.signalName,
+          approved: false,
+        });
+      })(),
+    ]);
+    assert.equal(reply, "Approval denied; ticket T-42 was left unchanged.");
+    assert.equal(await client.status(), null);
+  },
+);
 
 void test("support session returns only its reply while retaining conversation history", async () => {
   const client = connect({url: env.baseUrl()}).client(aiSession, "replies");
@@ -481,13 +461,15 @@ void test(
   "research plans typed work, runs RPC workers in parallel, cites sources, and replays effects once",
   {timeout: 20000},
   async () => {
+    const before = new Set(effects.keys());
     const result = await connect({url: env.baseUrl()})
       .client(researchReport)
       .generate({topic: "Reliable execution", sources});
     assert.match(result, /\[durability\]/);
     assert.match(result, /\[idempotency\]/);
-    assert.equal(effects.size, 6);
-    assert.ok([...effects.values()].every((count) => count === 1));
+    const added = [...effects].filter(([key]) => !before.has(key));
+    assert.equal(added.length, 6);
+    assert.ok(added.every(([, count]) => count === 1));
   },
 );
 
@@ -511,37 +493,33 @@ void test("a research worker cannot cite a supplied source it has not read", asy
   );
 });
 
-const reviewExamples = [
-  {name: codeReview.name, client: () => connect({url: env.baseUrl()}).client(codeReview)},
-];
-for (const reviewExample of reviewExamples) {
-  void test(`${reviewExample.name}: evaluator feedback reaches the next draft and stops on acceptance`, async () => {
-    const task = "Read the first item safely";
-    const before = reviewCounts.get(task) ?? 0;
-    const result = await reviewExample.client().generate({task});
-    assert.equal(result, "return items.length ? items[0] : undefined;");
-    assert.equal(reviewCounts.get(task)! - before, 2);
-  });
+void test(`${codeReview.name}: evaluator feedback reaches the next draft and stops on acceptance`, async () => {
+  const task = "Read the first item safely";
+  const before = reviewCounts.get(task) ?? 0;
+  const result = await ingress().client(codeReview).generate({task});
+  assert.equal(result, "return items.length ? items[0] : undefined;");
+  assert.equal(reviewCounts.get(task)! - before, 2);
+});
 
-  void test(`${reviewExample.name}: exhausting the budget retains the last draft and feedback`, async () => {
-    const task = "always reject";
-    const before = reviewCounts.get(task) ?? 0;
-    const result = await reviewExample.client().generate({task});
-    assert.match(result, /still needs work after 3 reviews: Handle empty input/);
-    assert.match(result, /items.length/);
-    assert.equal(reviewCounts.get(task)! - before, 3);
-  });
-}
+void test(`${codeReview.name}: exhausting the budget retains the last draft and feedback`, async () => {
+  const task = "always reject";
+  const before = reviewCounts.get(task) ?? 0;
+  const result = await ingress().client(codeReview).generate({task});
+  assert.match(result, /still needs work after 3 reviews: Handle empty input/);
+  assert.match(result, /items.length/);
+  assert.equal(reviewCounts.get(task)! - before, 3);
+});
 
 void test(
   "racing returns the winner only after the losing agent's cleanup",
   {timeout: 20000},
   async () => {
+    const before = cleanedRaces.size;
     const result = await connect({url: env.baseUrl()})
       .client(racingAgents)
       .answer({question: "cancel loser"});
     assert.equal(result, "Quick answer");
-    assert.equal(cleanedRaces.size, 1);
+    assert.equal(cleanedRaces.size - before, 1);
   },
 );
 

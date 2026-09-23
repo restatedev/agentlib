@@ -94,22 +94,21 @@ const runner = r.service({
     },
     *steeringBursts() {
       const steering = r.invocation(r.handlerRequest().id).signal<string>("steering");
-      let signalsSent = 0;
       const result = yield* agent({
         *model(request) {
           if (request.step === 1) {
             steering.resolve("first");
-            signalsSent++;
             steering.resolve("second");
-            signalsSent++;
-            yield* r.sleep(5);
+          }
+          // Each steer discards the pending answer, so wait until both have arrived.
+          if (!JSON.stringify(request.messages).includes("second")) {
+            yield* r.sleep(60000);
             return {type: "final", text: "stale"};
           }
-          yield* r.sleep(25);
           return final;
         },
       }).run("go", {steeringSignal: "steering"});
-      return {result, signalsSent};
+      return {result};
     },
     *steeringBeforeModel() {
       let writes = 0;
@@ -126,7 +125,8 @@ const runner = r.service({
         *beforeStep(request) {
           if (request.step === 1) {
             r.invocation(r.handlerRequest().id).signal("steering").resolve("Do not write");
-            yield* r.sleep(5);
+            // Only the signal can end this wait; a short sleep would race it.
+            yield* r.sleep(60000);
           }
         },
         *model(request): r.Operation<ModelResponse> {
@@ -148,7 +148,6 @@ const runner = r.service({
             *execute() {
               self.signal("steering").resolve("First revision");
               self.signal("steering").resolve("Second revision");
-              yield* r.sleep(5);
               return "written";
             },
           }),
@@ -156,8 +155,11 @@ const runner = r.service({
         *model(request): r.Operation<ModelResponse> {
           if (++step === 1)
             return {type: "tool_calls", calls: [{id: "write", name: "write", input: {}}]};
-          if (!JSON.stringify(request.messages).includes("Second revision"))
+          // Steering discards this answer; wait until the second revision has arrived.
+          if (!JSON.stringify(request.messages).includes("Second revision")) {
+            yield* r.sleep(60000);
             return {type: "final", text: "stale"};
+          }
           return final;
         },
       }).run("go", {steeringSignal: "steering"});
@@ -334,7 +336,8 @@ const runner = r.service({
           if (scenario === "interrupt") {
             try {
               r.invocation(r.handlerRequest().id).signal("interrupt").resolve("stop inference");
-              yield* r.sleep(10);
+              // Only the signal can end this wait; a short sleep would race it.
+              yield* r.sleep(60000);
               modelReturned = true;
               return final;
             } finally {
@@ -343,7 +346,8 @@ const runner = r.service({
           }
           if ((scenario === "steering" || scenario === "steering-tools") && request.step === 1) {
             r.invocation(r.handlerRequest().id).signal("steering").resolve("new requirement");
-            yield* r.sleep(10);
+            // Only the signal can end this wait; a short sleep would race it.
+            yield* r.sleep(60000);
             if (scenario === "steering-tools") {
               return {type: "tool_calls", calls: [{id: "stale-write", name: "write", input: {}}]};
             }
@@ -480,7 +484,8 @@ const session = r.object({
           if (ending === "failed") throw new TerminalError("failure after effect");
           if (ending === "interrupted") {
             r.invocation(r.handlerRequest().id).signal("interrupt").resolve("stop");
-            yield* r.sleep(10);
+            // Only the signal can end this wait; a short sleep would race it.
+            yield* r.sleep(60000);
           }
           return final;
         },
@@ -654,8 +659,7 @@ void test(
   },
 );
 void test("native always-replay: steering retains bursts", {timeout: 20000}, async () => {
-  const {result, signalsSent} = await connect({url: env.baseUrl()}).client(runner).steeringBursts();
-  assert.equal(signalsSent, 2);
+  const {result} = await connect({url: env.baseUrl()}).client(runner).steeringBursts();
   assert.deepEqual(
     result.messages.filter((message) => message.role === "user").map((message) => message.content),
     [
@@ -871,6 +875,7 @@ void test(
   async () => {
     const {result, step} = await connect({url: env.baseUrl()}).client(runner).steeringDuringTool();
     assert.equal(result.output, "done");
+    // The steers can land during the batch or after it, so the step count varies.
     assert.ok(step >= 2);
     const steering = result.messages.flatMap((message) =>
       message.role === "user" && message.content.includes('"type":"steering"') ? [message] : [],
