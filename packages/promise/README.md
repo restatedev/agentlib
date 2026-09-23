@@ -54,7 +54,7 @@ for the decision mechanism.
 
 Use `@restate-agents/core` for generator composition, conversation
 abstractions, and the remaining agent-level generator hooks. The local `adopt` compatibility
-helper currently pins the coroutine SDK to 1.17.1.
+helper pins the coroutine SDK to 1.17.2.
 
 See the [promise examples](../examples/src/promise) and
 [running instructions](../examples/README.md).
