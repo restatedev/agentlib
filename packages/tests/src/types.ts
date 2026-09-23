@@ -7,9 +7,7 @@ import {
   type OutputDecision,
 } from "@restate-agents/core";
 import {z} from "zod";
-import type {Context as RestateContext} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
-import * as promise from "@restate-agents/promise";
 
 // Compile-only examples verify the public type boundary.
 type TenantContext = {tenant: string};
@@ -54,68 +52,6 @@ a.run("Go");
 a.run("Go", {context: {tenant: 3}});
 agent({model}).run("Go");
 
-declare const ctx: RestateContext;
-const promiseAgent = promise.agent<TenantContext>({
-  model,
-  onApproval(request, ctx, context) {
-    const tenant: string = context.tenant;
-    return ctx.run(`Publish ${request.signalName}`, () => {
-      void tenant;
-    });
-  },
-  tools: {
-    asyncLookup: promise.asyncTool({
-      description: "Lookup through an ordinary async API",
-      input: z.object({id: z.string()}),
-      async execute(input, metadata: promise.AsyncToolContext<TenantContext>) {
-        const id: string = input.id;
-        const signal: AbortSignal = metadata.signal;
-        // @ts-expect-error Journaled async callbacks cannot perform SDK operations.
-        metadata.run("nested", () => id);
-        return {id, tenant: metadata.context.tenant, aborted: signal.aborted};
-      },
-    }),
-    lookup: promise.tool({
-      description: "Lookup",
-      input: z.object({id: z.string()}),
-      before({id}) {
-        if (!id) return "An ID is required";
-      },
-      execute({id}, ctx, metadata: promise.ToolContext<TenantContext>) {
-        // @ts-expect-error Promise metadata does not expose generator operations.
-        metadata.progress(id);
-        return ctx.run("lookup", () => ({id, tenant: metadata.context.tenant}));
-      },
-      after(output, ctx) {
-        return ctx.run("inspect", () => output);
-      },
-    }),
-  },
-});
-void promiseAgent.run(ctx, "Go", {context: {tenant: "a"}});
-// @ts-expect-error Application context remains required by the promise entry point.
-void promiseAgent.run(ctx, "Go");
-// @ts-expect-error Application context fields remain checked.
-void promiseAgent.run(ctx, "Go", {context: {tenant: 3}});
-void promise.agent({model}).run(ctx, "Go");
-void promiseAgent.run(ctx, "Go", {
-  context: {tenant: "a"},
-  onApproval(request, _ctx, context) {
-    const tenant: string = context.tenant;
-    const approval: promise.ApprovalRequest = request;
-    void tenant;
-    void approval;
-  },
-});
-promise.agent({
-  model,
-  // @ts-expect-error Approval hooks must return synchronously or return a RestatePromise.
-  async onApproval() {},
-});
-void promise.agent({model}).run(ctx, "Go", {
-  // @ts-expect-error Generator approval hooks belong to the gensdk entry point.
-  *onApproval() {},
-});
 agent({
   model,
   // @ts-expect-error Approval notifications do not return the approval decision.
@@ -123,26 +59,6 @@ agent({
     return true;
   },
 });
-promise.tool({
-  description: "Invalid native promise",
-  input: z.object({}),
-  // @ts-expect-error Async wrappers erase RestatePromise's durable scheduling contract.
-  async execute() {
-    return "value";
-  },
-});
-promise.tool({
-  description: "Invalid coroutine hook",
-  input: z.object({}),
-  // @ts-expect-error Promise tool hooks do not accept coroutine operations.
-  *before() {
-    return true;
-  },
-  execute(_, ctx) {
-    return ctx.run("value", () => "value");
-  },
-});
-
 agent({
   model,
   output: z.object({answer: z.string(), sources: z.array(z.object({id: z.string()}))}),
@@ -208,13 +124,6 @@ agent<TenantContext>({
   tools: {
     refund: serviceTool(refundIface),
     pippo: serviceTool({iface: refundIface, handler: "process"}),
-  },
-});
-promise.agent<TenantContext>({
-  model,
-  tools: {
-    refund: promise.serviceTool(refundIface),
-    pippo: promise.serviceTool({iface: refundIface, handler: "status"}),
   },
 });
 

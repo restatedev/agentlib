@@ -5,7 +5,7 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import * as r from "@restatedev/restate-sdk-gen";
-import {journaledModel, type Message, type Model, type ModelResponse} from "@restate-agents/core";
+import {journaledModel, type Model, type ModelResponse} from "@restate-agents/core";
 
 const sources = [
   {
@@ -153,36 +153,6 @@ const racingModels = {
   },
 } satisfies Record<string, Model>;
 
-const regularEffects = new Map<string, number>();
-const regularModel = journaledModel(async (request): Promise<ModelResponse> => {
-  const turns = request.messages.filter((message) => message.role === "user");
-  const input = turns.at(-1)!.content;
-  const callId = `${input}:${turns.length}:${request.step}`;
-  regularEffects.set(callId, (regularEffects.get(callId) ?? 0) + 1);
-  if (input === "fail") throw new TerminalError("Expected model failure");
-  if (request.step === 1 || input === "stop") {
-    return {
-      type: "tool_calls",
-      calls: [
-        {id: `${callId}:ticket`, name: "lookupTicket", input: {ticketId: "T-42"}},
-        {id: `${callId}:policy`, name: "refundPolicy", input: {}},
-      ],
-    };
-  }
-  const results = request.messages.slice(-2);
-  assert.deepEqual(
-    results.map((message) => {
-      assert.equal(message.role, "tool");
-      return message.result;
-    }),
-    [
-      {status: "success", output: {ticketId: "T-42", status: "open"}},
-      {status: "success", output: {refundWindowDays: 30, requiresReceipt: true}},
-    ],
-  );
-  return {type: "final", text: `Answered ${input}; previous turns: ${turns.length - 1}`};
-});
-
 const tutorialModel = journaledModel(async (request): Promise<ModelResponse> => {
   if (request.tools.length > 0) {
     if (request.step === 1)
@@ -238,8 +208,6 @@ const fixtureModel: Model = function* (request) {
   if (instructions.startsWith("Code ")) return yield* reviewModel(request);
   if (instructions.startsWith("Quick answer.")) return yield* racingModels.quick(request);
   if (instructions.startsWith("Thorough answer.")) return yield* racingModels.thorough(request);
-  if (instructions.startsWith("Help the user with their support ticket."))
-    return yield* regularModel(request);
   if (
     instructions === "" ||
     instructions.startsWith("Use lookupTicket") ||
@@ -259,35 +227,21 @@ const [
   {ticketLookup},
   {chatSession},
   {ticketTriage},
-  {promiseHello},
-  {promiseTicketLookup},
-  {promiseChatSession},
-  {promiseTicketTriage},
   {researchReport, researchWorker},
   {codeReview},
   {racingAgents},
-  {regularSdkSupport, supportPolicies},
-  {promiseCodeReview},
   {aiSession},
   {ticketApproval},
-  {promiseTicketApproval},
 ] = await Promise.all([
   import("@restate-agents/examples/gensdk/hello"),
   import("@restate-agents/examples/gensdk/tools"),
   import("@restate-agents/examples/gensdk/conversation"),
   import("@restate-agents/examples/gensdk/structured-output"),
-  import("@restate-agents/examples/promise/hello"),
-  import("@restate-agents/examples/promise/tools"),
-  import("@restate-agents/examples/promise/conversation"),
-  import("@restate-agents/examples/promise/structured-output"),
   import("@restate-agents/examples/gensdk/research-report"),
   import("@restate-agents/examples/gensdk/evaluator-optimizer"),
   import("@restate-agents/examples/gensdk/racing-agents"),
-  import("@restate-agents/examples/promise/regular-sdk"),
-  import("@restate-agents/examples/promise/evaluator-optimizer"),
   import("@restate-agents/examples/gensdk/session"),
   import("@restate-agents/examples/gensdk/human-approval"),
-  import("@restate-agents/examples/promise/human-approval"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -299,21 +253,13 @@ before(
         ticketLookup,
         chatSession,
         ticketTriage,
-        promiseHello,
-        promiseTicketLookup,
-        promiseChatSession,
-        promiseTicketTriage,
         barrier,
         researchReport,
         researchWorker,
         codeReview,
         racingAgents,
-        regularSdkSupport,
-        supportPolicies,
-        promiseCodeReview,
         aiSession,
         ticketApproval,
-        promiseTicketApproval,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -331,14 +277,6 @@ const tutorialExamples = [
     tools: () => connect({url: env.baseUrl()}).client(ticketLookup),
     conversation: (key: string) => connect({url: env.baseUrl()}).client(chatSession, key),
     structuredOutput: () => connect({url: env.baseUrl()}).client(ticketTriage),
-  },
-  {
-    name: "promise",
-    hello: () => connect({url: env.baseUrl()}).serviceClient(promiseHello),
-    tools: () => connect({url: env.baseUrl()}).serviceClient(promiseTicketLookup),
-    conversation: (key: string) =>
-      connect({url: env.baseUrl()}).objectClient(promiseChatSession, key),
-    structuredOutput: () => connect({url: env.baseUrl()}).serviceClient(promiseTicketTriage),
   },
 ];
 for (const tutorial of tutorialExamples) {
@@ -376,10 +314,6 @@ const approvalExamples = [
   {
     name: "gensdk",
     client: (key: string) => connect({url: env.baseUrl()}).client(ticketApproval, key),
-  },
-  {
-    name: "promise",
-    client: (key: string) => connect({url: env.baseUrl()}).objectClient(promiseTicketApproval, key),
   },
 ];
 type ApprovalClient = ReturnType<(typeof approvalExamples)[number]["client"]>;
@@ -490,52 +424,6 @@ void test("interrupted support session returns its final summary", {timeout: 200
   assert.equal((await client.status()).active, null);
 });
 
-void test("regular SDK runs work before and after an agent with journaled and RPC tools", async () => {
-  const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "conversation");
-  const state = env.stateOf(regularSdkSupport, "conversation");
-  const previous: Message[] = [
-    {role: "user", content: "Earlier question"},
-    {role: "assistant", content: "Earlier answer"},
-  ];
-  await state.setAll({messages: previous});
-
-  const first = await client.ask({message: "first"});
-  assert.equal(first, "Answered first; previous turns: 1");
-  const firstMessages = (await state.get<Message[]>("messages"))!;
-  assert.deepEqual(firstMessages.slice(0, previous.length), previous);
-  assert.deepEqual(firstMessages.at(-1), {role: "assistant", content: first});
-  assert.equal(await state.get("lastStatus"), "completed");
-
-  const second = await client.ask({message: "second"});
-  assert.equal(second, "Answered second; previous turns: 2");
-  const secondMessages = (await state.get<Message[]>("messages"))!;
-  assert.deepEqual(secondMessages.slice(0, firstMessages.length), firstMessages);
-  assert.deepEqual(secondMessages.at(-1), {role: "assistant", content: second});
-  assert.equal(regularEffects.size, 4);
-  assert.ok([...regularEffects.values()].every((count) => count === 1));
-});
-
-void test("regular SDK saves stopped runs with their actual status", async () => {
-  const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "stopped");
-  const result = await client.ask({message: "stop"});
-  assert.equal(result, "Agent stopped: max_steps");
-  const state = env.stateOf(regularSdkSupport, "stopped");
-  assert.equal(await state.get("lastStatus"), "stopped");
-  const messages = (await state.get<Message[]>("messages"))!;
-  assert.deepEqual(messages[0], {role: "user", content: "stop"});
-  assert.equal(messages.filter((message) => message.role === "tool").length, 14);
-});
-
-void test("regular SDK propagates agent failure without executing the following state writes", async () => {
-  const client = connect({url: env.baseUrl()}).objectClient(regularSdkSupport, "failure");
-  const state = env.stateOf(regularSdkSupport, "failure");
-  const previous: Message[] = [{role: "user", content: "Earlier question"}];
-  await state.setAll({messages: previous, lastStatus: "completed"});
-  await assert.rejects(async () => await client.ask({message: "fail"}), /Expected model failure/);
-  assert.deepEqual(await state.get("messages"), previous);
-  assert.equal(await state.get("lastStatus"), "completed");
-});
-
 void test(
   "research plans typed work, runs RPC workers in parallel, cites sources, and replays effects once",
   {timeout: 20000},
@@ -572,10 +460,6 @@ void test("a research worker cannot cite a supplied source it has not read", asy
 
 const reviewExamples = [
   {name: codeReview.name, client: () => connect({url: env.baseUrl()}).client(codeReview)},
-  {
-    name: promiseCodeReview.name,
-    client: () => connect({url: env.baseUrl()}).serviceClient(promiseCodeReview),
-  },
 ];
 for (const reviewExample of reviewExamples) {
   void test(`${reviewExample.name}: evaluator feedback reaches the next draft and stops on acceptance`, async () => {

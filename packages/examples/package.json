@@ -43,51 +43,16 @@
     "./gensdk/service-tool": {
       "types": "./dist/gensdk/10_service_tool.d.ts",
       "import": "./dist/gensdk/10_service_tool.js"
-    },
-    "./promise/hello": {
-      "types": "./dist/promise/01_hello.d.ts",
-      "import": "./dist/promise/01_hello.js"
-    },
-    "./promise/tools": {
-      "types": "./dist/promise/02_tools.d.ts",
-      "import": "./dist/promise/02_tools.js"
-    },
-    "./promise/conversation": {
-      "types": "./dist/promise/03_conversation.d.ts",
-      "import": "./dist/promise/03_conversation.js"
-    },
-    "./promise/structured-output": {
-      "types": "./dist/promise/04_structured_output.d.ts",
-      "import": "./dist/promise/04_structured_output.js"
-    },
-    "./promise/human-approval": {
-      "types": "./dist/promise/06_human_approval.d.ts",
-      "import": "./dist/promise/06_human_approval.js"
-    },
-    "./promise/regular-sdk": {
-      "types": "./dist/promise/07_support_session.d.ts",
-      "import": "./dist/promise/07_support_session.js"
-    },
-    "./promise/evaluator-optimizer": {
-      "types": "./dist/promise/05_evaluator_optimizer.d.ts",
-      "import": "./dist/promise/05_evaluator_optimizer.js"
-    },
-    "./promise/service-tool": {
-      "types": "./dist/promise/08_service_tool.d.ts",
-      "import": "./dist/promise/08_service_tool.js"
     }
   },
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/app.ts",
-    "start": "node dist/app.js",
-    "dev:gensdk": "tsx watch src/gensdk/app.ts",
-    "dev:promise": "tsx watch src/promise/app.ts"
+    "start": "node dist/app.js"
   },
   "dependencies": {
     "@restate-agents/core": "workspace:*",
-    "@restate-agents/promise": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",
     "@restatedev/restate-sdk-gen": "1.17.2",
     "zod": "^4.6.5"

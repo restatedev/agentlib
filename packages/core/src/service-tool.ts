@@ -47,13 +47,8 @@ export type ServiceToolOptions<H extends Record<string, HandlerDescriptor>> = Ov
       }
   );
 
-/**
- * Flavor-agnostic call: given a resolved key and the (unwrapped) argument, issue the
- * request and return the awaitable child. Core injects a gen-client call; the promise
- * package injects a regular-SDK call adopted into a {@link ClientFuture}.
- * @internal
- */
-export type MakeCall = (
+/** Issue the request for a resolved key and (unwrapped) argument, returning the awaitable child. */
+type MakeCall = (
   handler: string,
   key: string | undefined,
   callArg: JsonValue | undefined,
@@ -234,33 +229,11 @@ function isDescriptor(arg: unknown): arg is AnyDescriptor {
   );
 }
 
-/**
- * Assemble a service tool. The flavor supplies `makeCallFor`, which turns the descriptor
- * into its client call (gen vs. regular SDK). @internal
- */
-export function makeServiceTool<C = unknown>(
-  arg: ServiceDescriptor | ServiceToolOptions<Record<string, HandlerDescriptor>>,
-  makeCallFor: (descriptor: AnyDescriptor) => MakeCall,
-): Tool<C> {
-  const options = (isDescriptor(arg) ? {iface: arg} : arg) as Overrides & {
-    iface: unknown;
-    handler?: string;
-    key?: KeyArg;
-  };
-  const {iface, handler, key, ...overrides} = options;
-  const descriptor = iface as AnyDescriptor;
-  const resolveKey = normalizeKey(descriptor, key);
-  const makeCall = makeCallFor(descriptor);
-  return handler === undefined
-    ? buildMultiplexedTool<C>(descriptor, overrides, resolveKey, makeCall)
-    : buildSingleHandlerTool<C>(descriptor, handler, overrides, resolveKey, makeCall);
-}
-
-/** Gen-flavor client call: the free `client()` reads the ambient operation context. */
 type Handlers = Record<string, HandlerDescriptor>;
 type HandlerClient = Record<string, (arg?: JsonValue) => ClientFuture<JsonValue>>;
 
-const genMakeCallFor =
+/** The free `client()` reads the ambient operation context. */
+const callFor =
   (descriptor: AnyDescriptor): MakeCall =>
   (handler, key, callArg) => {
     const handlers =
@@ -297,5 +270,16 @@ export function serviceTool<H extends Record<string, HandlerDescriptor>, C = unk
 export function serviceTool<C = unknown>(
   arg: ServiceDescriptor | ServiceToolOptions<Record<string, HandlerDescriptor>>,
 ): Tool<C> {
-  return makeServiceTool<C>(arg, genMakeCallFor);
+  const options = (isDescriptor(arg) ? {iface: arg} : arg) as Overrides & {
+    iface: unknown;
+    handler?: string;
+    key?: KeyArg;
+  };
+  const {iface, handler, key, ...overrides} = options;
+  const descriptor = iface as AnyDescriptor;
+  const resolveKey = normalizeKey(descriptor, key);
+  const makeCall = callFor(descriptor);
+  return handler === undefined
+    ? buildMultiplexedTool<C>(descriptor, overrides, resolveKey, makeCall)
+    : buildSingleHandlerTool<C>(descriptor, handler, overrides, resolveKey, makeCall);
 }
