@@ -36,28 +36,30 @@ logic of its own. Everything ran on the core generator runtime:
   `context` whenever the agent's context type did.
 
 The key piece was `adopt(promise)` in core (`packages/core/src/adopt.ts`), a
-backport of the generator SDK's unreleased `internal.adopt`
+backport of the generator SDK's `internal.adopt`
 ([sdk-typescript#797](https://github.com/restatedev/sdk-typescript/pull/797)).
 It turned a `RestatePromise` from the same invocation into a `Future` by
-swapping the backing of a channel's future through a private SDK symbol. That
-is why `@restatedev/restate-sdk-gen` is pinned to an exact version.
+swapping the backing of a channel's future through a private SDK symbol.
+`@restatedev/restate-sdk-gen` 1.17.2 now exports `internal.adopt` (marked
+experimental), so the backport is no longer needed.
 
 ## Steps
 
-1. **Check upstream first.** If the generator SDK now exports `adopt` (or an
-   equivalent way to await a regular-SDK promise inside a coroutine), use it
-   instead of the backport and drop the exact version pin.
-2. **Restore the files:**
+1. **Restore the files:**
 
    ```sh
    git checkout 61ec2d8 -- \
      packages/promise \
-     packages/core/src/adopt.ts \
      packages/examples/src/promise \
      packages/tests/src/promise.integration.ts
    ```
 
-3. **Re-export from core** (`packages/core/src/index.ts`): `adopt`, and, from
+2. **Use the SDK's adopt.** Replace imports of `adopt` from
+   `@restate-agents/core` with `internal.adopt` from
+   `@restatedev/restate-sdk-gen`. Keep the promise package's own guard that
+   rejects values which are not `RestatePromise`s, and its `adoptInvocation`,
+   which adds the invocation handle the SDK's version leaves out.
+3. **Re-export from core** (`packages/core/src/index.ts`): from
    `service-tool.ts`, `makeServiceTool` and the `MakeCall` type. `serviceTool`
    now builds its call inline; split it back into
    `makeServiceTool(arg, makeCallFor)` plus a generator-SDK `callFor`.
