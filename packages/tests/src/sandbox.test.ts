@@ -11,9 +11,9 @@ import * as r from "@restatedev/restate-sdk-gen";
 import {channel, gen, type Channel} from "@restatedev/restate-sdk-gen";
 import {agent, type Message, type ModelResponse, type ToolCall} from "@restate-agents/core";
 import {
+  lazySandbox,
   sandboxTools,
   type Sandbox,
-  type SandboxProvider,
   type SandboxToolsOptions,
 } from "@restate-agents/core/sandbox";
 import {runHandler} from "./replay-harness.mjs";
@@ -38,11 +38,6 @@ const local: Sandbox = {
     await mkdir(dirname(path), {recursive: true});
     await writeFile(path, content);
   },
-};
-const provider: SandboxProvider = {
-  create: async ({name}) => name,
-  connect: async () => local,
-  terminate: async () => {},
 };
 
 async function workspace() {
@@ -69,7 +64,7 @@ const results = (messages: readonly Message[]) =>
 /** An agent that makes each batch of calls in turn, then finishes. */
 function scripted(options: SandboxToolsOptions, ...batches: ToolCall[][]) {
   return agent({
-    tools: sandboxTools(provider, options),
+    tools: sandboxTools(options),
     *model(request): Generator<never, ModelResponse> {
       const calls = batches[(request.step ?? 1) - 1];
       return calls ? {type: "tool_calls", calls} : {type: "final", text: "done"};
@@ -86,7 +81,7 @@ const call = (id: string, name: string, input: Record<string, unknown>): ToolCal
 async function runCalls(options: SandboxToolsOptions, ...batches: ToolCall[][]) {
   const coder = scripted(options, ...batches);
   const {output} = await runHandler((ctx: Context) =>
-    r.execute(ctx, coder.run("go", {context: {sandboxId: "local"}})),
+    r.execute(ctx, coder.run("go", {context: {sandbox: local}})),
   );
   assert.equal(output.status, "completed");
   const byCall = new Map(
@@ -175,7 +170,7 @@ void test("interrupting the run stops a running command", async () => {
   const {options, file} = await workspace();
   let interrupt!: Channel<string>;
   const coder = agent({
-    tools: sandboxTools(provider, {...options, waitSeconds: 1}),
+    tools: sandboxTools({...options, waitSeconds: 1}),
     *model(request): Generator<unknown, ModelResponse> {
       if (request.step === 1) {
         return {
@@ -193,7 +188,7 @@ void test("interrupting the run stops a running command", async () => {
         interrupt = channel<string>();
         const task = r.spawn(
           coder.run("go", {
-            context: {sandboxId: "local"},
+            context: {sandbox: local},
             controls: {interrupt: interrupt.receive},
           }),
         );
@@ -214,8 +209,7 @@ void test("a command retried after a crash is not started twice", async () => {
   const coder = scripted(options, [
     call("c", "executeCommand", {command: "echo ran >> runs.log; cat runs.log"}),
   ]);
-  const handler = (ctx: Context) =>
-    r.execute(ctx, coder.run("go", {context: {sandboxId: "local"}}));
+  const handler = (ctx: Context) => r.execute(ctx, coder.run("go", {context: {sandbox: local}}));
   const live = await runHandler(handler);
   assert.equal(live.output.status, "completed");
 
@@ -228,4 +222,53 @@ void test("a command retried after a crash is not started twice", async () => {
   assert.deepEqual(results(live.output.messages), [
     {status: "success", output: {exitCode: 0, stdout: "ran\n", stderr: ""}},
   ]);
+});
+
+void test("a lazy handle connects on first use, once, and again after a failure", async () => {
+  let opens = 0;
+  let failNext = false;
+  const sandbox = lazySandbox(async () => {
+    opens++;
+    return {
+      ...local,
+      exec(script, options) {
+        if (failNext) {
+          failNext = false;
+          return Promise.reject(new Error("connection lost"));
+        }
+        return local.exec(script, options);
+      },
+    };
+  });
+  assert.equal(opens, 0);
+  const signal = new AbortController().signal;
+  await Promise.all([sandbox.exec("true", {signal}), sandbox.exec("true", {signal})]);
+  assert.equal(opens, 1);
+  failNext = true;
+  await assert.rejects(sandbox.exec("true", {signal}), /connection lost/);
+  await sandbox.exec("true", {signal});
+  assert.equal(opens, 2);
+});
+
+void test("replaying a finished run never connects to the sandbox", async () => {
+  const {options} = await workspace();
+  let opens = 0;
+  const coder = scripted(options, [
+    call("w", "writeFile", {path: "a.txt", content: "a"}),
+    call("c", "executeCommand", {command: "cat a.txt"}),
+  ]);
+  const handler = (ctx: Context) => {
+    // The handler preamble: runs on every attempt, outside any journaled step.
+    const sandbox = lazySandbox(async () => {
+      opens++;
+      return local;
+    });
+    return r.execute(ctx, coder.run("go", {context: {sandbox}}));
+  };
+  const live = await runHandler(handler);
+  assert.equal(live.output.status, "completed");
+  assert.equal(opens, 1);
+  const replay = await runHandler(handler, {replay: live.journal});
+  assert.deepEqual(replay.output, live.output);
+  assert.equal(opens, 1);
 });

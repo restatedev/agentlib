@@ -1,6 +1,6 @@
 // A sandbox provider backed by local Docker containers, for running the example without an account.
 import {spawn} from "node:child_process";
-import type {ExecResult, SandboxProvider} from "@restate-agents/core/sandbox";
+import {lazySandbox, type ExecResult, type SandboxProvider} from "@restate-agents/core/sandbox";
 
 function docker(args: string[], options: {input?: string; signal?: AbortSignal} = {}) {
   return new Promise<ExecResult>((resolve, reject) => {
@@ -43,30 +43,33 @@ export function dockerSandboxes({
       if (existing.exitCode === 0) return existing.stdout.trim();
       throw new Error(run.stderr.trim());
     },
-    async connect(id) {
-      const state = await docker(["inspect", "--format", "{{.State.Running}}", id]);
-      if (state.stdout.trim() !== "true") throw new Error(`Sandbox ${id} is not running.`);
-      return {
-        exec: (script, {signal}) => docker(["exec", id, "sh", "-c", script], {signal}),
-        async readFile(path) {
-          const read = await docker([
-            "exec",
-            id,
-            "sh",
-            "-c",
-            `[ -f "$1" ] || exit 3; cat "$1"`,
-            "sh",
-            path,
-          ]);
-          if (read.exitCode === 3) return undefined;
-          return check(read).stdout;
-        },
-        async writeFile(path, content) {
-          const script = `mkdir -p "$(dirname "$1")" && cat > "$1"`;
-          check(await docker(["exec", "-i", id, "sh", "-c", script, "sh", path], {input: content}));
-        },
-      };
-    },
+    connect: (id) =>
+      lazySandbox(async () => {
+        const state = await docker(["inspect", "--format", "{{.State.Running}}", id]);
+        if (state.stdout.trim() !== "true") throw new Error(`Sandbox ${id} is not running.`);
+        return {
+          exec: (script, {signal}) => docker(["exec", id, "sh", "-c", script], {signal}),
+          async readFile(path) {
+            const read = await docker([
+              "exec",
+              id,
+              "sh",
+              "-c",
+              `[ -f "$1" ] || exit 3; cat "$1"`,
+              "sh",
+              path,
+            ]);
+            if (read.exitCode === 3) return undefined;
+            return check(read).stdout;
+          },
+          async writeFile(path, content) {
+            const script = `mkdir -p "$(dirname "$1")" && cat > "$1"`;
+            check(
+              await docker(["exec", "-i", id, "sh", "-c", script, "sh", path], {input: content}),
+            );
+          },
+        };
+      }),
     async terminate(id) {
       const removed = await docker(["rm", "--force", id]);
       if (removed.exitCode !== 0 && !removed.stderr.includes("No such container")) check(removed);

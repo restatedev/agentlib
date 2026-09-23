@@ -105,21 +105,23 @@ root agent's guardrails and budgets still apply. For full isolation, put an agen
 behind its own Restate service and call it with `serviceTool` or `handlerTool`,
 as a separate invocation.
 
-**Sandboxes.** `sandboxTools(provider)` from `@restate-agents/core/sandbox`
-gives a coding agent `readFile`, `writeFile`, `editFile`, `listFiles`,
-`search`, `executeCommand`, and `runInBackground` inside a remote sandbox. The
-handler creates the sandbox in a journaled step and passes its ID as run
-context; each tool reconnects by ID. A provider is three methods (`create`,
-`connect`, `terminate`), and the examples include Docker and
+**Sandboxes.** `sandboxTools()` from `@restate-agents/core/sandbox` gives a
+coding agent `readFile`, `writeFile`, `editFile`, `listFiles`, `search`,
+`executeCommand`, and `runInBackground` inside a remote sandbox. The handler
+creates the sandbox once in a journaled step, keeping only its ID. It then
+connects outside the journal, so every attempt and every resumed invocation
+gets a fresh handle, which connects on first use. A provider is three methods
+(`create`, `connect`, `terminate`), and the examples include Docker and
 [Modal](https://modal.com) providers. Commands run at most once per tool call:
 after a crash, the retried call reattaches to the process it already started.
 
 ```ts
-const coder = agent<SandboxContext>({model, tools: sandboxTools(provider)});
+const coder = agent<SandboxContext>({model, tools: sandboxTools()});
 
 function* turn(message: string) {
   const sandboxId = yield* restate.run(() => provider.create({name: "session-42"}));
-  return yield* coder.run(message, {context: {sandboxId}});
+  const sandbox = provider.connect(sandboxId); // not journaled; no I/O until first use
+  return yield* coder.run(message, {context: {sandbox}});
 }
 ```
 

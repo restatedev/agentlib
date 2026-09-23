@@ -22,12 +22,12 @@ const coder = agent<SandboxContext>({
     "Explore before changing code, prefer small edits with editFile, and run the code or " +
     "its tests to check your work. Finish by summarizing what you changed and how you verified it.",
   maxSteps: 50,
-  tools: sandboxTools(provider),
+  tools: sandboxTools(),
 });
 
 async function isRunning(sandboxId: string) {
   try {
-    await provider.connect(sandboxId);
+    await provider.connect(sandboxId).exec("true", {signal: AbortSignal.timeout(30_000)});
     return true;
   } catch {
     return false;
@@ -94,12 +94,14 @@ export const codingSession = restate.object({
       },
       function* (message) {
         const sandboxId = yield* openSandbox();
+        // Not journaled: every attempt, on whichever process runs it, gets its own handle.
+        const sandbox = provider.connect(sandboxId);
         const turn = ((yield* restate.state().get<number>("turn")) ?? 0) + 1;
         restate.state().set("turn", turn);
         restate.state().set("active", restate.handlerRequest().id);
         try {
           const result = yield* coder.run(message, {
-            context: {sandboxId},
+            context: {sandbox},
             conversation: new LazyStateConversation({
               compaction: {model, policy: {maxMessages: 80, retainMessages: 20}},
             }),

@@ -296,10 +296,13 @@ unfinished call, and a failed handler is reported to the model as a tool error.
 
 `CodingSession` is a virtual object that owns one sandbox per session key. Each
 turn reuses the session's sandbox, or creates one inside a journaled step and
-stores only its ID. The agent gets that ID as its run context, and
-`sandboxTools(provider)` gives it `readFile`, `writeFile`, `editFile`,
-`listFiles`, `search`, `executeCommand`, and `runInBackground`. Every tool call
-reconnects to the sandbox by ID.
+stores only its ID. The handler then calls `provider.connect(id)` outside the
+journal and passes the handle as run context. That code runs again on every
+attempt and after every resume, so each process gets its own connection, and
+the handle connects only when a tool first uses it. A replay of steps that are
+already journaled never connects at all. `sandboxTools()` gives the agent
+`readFile`, `writeFile`, `editFile`, `listFiles`, `search`, `executeCommand`,
+and `runInBackground`.
 
 It uses Docker by default, so you only need Docker running. Set
 `SANDBOX_PROVIDER=modal` to use [Modal Sandboxes](https://modal.com/docs/guide/sandbox),

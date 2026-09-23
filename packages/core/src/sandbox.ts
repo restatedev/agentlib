@@ -1,4 +1,4 @@
-// Coding tools that run inside a remote sandbox the handler reaches by ID.
+// Coding tools that run inside a remote sandbox the handler connects to.
 import {createHash} from "node:crypto";
 import {posix} from "node:path";
 import * as restate from "@restatedev/restate-sdk-gen";
@@ -19,17 +19,43 @@ export interface Sandbox {
   writeFile(path: string, content: string): Promise<void>;
 }
 
-/** Creates sandboxes and reconnects to them by ID, so only the ID is ever journaled. */
+/**
+ * Creates sandboxes and connects to them by ID. Journal the ID; connect in the
+ * handler on every attempt, outside `run`, and pass the handle as run context.
+ */
 export interface SandboxProvider {
   /** Create a sandbox, or return the existing one with this name. */
   create(options: {name: string}): Promise<string>;
-  connect(id: string): Promise<Sandbox>;
+  /** Return a handle without any I/O; it connects on first use (see {@link lazySandbox}). */
+  connect(id: string): Sandbox;
   /** Stop a sandbox. Stopping one that is already gone succeeds. */
   terminate(id: string): Promise<void>;
 }
 
-/** The application context sandbox tools read their sandbox ID from. */
-export type SandboxContext = {sandboxId: string};
+/** The application context sandbox tools use. The handle is never journaled. */
+export type SandboxContext = {sandbox: Sandbox};
+
+/**
+ * A handle that opens its connection on first use and reopens it after any
+ * failure. Replayed steps never touch it, so a fully journaled replay never connects.
+ */
+export function lazySandbox(open: () => Promise<Sandbox>): Sandbox {
+  let connection: Promise<Sandbox> | undefined;
+  async function use<T>(call: (sandbox: Sandbox) => Promise<T>): Promise<T> {
+    const current = (connection ??= open());
+    try {
+      return await call(await current);
+    } catch (error) {
+      if (connection === current) connection = undefined;
+      throw error;
+    }
+  }
+  return {
+    exec: (script, options) => use((sandbox) => sandbox.exec(script, options)),
+    readFile: (path) => use((sandbox) => sandbox.readFile(path)),
+    writeFile: (path, content) => use((sandbox) => sandbox.writeFile(path, content)),
+  };
+}
 
 export type SandboxToolsOptions = {
   /** Relative paths resolve against this directory. Defaults to `/workspace`. */
@@ -77,13 +103,12 @@ const commandInput = z.object({
 });
 
 /**
- * Tools for a coding agent working in a remote sandbox. Each call reconnects to
- * `context.sandboxId`, so the run journals results, never live connections.
- * Commands run at most once per tool call: a retried call reattaches to the
- * command it already started instead of starting it again.
+ * Tools for a coding agent working in the sandbox passed as `context.sandbox`.
+ * The run journals results, never the connection. Commands run at most once per
+ * tool call: a retried call reattaches to the command it already started
+ * instead of starting it again.
  */
 export function sandboxTools<C extends SandboxContext = SandboxContext>(
-  provider: SandboxProvider,
   options: SandboxToolsOptions = {},
 ): SandboxTools<C> {
   const workdir = options.workdir ?? "/workspace";
@@ -99,10 +124,10 @@ export function sandboxTools<C extends SandboxContext = SandboxContext>(
     name: string,
     action: (sandbox: Sandbox, signal: AbortSignal) => Promise<T>,
   ): restate.Operation<T> {
-    return yield* restate.run(
-      async ({signal}) => action(await provider.connect(context.context.sandboxId), signal),
-      {name, retry},
-    );
+    return yield* restate.run(({signal}) => action(context.context.sandbox, signal), {
+      name,
+      retry,
+    });
   }
 
   function* shell(context: ToolContext<C>, name: string, script: string) {

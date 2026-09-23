@@ -5,7 +5,7 @@ import {
   NotFoundError,
   SandboxFilesystemNotFoundError,
 } from "modal";
-import type {SandboxProvider} from "@restate-agents/core/sandbox";
+import {lazySandbox, type SandboxProvider} from "@restate-agents/core/sandbox";
 
 const abortable = <T>(promise: Promise<T>, signal: AbortSignal) =>
   new Promise<T>((resolve, reject) => {
@@ -42,31 +42,32 @@ export function modalSandboxes({
         return (await modal().sandboxes.fromName(app, name)).sandboxId;
       }
     },
-    async connect(id) {
-      const sandbox = await modal().sandboxes.fromId(id);
-      return {
-        async exec(script, {signal}) {
-          const process = await sandbox.exec(["sh", "-c", script], {
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stdout, stderr, exitCode] = await abortable(
-            Promise.all([process.stdout.readText(), process.stderr.readText(), process.wait()]),
-            signal,
-          );
-          return {exitCode, stdout, stderr};
-        },
-        async readFile(path) {
-          try {
-            return await sandbox.filesystem.readText(path);
-          } catch (error) {
-            if (error instanceof SandboxFilesystemNotFoundError) return undefined;
-            throw error;
-          }
-        },
-        writeFile: (path, content) => sandbox.filesystem.writeText(content, path),
-      };
-    },
+    connect: (id) =>
+      lazySandbox(async () => {
+        const sandbox = await modal().sandboxes.fromId(id);
+        return {
+          async exec(script, {signal}) {
+            const process = await sandbox.exec(["sh", "-c", script], {
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await abortable(
+              Promise.all([process.stdout.readText(), process.stderr.readText(), process.wait()]),
+              signal,
+            );
+            return {exitCode, stdout, stderr};
+          },
+          async readFile(path) {
+            try {
+              return await sandbox.filesystem.readText(path);
+            } catch (error) {
+              if (error instanceof SandboxFilesystemNotFoundError) return undefined;
+              throw error;
+            }
+          },
+          writeFile: (path, content) => sandbox.filesystem.writeText(content, path),
+        };
+      }),
     async terminate(id) {
       try {
         await (await modal().sandboxes.fromId(id)).terminate();
