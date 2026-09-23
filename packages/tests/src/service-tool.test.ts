@@ -27,7 +27,6 @@ const counter = r.iface.object("Counter", {
 
 void test("bare interface -> one multiplexed tool that selects any handler", () => {
   const tool = serviceTool(refund);
-  assert.equal(typeof tool.execute, "function");
   const schema = tool.inputSchema as {
     properties: {handler: {enum: string[]}};
     required: string[];
@@ -81,11 +80,15 @@ void test("virtual objects require a key", () => {
   // Missing key is a runtime error (and a compile error via the options union).
   assert.throws(() => serviceTool(counter as unknown as r.ServiceDescriptor), /require a "key"/);
   // With a key it builds, multiplexed or scoped.
-  assert.equal(typeof serviceTool({iface: counter, key: "c-1"}).execute, "function");
-  assert.equal(
-    typeof serviceTool({iface: counter, handler: "add", key: "c-1"}).execute,
-    "function",
-  );
+  const multiplexed = serviceTool({iface: counter, key: "c-1"}).inputSchema as {
+    properties: {handler: {enum: string[]}};
+  };
+  assert.deepEqual(multiplexed.properties.handler.enum, ["add"]);
+  const scoped = serviceTool({iface: counter, handler: "add", key: "c-1"}).inputSchema as {
+    required: string[];
+  };
+  // A scalar input is wrapped under `value`.
+  assert.deepEqual(scoped.required, ["value"]);
 });
 
 // Compile-time contracts (handler-name typechecking, service/object key rules) live in

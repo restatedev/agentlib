@@ -14,11 +14,9 @@ import {
 } from "@restate-agents/core";
 import {programTool} from "@restate-agents/core/program";
 import {runHandler} from "./replay-harness.mjs";
+import {testContext} from "./helpers.js";
 const done: ModelResponse = {type: "final", text: "done"};
-const context = () =>
-  ({
-    request: () => ({id: "ptc", attemptCompletedSignal: new AbortController().signal}),
-  }) as unknown as Context;
+const context = () => testContext("ptc");
 
 void test("tool search loads permitted schemas, resets between runs, and journals ranking", async (t) => {
   const a = agent({

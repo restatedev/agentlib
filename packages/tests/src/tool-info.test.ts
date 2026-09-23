@@ -38,7 +38,7 @@ void test("tool descriptions expose selected parameters without changing executi
         return {
           type: "tool_calls",
           calls: [
-            {id: "call-1", name: "closeTicket", input: {ticketId: "T-42", reason: "Resolved"}},
+            {id: "call-1", name: "closeTicket", input: {ticketId: " T-42 ", reason: "Resolved"}},
           ],
         };
       }

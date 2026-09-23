@@ -1,7 +1,6 @@
-// Ported from the replit-final PTC regression suite.
+// Program tool lifecycle: cancellation, cleanup, and replay.
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
 import {
   allSettled,
   channel,
@@ -12,12 +11,9 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {Guest, ProgramError} from "../../core/src/ptc/guest.js";
 import {executeProgram} from "../../core/src/ptc/runtime.js";
+import {testContext} from "./helpers.js";
 
-function context(): Context {
-  return {
-    request: () => ({attemptCompletedSignal: new AbortController().signal}),
-  } as unknown as Context;
-}
+const context = () => testContext("ptc-lifecycle");
 
 void test("interrupting a program joins every child and is never caught by guest code", async () => {
   const stopped: string[] = [];

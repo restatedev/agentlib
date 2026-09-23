@@ -15,10 +15,8 @@ import {
 } from "@restate-agents/core";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
-const ctx = () =>
-  ({
-    request: () => ({id: "test", attemptCompletedSignal: new AbortController().signal}),
-  }) as unknown as Context;
+import {testContext} from "./helpers.js";
+const ctx = () => testContext();
 const done: ModelResponse = {type: "final", text: "done"};
 const call = (name: string, id = name, input = {}) => ({id, name, input});
 const batch = (...calls: ReturnType<typeof call>[]): ModelResponse => ({type: "tool_calls", calls});

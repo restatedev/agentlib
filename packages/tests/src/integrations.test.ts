@@ -92,7 +92,7 @@ void test("Restate discovery filters permissions, rewrites nested refs, and snap
   assert.equal(requests, 1);
 });
 
-void test("web search bounds results, forwards cancellation, and replays without HTTP", async () => {
+void test("web search bounds results, drops malformed items, and replays without HTTP", async () => {
   let requests = 0;
   const search = webSearch({
     apiKey: "private-key",

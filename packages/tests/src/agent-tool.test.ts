@@ -6,12 +6,9 @@ import {channel, execute, gen, type Channel} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {agent, agentTool, tool, type Message, type ModelResponse} from "@restate-agents/core";
 import {runHandler} from "./replay-harness.mjs";
+import {testContext} from "./helpers.js";
 
-function context(): Context {
-  return {
-    request: () => ({id: "agent-tool", attemptCompletedSignal: new AbortController().signal}),
-  } as unknown as Context;
-}
+const context = () => testContext("agent-tool");
 
 const delegate = (id: string, task: string): ModelResponse => ({
   type: "tool_calls",
@@ -128,14 +125,19 @@ void test("concurrent sub-agents run under distinct names", async () => {
 
 void test("interrupting the parent cancels a running sub-agent", async () => {
   let interrupt!: Channel<string>;
+  let unwound = false;
   const researcher = agent({
     tools: {
       wait: tool({
         description: "fixture",
         input: z.object({}),
         *execute() {
-          yield* interrupt.send("stop now");
-          return yield* channel<null>().receive;
+          try {
+            yield* interrupt.send("stop now");
+            return yield* channel<null>().receive;
+          } finally {
+            unwound = true;
+          }
         },
       }),
     },
@@ -158,6 +160,8 @@ void test("interrupting the parent cancels a running sub-agent", async () => {
   );
   assert.equal(result.status, "interrupted");
   assert.deepEqual(toolResults(result.messages), [{status: "cancelled", message: "stop now"}]);
+  // The sub-agent's own tool was interrupted, not left running.
+  assert.equal(unwound, true);
 });
 
 void test("a sub-agent's model calls are journaled and not repeated on replay", async () => {

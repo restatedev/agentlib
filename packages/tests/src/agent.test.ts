@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
 import {CancelledError} from "@restatedev/restate-sdk";
 import {
   all,
@@ -14,6 +13,8 @@ import {
 import {z} from "zod";
 import {
   agent,
+  AgentLimitError,
+  summarizeConversation,
   tool,
   ToolError,
   ModelProtocolError,
@@ -23,13 +24,9 @@ import {
   type ModelResponse,
   type ToolContext,
 } from "@restate-agents/core";
+import {testContext} from "./helpers.js";
 
-// Real coroutine scheduler; these tests need no transport or live Restate server.
-function context(): Context {
-  return {
-    request: () => ({id: "test-run", attemptCompletedSignal: new AbortController().signal}),
-  } as unknown as Context;
-}
+const context = () => testContext("test-run");
 
 const call = (id: string, name: string, input = {}): ModelResponse => ({
   type: "tool_calls",
@@ -418,4 +415,49 @@ void test("invalid configuration and empty input fail early", async () => {
   for (const maxSteps of [0, -1, 1.5, Infinity])
     assert.throws(() => agent({model: scripted(final), maxSteps}), /maxSteps/);
   await assert.rejects(execute(context(), agent({model: scripted(final)}).run(" ")), /nonempty/);
+});
+
+void test("maxOutputChars bounds tool output for the model and fails an oversized answer", async () => {
+  const a = agent({
+    maxOutputChars: 20,
+    tools: {
+      big: tool({
+        description: "Big",
+        input: z.object({}),
+        *execute() {
+          return "x".repeat(100);
+        },
+      }),
+    },
+    *model(request) {
+      if (request.step === 1) return call("b", "big");
+      const last = request.messages.at(-1);
+      assert.deepEqual(last?.role === "tool" && last.result, {
+        status: "error",
+        code: "output_limit",
+        message: "Tool output exceeds maxOutputChars",
+      });
+      return {type: "final", text: "y".repeat(10)};
+    },
+  });
+  assert.equal((await execute(context(), a.run("Go"))).status, "completed");
+  const verbose = agent({
+    maxOutputChars: 20,
+    model: scripted({type: "final", text: "z".repeat(21)}),
+  });
+  await assert.rejects(execute(context(), verbose.run("Go")), AgentLimitError);
+});
+
+void test("conversation summaries must be text, not tool calls", async () => {
+  await assert.rejects(
+    execute(
+      context(),
+      summarizeConversation(scripted(call("t", "tool")), {
+        messages: [{role: "user", content: "Hi"}],
+        through: 1,
+        baseThrough: 0,
+      }),
+    ),
+    /must not call tools/,
+  );
 });
