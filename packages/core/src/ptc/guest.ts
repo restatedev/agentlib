@@ -30,8 +30,17 @@ export type GuestLimits = {
   maxJobsPerDrain?: number;
   maxToolCalls?: number;
 };
-export const MAX_SOURCE_LENGTH = 64_000;
-export const MAX_RESULT_LENGTH = 64_000;
+const MAX_SOURCE_LENGTH = 64_000;
+const MAX_RESULT_LENGTH = 64_000;
+
+/** Defaults applied and validated, so a bad limit fails when a program tool is defined. */
+export function guestLimits(limits: GuestLimits = {}): Required<GuestLimits> {
+  return {
+    maxInterruptChecks: positiveInteger(limits.maxInterruptChecks ?? 10_000, "maxInterruptChecks"),
+    maxJobsPerDrain: positiveInteger(limits.maxJobsPerDrain ?? 10_000, "maxJobsPerDrain"),
+    maxToolCalls: positiveInteger(limits.maxToolCalls ?? 128, "maxToolCalls"),
+  };
+}
 
 export class Guest {
   private readonly rt: QuickJSRuntime;
@@ -46,12 +55,8 @@ export class Guest {
   constructor(source: string, toolNames: string[], limits: GuestLimits = {}) {
     if (source.length > MAX_SOURCE_LENGTH)
       throw new ProgramError("Program source exceeds 64,000 characters");
-    this.maxJobsPerDrain = positiveInteger(limits.maxJobsPerDrain ?? 10_000, "maxJobsPerDrain");
-    const maxInterruptChecks = positiveInteger(
-      limits.maxInterruptChecks ?? 10_000,
-      "maxInterruptChecks",
-    );
-    const maxToolCalls = positiveInteger(limits.maxToolCalls ?? 128, "maxToolCalls");
+    const {maxInterruptChecks, maxJobsPerDrain, maxToolCalls} = guestLimits(limits);
+    this.maxJobsPerDrain = maxJobsPerDrain;
     this.rt = engine.newRuntime();
     this.rt.setMemoryLimit(32 * 1024 * 1024);
     this.rt.setMaxStackSize(512 * 1024);

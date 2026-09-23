@@ -76,7 +76,7 @@ function callArgFor(
   handler: HandlerDescriptor,
   value: JsonValue | undefined,
 ): JsonValue | undefined {
-  if (handler._inputSerde !== undefined) return value ?? undefined;
+  if (handler._inputSerde !== undefined) return value;
   return isNullishOrEmptyObject(value) ? undefined : value;
 }
 

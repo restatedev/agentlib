@@ -1,5 +1,6 @@
 import {sleep} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
+import {ToolDenied} from "./errors.js";
 import {tool} from "./tool.js";
 
 export function sleepTool(options: {background?: boolean; maxMilliseconds?: number} = {}) {
@@ -25,8 +26,10 @@ export function humanApprovalTool() {
       "Ask a human and wait for their decision. A denial does not grant permission to proceed.",
     input: z.object({question: z.string().min(1)}),
     background: true,
-    needsApproval: true,
-    *execute() {
+    *execute(input, context) {
+      // Approve here rather than with needsApproval, so the request carries the question.
+      if (!(yield* context.approve(input, input.question)))
+        throw new ToolDenied("Human approval denied");
       return {approved: true};
     },
   });

@@ -102,11 +102,14 @@ void test("web search bounds results, forwards cancellation, and replays without
       assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer private-key");
       return new Response(
         JSON.stringify({
-          results: Array.from({length: 8}, () => ({
-            title: "source",
-            url: "https://example.test/source",
-            content: "x".repeat(5000),
-          })),
+          results: [
+            {title: "broken", url: "not a url", content: "x"},
+            ...Array.from({length: 8}, () => ({
+              title: "source",
+              url: "https://example.test/source",
+              content: "x".repeat(5000),
+            })),
+          ],
         }),
         {headers: {"Content-Type": "application/json"}},
       );
@@ -127,6 +130,8 @@ void test("web search bounds results, forwards cancellation, and replays without
   const first = await runHandler(handler);
   const result = first.output.messages.find((m: {role: string}) => m.role === "tool").result.output;
   assert.equal(result.length, 5);
+  // The malformed item is dropped instead of failing the search.
+  assert.ok(result.every((item: {title: string}) => item.title === "source"));
   assert.equal(result[0].content.length, 4000);
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);

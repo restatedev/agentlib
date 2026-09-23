@@ -197,10 +197,13 @@ class AgentRun<C, O> {
   }
 
   private *plan(messages: Message[]): Operation<ModelResponse> {
-    const {instructions} = this.active;
+    const {active} = this;
     const request = {
+      // Called as a method, so an instructions function can use `this`.
       instructions:
-        typeof instructions === "function" ? yield* instructions(this.context) : instructions,
+        typeof active.instructions === "function"
+          ? yield* active.instructions(this.context)
+          : active.instructions,
       outputSchema: this.config.outputSchema,
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,

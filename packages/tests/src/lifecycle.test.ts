@@ -8,6 +8,7 @@ import {
   asyncTool,
   cancelOperationTool,
   GuardrailError,
+  humanApprovalTool,
   tool,
   ToolError,
   type ModelResponse,
@@ -641,3 +642,37 @@ for (const failure of [new Error("source failed"), null, undefined]) {
     assert.equal(modelCleaned, true);
   });
 }
+
+void test("humanApprovalTool puts the model's question on the approval request", async () => {
+  let step = 0;
+  const questions: (string | undefined)[] = [];
+  const a = agent({
+    tools: {ask: humanApprovalTool()},
+    *onHumanApproval(request) {
+      questions.push(request.question);
+      return false;
+    },
+    *model() {
+      if (++step === 1) return batch(call("ask", "ask", {question: "Refund $40?"}));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status, "completed");
+  assert.match(JSON.stringify(result.messages), /background-tool-result.*denied/);
+  assert.deepEqual(questions, ["Refund $40?"]);
+});
+
+void test("an instructions function is called as a method", async () => {
+  const definition = {
+    tone: "brief",
+    *instructions(this: {tone: string}) {
+      return `Be ${this.tone}.`;
+    },
+    *model(req: {instructions?: string}): Generator<never, ModelResponse> {
+      assert.equal(req.instructions, "Be brief.");
+      return done;
+    },
+  };
+  assert.equal((await r.execute(ctx(), agent(definition).run("go"))).status, "completed");
+});

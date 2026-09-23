@@ -296,3 +296,7 @@ void test("steering hands a still-running program to the background instead of w
   assert.equal(cleaned, true);
   assert.equal(step, 3);
 });
+
+void test("invalid program limits fail when the tool is defined", () => {
+  assert.throws(() => programTool({limits: {maxToolCalls: 0}}), /maxToolCalls/);
+});

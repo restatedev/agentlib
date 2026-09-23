@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {ToolError} from "./errors.js";
-import {ProgramError, type GuestLimits, type Json} from "./ptc/guest.js";
+import {guestLimits, ProgramError, type GuestLimits, type Json} from "./ptc/guest.js";
 import {executeProgram} from "./ptc/runtime.js";
 import {tool} from "./tool.js";
 
@@ -10,6 +10,7 @@ function isObject(value: Json): value is {[key: string]: Json} {
 
 /** QuickJS orchestrates the same permitted, policy-checked tools as direct calls. */
 export function programTool(options: {tools?: string[]; limits?: GuestLimits} = {}) {
+  const limits = guestLimits(options.limits);
   const program = tool({
     description:
       "Run JavaScript: async tools => { return await tools.name({...}); }. Use exactly one input object per tool. Supports Promise.all/any/race/allSettled. No network, filesystem, process, timers or random. Return compact JSON; tool errors reject. Search for unfamiliar tools before writing code.",
@@ -41,7 +42,7 @@ export function programTool(options: {tools?: string[]; limits?: GuestLimits} = 
               }
             },
           },
-          options.limits,
+          limits,
         );
       } catch (error) {
         if (error instanceof ProgramError) throw new ToolError(error.message, "program_error");

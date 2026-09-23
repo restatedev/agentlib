@@ -2,7 +2,6 @@
 import MiniSearch from "minisearch";
 import type {ToolManifest} from "./types.js";
 
-export const TOOL_SEARCH_NAME = "searchTools";
 const RESULT_LIMIT = 5;
 
 function words(value: string): string {
@@ -30,7 +29,8 @@ function parameterNames(schema: unknown): string[] {
   return result;
 }
 
-/** Ephemeral, permission-filtered catalog. Only search selections are journaled. */
+/** Ephemeral, permission-filtered catalog; the caller leaves search tools out.
+ * Only search selections are journaled. */
 export function createToolSearch(catalog: ToolManifest[], providers: ReadonlyMap<string, string>) {
   const byName = new Map(catalog.map((tool) => [tool.name, tool]));
   let index: MiniSearch | undefined;
@@ -49,15 +49,13 @@ export function createToolSearch(catalog: ToolManifest[], providers: ReadonlyMap
           },
         });
         index.addAll(
-          catalog
-            .filter((tool) => tool.name !== TOOL_SEARCH_NAME)
-            .map((tool) => ({
-              name: tool.name,
-              toolName: words(tool.name),
-              provider: words(providers.get(tool.name) ?? "builtin"),
-              description: words(tool.description.slice(0, 16_000)),
-              parameters: words(parameterNames(tool.inputSchema).join(" ").slice(0, 8_000)),
-            })),
+          catalog.map((tool) => ({
+            name: tool.name,
+            toolName: words(tool.name),
+            provider: words(providers.get(tool.name) ?? "builtin"),
+            description: words(tool.description.slice(0, 16_000)),
+            parameters: words(parameterNames(tool.inputSchema).join(" ").slice(0, 8_000)),
+          })),
         );
       }
       const normalized = words(query.trim());
@@ -72,16 +70,13 @@ export function createToolSearch(catalog: ToolManifest[], providers: ReadonlyMap
       });
       const exact = catalog.find((tool) => tool.name.toLowerCase() === query.trim().toLowerCase());
       return [
-        ...new Set([
-          ...(exact && exact.name !== TOOL_SEARCH_NAME ? [exact.name] : []),
-          ...matches.map((match) => String(match.id)),
-        ]),
+        ...new Set([...(exact ? [exact.name] : []), ...matches.map((match) => String(match.id))]),
       ].slice(0, RESULT_LIMIT);
     },
     load(names: string[]) {
       return names.flatMap((name) => {
         const tool = byName.get(name);
-        if (!tool || name === TOOL_SEARCH_NAME) return [];
+        if (!tool) return [];
         loaded.add(name);
         return [{name, description: tool.description.slice(0, 400)}];
       });
