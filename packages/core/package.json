@@ -38,7 +38,7 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
+    "compile": "rm -rf dist && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
