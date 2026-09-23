@@ -35,6 +35,12 @@ A change of active agent definition within a run that preserves its history,
 context, root policies, and remaining budgets.
 _Avoid_: New run, child run
 
+**Sub-agent**:
+An agent that a tool call runs as a separate run inside the same invocation, with
+a fresh conversation and the parent's context. Its answer becomes the tool result,
+and interrupting the parent interrupts it.
+_Avoid_: Handoff
+
 **Conversation**:
 The accumulated model context across runs, including user messages, assistant
 messages, tool exchanges, and runtime observations.
@@ -81,6 +87,12 @@ _Avoid_: Run authorization
 A final value that has passed the run's output validation and policies. Candidate
 answers and streamed model chunks have not yet earned this status.
 _Avoid_: Model response, token stream
+
+**Guardrail**:
+A hook that allows or denies a run, step, or tool call before it proceeds
+(`beforeRun`, `beforeStep`, `beforeTool`, a tool's `before`), or post-processes a
+tool's output (`afterTool`).
+_Avoid_: Policy, retry policy
 
 **Output policy**:
 A rule that accepts, replaces, or rejects candidate output after inspecting the

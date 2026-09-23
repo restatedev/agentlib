@@ -7,8 +7,8 @@ starting the work over.
 
 - **Survive the real world.** Model calls, tool results, and approvals are
   journaled; completed work is reused when an invocation resumes.
-- **Stay in control while it runs.** Steer or interrupt an agent, enforce tool
-  policies, and pause for human approval.
+- **Stay in control while it runs.** Steer or interrupt an agent, check tool
+  calls with guardrails, and pause for human approval.
 - **Compose agents like services.** Call other handlers through durable RPC,
   delegate to sub-agents, or hand a conversation to a specialist.
 - **Bring the tools you need.** Use async functions, Restate services, MCP,
@@ -53,19 +53,22 @@ export const hello = restate.service({
 });
 ```
 
-Each request starts a fresh run. Add a [conversation](packages/examples/src/lessons/03_conversation.ts)
-when the agent needs to remember earlier turns, or add
+This is lesson 01 without its input schema. Each request starts with no
+conversation history. Add a [conversation](packages/examples/src/lessons/03_conversation.ts)
+when the agent needs to remember earlier requests, or add
 [tools](packages/examples/src/lessons/02_tools.ts) when it needs to act.
 
 ## Try it
 
 The [numbered tutorial](packages/examples/README.md) starts with this smallest
 agent and builds toward approvals, multi-agent workflows, and a support session
-with live controls. Start a Restate server, then run the example endpoint:
+with live controls. Start a Restate server, for example with
+`pnpm dlx @restatedev/restate-server`, then run the example endpoint:
 
 ```sh
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
+# Optional: export AGENT_MODEL=...  Lessons that need other keys say so.
 pnpm dev
 ```
 
@@ -76,8 +79,8 @@ pnpm dlx @restatedev/restate deployments register http://localhost:9080
 curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
 ```
 
-The same service also has a typed TypeScript client. From a program in this
-workspace:
+TypeScript callers can use Restate's typed client instead, as the
+[example integration tests](packages/tests/src/examples.integration.ts) do:
 
 ```ts
 import {connect} from "@restatedev/restate-sdk-clients";
@@ -89,25 +92,23 @@ const answer = await connect({url: "http://localhost:8080"})
 console.log(answer);
 ```
 
-After updating the SDK, restart the endpoint and rediscover it so Restate sees
-changed services.
+`pnpm dev` compiles `packages/core` once at startup. After changing it, restart
+`pnpm dev` and run the `register` command again so Restate sees changed services.
 
 ## What you can build
 
 - **Support that remembers and adapts.** Keep conversation history in a keyed
-  object, and steer or interrupt an active turn.
+  object, and steer or interrupt an active run.
   [See the support session](packages/examples/src/lessons/09_support_session.ts).
 - **Actions with a human in the loop.** Pause a tool for approval or check a
   budget before it runs.
   [See human approval](packages/examples/src/lessons/06_human_approval.ts) and
-  [tool policy](packages/examples/src/lessons/13_tool_guardrail.ts).
+  [a tool guardrail](packages/examples/src/lessons/13_tool_guardrail.ts).
 - **Research across workers.** Fan out typed Restate RPCs and synthesize their
   results. [See the research report](packages/examples/src/lessons/08_research_report.ts).
-- **Coding in a sandbox.** Give an agent sandbox operations as tools inside a
-  durable handler. [See the coding agent](packages/examples/src/lessons/11_coding_agent.ts).
-
-The [tutorial](packages/examples/README.md) develops these patterns one lesson
-at a time, from a single call through multi-agent workflows.
+- **Coding in a Modal sandbox.** Give an agent file and shell tools backed by a
+  [Modal](https://modal.com) sandbox (needs Modal credentials).
+  [See the coding agent](packages/examples/src/lessons/11_coding_agent.ts).
 
 ## Why it keeps working
 
@@ -116,7 +117,7 @@ crash or redeploy, an invocation replays completed steps and continues from the
 next one. Your agent does not have to reconstruct its place in a workflow or
 repeat a completed model call.
 
-- **Retries are explicit.** Set policies on model calls and tools; a terminal
+- **Retries are explicit.** Set retry policies on model calls and tools; a terminal
   tool failure becomes a result the agent can handle.
 - **Cancellation propagates.** An interrupted run cancels unfinished tools and
   child invocations.
@@ -127,24 +128,36 @@ repeat a completed model call.
 
 ## Capabilities
 
-- **Control:** Durable steering and interruption signals, human approval, and
-  run and tool guardrails.
-- **Compose:** Sub-agents as tools, conversation handoffs, and typed RPC to
-  other Restate services.
-- **Extend:** Async and service-backed tools, background calls, deferred tool
-  search, MCP, web search, and sandboxed programmatic tool calling.
-- **Integrate:** Restate-backed conversations, Zod-validated output, OpenAI and
-  [AI SDK](https://ai-sdk.dev) model adapters, a model gateway, and OpenTelemetry
-  tracing.
+| Capability                   | API                                                                        | Lesson                                                      |
+| ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Tools with journaled results | `asyncTool`, `tool`                                                        | [02](packages/examples/src/lessons/02_tools.ts)             |
+| Conversation history         | `run(input, {messages})`, `LazyStateConversation`                          | [03](packages/examples/src/lessons/03_conversation.ts), 09  |
+| Typed output                 | `agent({output})`                                                          | [04](packages/examples/src/lessons/04_structured_output.ts) |
+| Human approval               | `needsApproval`, `onApproval`, `humanApprovalTool`                         | [06](packages/examples/src/lessons/06_human_approval.ts)    |
+| Steering and interruption    | `run(input, {steeringSignal, interruptSignal})`                            | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Handoffs                     | `handoff`                                                                  | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Sub-agents as tools          | `agentTool`                                                                | —                                                           |
+| Restate services as tools    | `serviceTool`, `handlerTool`, `restateTools` (`/discovery`)                | [10](packages/examples/src/lessons/10_service_tool.ts)      |
+| Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Tool search                  | `searchToolsTool`, `deferred: true`                                        | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| MCP                          | `mcpTools` (`/mcp`)                                                        | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
+| Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
+| Models                       | `openAIModel` (`/openai`), `aiModel` and `modelGateway` (`/provider`)      | [shared.ts](packages/examples/src/shared.ts)                |
 
-The current entry point targets Restate's generator SDK. See
-[PROMISE_SDK.md](PROMISE_SDK.md) for the promise SDK design.
+Subpaths are imports from `@restate-agents/core`, such as
+`@restate-agents/core/mcp`. `aiModel` accepts an OpenTelemetry `tracer`.
+
+Agents run inside Restate's generator SDK. A promise-based entry point existed
+earlier and was removed; [PROMISE_SDK.md](PROMISE_SDK.md) explains how to bring
+it back.
 
 ## Workspace
 
 | Package                                         | Purpose                                                              |
 | ----------------------------------------------- | -------------------------------------------------------------------- |
-| [`@restate-agents/core`](packages/core)         | The agent SDK, plus optional model, MCP, PTC, and discovery adapters |
+| [`@restate-agents/core`](packages/core)         | The agent SDK, plus the optional subpaths listed above               |
 | [`@restate-agents/examples`](packages/examples) | Numbered tutorials, from a first run to multi-agent workflows        |
 | [`@restate-agents/tests`](packages/tests)       | Unit, replay, and type tests, plus integration tests against Restate |
 
