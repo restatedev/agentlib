@@ -30,7 +30,9 @@ const route = agent({
 const specialists = {billing: agent({...}), account: agent({...}), product: agent({...})};
 
 function* (question) {
-  const {specialist} = completedOutput(yield* route.run(question));
+  const routed = yield* route.run(question);
+  if (routed.status !== "completed") throw new TerminalError(`Router ${routed.status}`);
+  const {specialist} = routed.output;
   return replyText(yield* specialists[specialist].run(question));
 }
 ```
@@ -42,15 +44,15 @@ journal entries and approval signals stay apart.
 
 ```ts
 for (let i = 1; i <= 3; i++) {
-  const {code: next} = completedOutput(
-    yield* writer.run(JSON.stringify({task, previousCode: code, feedback}), {name: `write-${i}`}),
-  );
-  code = next;
-  const review = completedOutput(
-    yield* reviewer.run(JSON.stringify({task, code}), {name: `review-${i}`}),
-  );
-  if (review.approved) return code;
-  feedback = review.feedback;
+  const draft = yield* writer.run(JSON.stringify({task, previousCode: code, feedback}), {
+    name: `write-${i}`,
+  });
+  if (draft.status !== "completed") throw new TerminalError(`Writer ${draft.status}`);
+  code = draft.output.code;
+  const review = yield* reviewer.run(JSON.stringify({task, code}), {name: `review-${i}`});
+  if (review.status !== "completed") throw new TerminalError(`Reviewer ${review.status}`);
+  if (review.output.approved) return code;
+  feedback = review.output.feedback;
 }
 ```
 
@@ -58,7 +60,9 @@ for (let i = 1; i <= 3; i++) {
 
 ```ts
 function* answerWith(name: string, candidate: Agent<undefined>, question: string) {
-  return completedOutput(yield* candidate.run(question, {name}));
+  const result = yield* candidate.run(question, {name});
+  if (result.status !== "completed") throw new TerminalError(`${name} ${result.status}`);
+  return result.output;
 }
 
 const tasks = Object.entries(candidates).map(([name, c]) =>
@@ -83,19 +87,26 @@ export const researchWorker = restate.service({
   name: "ResearchWorker",
   handlers: {
     *research({question, sources}: WorkerInput) {
-      return completedOutput(
-        yield* researcher.run(question, {context: {sources, readSourceIds: new Set()}}),
-      );
+      const result = yield* researcher.run(question, {
+        context: {sources, readSourceIds: new Set()},
+      });
+      if (result.status !== "completed") throw new TerminalError(`Research ${result.status}`);
+      return result.output;
     },
   },
 });
 
 // in ResearchReport.generate:
-const plan = completedOutput(yield* planner.run(topic));
+const plan = yield* planner.run(topic);
+if (plan.status !== "completed") throw new TerminalError(`Planner ${plan.status}`);
 const findings = yield* restate.all(
-  plan.questions.map((question) => restate.client(researchWorker).research({question, sources})),
+  plan.output.questions.map((question) =>
+    restate.client(researchWorker).research({question, sources}),
+  ),
 );
-return completedOutput(yield* writer.run(JSON.stringify({topic, findings})));
+const report = yield* writer.run(JSON.stringify({topic, findings}));
+if (report.status !== "completed") throw new TerminalError(`Writer ${report.status}`);
+return report.output;
 ```
 
 ## Agents exchanging messages

@@ -44,11 +44,10 @@ type RunResult<O> = {steps: number; messages: Message[]} & (
 
 A stopped or interrupted run still gets a short summary in `output`, made by
 a tool-free model call (`finalize`, which defaults to the agent's model; pass
-`finalize: false` to skip it). The lessons use two helpers; copy them into
-your app:
+`finalize: false` to skip it). When a person reads the answer, that summary
+is a fine reply. The lessons use a small helper for it; copy it into your app:
 
 ```ts
-import {TerminalError} from "@restatedev/restate-sdk";
 import type {RunResult} from "@restate-agents/core";
 
 /** The answer, or a short explanation when the run ended without one. */
@@ -56,17 +55,17 @@ export function replyText(result: RunResult): string {
   if (result.status === "completed") return result.output;
   return result.output ?? `Agent ${result.status}: ${result.reason}`;
 }
-
-/** A stopped or interrupted run must not silently become a successful stage. */
-export function completedOutput<T>(result: RunResult<T>): T {
-  if (result.status !== "completed")
-    throw new TerminalError(`Agent ${result.status}: ${result.reason}`);
-  return result.output;
-}
 ```
 
-Use `replyText` when a person reads the answer, and `completedOutput` when
-the output feeds the next step of a workflow.
+When the output feeds the next step of a workflow, a stopped or interrupted
+run must not silently become a successful stage. Check the status and throw
+a `TerminalError` (from `@restatedev/restate-sdk`):
+
+```ts
+const result = yield* triage.run(message);
+if (result.status !== "completed") throw new TerminalError(`Triage ${result.status}: ${result.reason}`);
+return result.output; // typed by the output schema
+```
 
 ## Typed output
 
@@ -86,7 +85,9 @@ const triage = agent({
 });
 
 // in a handler with output: classification
-return completedOutput(yield* triage.run(message));
+const result = yield* triage.run(message);
+if (result.status !== "completed") throw new TerminalError(`Triage ${result.status}: ${result.reason}`);
+return result.output;
 ```
 
 Typed output is how agents plug into ordinary code: a router returns
