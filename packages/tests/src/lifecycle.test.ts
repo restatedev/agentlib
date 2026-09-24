@@ -9,6 +9,7 @@ import {
   cancelOperationTool,
   GuardrailError,
   humanApprovalTool,
+  RunFailedError,
   sleepTool,
   tool,
   ToolError,
@@ -727,6 +728,25 @@ void test("a spent tool-call budget stops the run with a summary instead of fail
   assert.equal(executed, 2);
   // The rejected batch never entered history, so it stays protocol-complete.
   assert.equal(JSON.stringify(result.messages).includes('"c"'), false);
+});
+
+void test("a tool fails the whole run with RunFailedError", async () => {
+  const a = agent({
+    tools: {
+      stale: tool({
+        ...base,
+        *execute() {
+          throw new RunFailedError("the turn is no longer active");
+        },
+      }),
+    },
+    *model() {
+      return batch(call("stale"));
+    },
+  });
+  await assert.rejects(r.execute(ctx(), a.run("go")), {
+    message: "the turn is no longer active",
+  });
 });
 
 void test("a failing policy blocks the call and is reported as a guardrail failure", async () => {

@@ -69,7 +69,8 @@ export type ApprovalHandler<Context = unknown> = (
 /** What a run is doing, in journal order. Replay delivers the same sequence again. */
 export type ProgressEvent =
   | {type: "step"; step: number}
-  | {type: "tool-start"; callId: string; name: string; input: JsonValue}
+  /** `info` is the tool's static display information, when it declares one. */
+  | {type: "tool-start"; callId: string; name: string; input: JsonValue; info?: ToolInfo}
   | {type: "tool-info"; callId: string; info: ToolInfo}
   | {type: "tool-progress"; callId: string; value: JsonValue}
   /** `info` is the call's final display information, as set by `describe`. */
@@ -108,6 +109,8 @@ export type Tool<Context = unknown> = {
   readonly background?: boolean;
   readonly deferred?: boolean;
   readonly provider?: string;
+  /** Static display information, from a `describe` that does not depend on input. */
+  readonly info?: ToolInfo;
   readonly search?: true;
   /** A program runs other tools and may wait for minutes. When steering arrives,
    * the run moves it to background work instead of waiting for it. */

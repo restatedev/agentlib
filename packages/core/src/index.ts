@@ -9,6 +9,7 @@ export {
   ToolError,
   GuardrailError,
   AgentLimitError,
+  RunFailedError,
   RunInputError,
 } from "./errors.js";
 export type {

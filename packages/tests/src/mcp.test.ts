@@ -20,6 +20,7 @@ function fixture(
     toolError?: boolean;
     badSchema?: boolean;
     unavailable?: boolean;
+    echo?: "result" | "error";
   } = {},
 ) {
   const seen: Seen[] = [];
@@ -54,6 +55,8 @@ function fixture(
       return new Response("Session not found", {status: 404});
     if (config.unavailable && message.method === "tools/call")
       return new Response("Unavailable", {status: 503});
+    if (config.echo === "error" && message.method === "tools/call")
+      throw new Error(`upstream rejected ${headers.get("authorization")}`);
     let result: Record<string, unknown>;
     const out: Record<string, string> = {"Content-Type": "application/json"};
     if (message.method === "initialize") {
@@ -95,9 +98,11 @@ function fixture(
         ],
       };
     else if (message.method === "tools/call") {
-      result = {
-        content: [{type: "text", text: `found ${message.params.arguments.id}`}],
-      };
+      const found =
+        config.echo === "result"
+          ? `found with ${headers.get("authorization")}`
+          : `found ${message.params.arguments.id}`;
+      result = {content: [{type: "text", text: found}]};
       if (config.toolError) result.isError = true;
       else result.structuredContent = {found: message.params.arguments.id};
     } else return new Response("Unknown method", {status: 400});
@@ -128,6 +133,46 @@ void test("MCP skips a tool whose input schema is unsupported and keeps the rest
     warnings: ["Ignored MCP tool with an unsupported input schema: remote_broken"],
   });
 });
+
+for (const echo of ["result", "error"] as const) {
+  void test(`MCP redacts a credential the server echoes in its ${echo}`, async () => {
+    const mock = fixture("stateless", {echo});
+    const {output, journal} = await runHandler((ctx: Context) =>
+      r.execute(
+        ctx,
+        (function* () {
+          const mcp = yield* mcpTools({
+            url: "https://fixture.test/mcp",
+            namespace: "remote",
+            protocol: "stateless",
+            fetch: mock.fetch,
+            retry: {maxAttempts: 1},
+            deferred: false,
+            *token() {
+              return "secret-token";
+            },
+          });
+          const a = agent({
+            tools: mcp.tools,
+            *model(req): r.Operation<ModelResponse> {
+              if (!req.messages.some((m) => m.role === "tool"))
+                return {
+                  type: "tool_calls",
+                  calls: [{id: "lookup-1", name: "remote_lookup", input: {id: "42"}}],
+                };
+              return {type: "final", text: "done"};
+            },
+          });
+          return (yield* a.run("find it")).messages;
+        })(),
+      ),
+    );
+    const recorded = journal.map((frame) => Buffer.from(frame).toString("utf8")).join("");
+    assert.ok(!recorded.includes("secret-token"), "the journal holds no credential");
+    assert.ok(!JSON.stringify(output).includes("secret-token"));
+    assert.match(JSON.stringify(output), /\[redacted\]/);
+  });
+}
 
 void test("MCP tool calls use the configured retry policy", async () => {
   const mock = fixture("stateless", {unavailable: true});

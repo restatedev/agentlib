@@ -64,6 +64,10 @@ export function buildTool<Data, Context = unknown>(
     background: spec.background,
     deferred: spec.deferred,
     provider: spec.provider,
+    // A static label is known before the call runs, so it can name the start too.
+    ...(lifecycle.describe && typeof lifecycle.describe !== "function"
+      ? {info: lifecycle.describe}
+      : {}),
     *execute(input, context): Operation<JsonValue> {
       const parsed = spec.parseInput(input);
       if (!parsed.ok) throw new ToolError(`Invalid tool input: ${parsed.error}`, "invalid_input");

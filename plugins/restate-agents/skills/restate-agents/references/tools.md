@@ -36,6 +36,8 @@ The result is journaled once `execute` succeeds. It must be JSON: cast
 - A `TerminalError` stops retrying. Exhausted retries end the same way.
 - In every one of these cases the model receives
   `{status: "error", code, message}`, and the run continues.
+- To fail the whole run instead, for example when the request it serves is
+  no longer valid, throw `RunFailedError`.
 - Use `retry: {maxAttempts: 1}` for actions that must not repeat, such as
   running a shell command.
 
@@ -145,12 +147,13 @@ const researcher = agent({model, tools: {searchWeb: webSearch()}});
 `mcpTools` also takes `token` (a generator returning a bearer token),
 `protocol: "stateful"` for servers that need sessions, and `retry` for tool
 calls (default three attempts; each call sends an `Idempotency-Key`, but a
-server that ignores it may repeat work). Call `close()` when done with a
-stateful session.
+server that ignores it may repeat work). A credential the server echoes back
+is replaced with `[redacted]` before any result or error is journaled. Call
+`close()` when done with a stateful session.
 
 Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
-`searchToolsTool`, `programTool`) accepts `description` and `describe` to
-replace its model-facing description and its display info.
+`searchToolsTool`, `programTool`, `webSearch`) accepts `description` and
+`describe` to replace its model-facing description and its display info.
 
 ## Large catalogs and advanced tool calling
 

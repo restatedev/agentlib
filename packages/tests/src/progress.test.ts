@@ -46,7 +46,7 @@ void test("a tool call reports start, display info, progress, and its result in 
   );
   assert.deepEqual(events, [
     {type: "step", step: 1},
-    {type: "tool-start", callId: "b", name: "build", input: {}},
+    {type: "tool-start", callId: "b", name: "build", input: {}, info: {name: "Build the project"}},
     {type: "tool-info", callId: "b", info: {name: "Build the project"}},
     {type: "tool-progress", callId: "b", value: {percent: 50}},
     {

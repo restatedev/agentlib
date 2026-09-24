@@ -61,6 +61,16 @@ function permanent(error: unknown): boolean {
   return status >= 400 && status < 500 && ![408, 409, 429].includes(status);
 }
 
+/** Replaces the credential wherever a server echoed it back. */
+function redactText(text: string, token: string | undefined): string {
+  return token ? text.split(token).join("[redacted]") : text;
+}
+function redacted<T>(value: T, token: string | undefined): T {
+  if (!token) return value;
+  const json = JSON.stringify(value);
+  return json?.includes(token) ? JSON.parse(redactText(json, token)) : value;
+}
+
 /** Keeps valid names readable; others get a sanitized prefix and a stable hash. */
 function localToolName(original: string): string {
   if (TOOL_NAME.test(original)) return original;
@@ -131,11 +141,13 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
       const result = yield* restate.run(
         async ({signal}) => {
           try {
-            return {type: "ok" as const, value: await fn(token, signal)};
+            return {type: "ok" as const, value: redacted(await fn(token, signal), token)};
           } catch (error) {
             if (error instanceof UnauthorizedError || error instanceof InsufficientScopeError)
               return {type: "auth" as const};
-            throw permanent(error) ? new TerminalError(String(error)) : error;
+            // A server can echo the credential; it must not reach the journal.
+            const message = redactText(String(error), token);
+            throw permanent(error) ? new TerminalError(message) : new Error(message);
           }
         },
         // Authorization failures return a value and are handled by this loop;
