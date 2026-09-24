@@ -616,30 +616,17 @@ void test("racing fails clearly if neither agent completes", async () => {
 });
 
 void test(
-  "16: a subscriber follows the audit's progress until it is done",
+  "16: a subscriber receives the audit's next progress event",
   {timeout: 30000},
   async () => {
-    const feed = ingress().client(progressFeed, "audit-test");
-    // Nothing is published yet, so this subscriber waits for the first message.
-    const first = feed.subscribe({after: 0});
+    const subscriber = ingress().client(progressFeed, "audit-test").subscribe();
+    // Start the audit only once the subscriber is registered.
+    const feed = env.stateOf(progressFeed, "audit-test");
+    while (!(await feed.get<string[]>("subscribers"))?.length) await delay(50);
     const reply = await ingress()
       .client(inventoryAudit)
       .audit({job: "audit-test", request: "Count stock in Berlin and Oslo."});
     assert.equal(reply, "Oslo has the least stock.");
-    const seen = await first;
-    while (seen.at(-1)?.type !== "done") seen.push(...(await feed.subscribe({after: seen.length})));
-    // Always-replay runs the handler again, but each journaled send reaches the feed once.
-    assert.deepEqual(
-      seen.map((message) => message.type),
-      ["step", "tool-start", "tool-progress", "tool-progress", "tool-end", "step", "done"],
-    );
-    assert.deepEqual(
-      seen.filter((message) => message.type === "tool-progress").map((message) => message.value),
-      [
-        {counted: 1, of: 2},
-        {counted: 2, of: 2},
-      ],
-    );
-    assert.deepEqual(seen.at(-1), {type: "done", reply});
+    assert.deepEqual(await subscriber, {type: "step", step: 1});
   },
 );

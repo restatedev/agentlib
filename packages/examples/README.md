@@ -429,26 +429,13 @@ interrupted. There is no shared mailbox or bespoke agent-to-agent protocol.
 
 ## 16 — Follow an agent's progress
 
-`InventoryAudit` runs an agent whose tool counts several warehouses and reports
-after each one with `context.progress`. The run's `onProgress` handler sends
-every event one way to a `ProgressFeed` object keyed by the job, so the agent
-never waits for the feed. After the run, the service publishes a `done` message
-with the reply.
-
-`ProgressFeed` keeps the messages in order. Its shared `subscribe` handler
-returns the messages after an offset, or waits until the next one is published.
-A client reads from `0`, then from the number of messages it has seen, until it
-receives `done`.
+The agent's `onProgress` handler sends each event to a `ProgressFeed` object.
+Its shared `subscribe` handler waits for the next event.
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit/send" \
-  --json '{"job":"audit-1","request":"Count stock in Berlin, Lisbon, and Oslo, then name the lowest one."}'
-curl --globoff "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" --json '{"after":0}'
+curl --globoff "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" &
+curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit" --json '{"job":"audit-1"}'
 ```
-
-`onProgress` runs before the agent continues, and replay delivers the same
-events again. The sends are journaled, so each event reaches the feed once.
-Wrap any other external effect in `restate.run`.
 
 ## Model configuration
 
