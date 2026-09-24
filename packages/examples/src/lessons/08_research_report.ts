@@ -1,10 +1,11 @@
 // 08: Distribute research across parallel child invocations, then synthesize their findings.
 // Reimplements the orchestrator-worker pattern from restatedev/ai-examples.
 // Source links and the differences are documented in ../../README.md.
+import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, GuardrailError, tool, ToolError} from "@restate-agents/core";
 import {z} from "zod";
-import {completedOutput, exampleModel as model} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const sourceSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
@@ -100,9 +101,12 @@ export const researchWorker = restate.service({
         output: findingSchema,
       },
       function* ({question, sources}) {
-        return completedOutput(
-          yield* researcher.run(question, {context: {sources, readSourceIds: new Set()}}),
-        );
+        const result = yield* researcher.run(question, {
+          context: {sources, readSourceIds: new Set()},
+        });
+        if (result.status !== "completed")
+          throw new TerminalError(`Research ${result.status}: ${result.reason}`);
+        return result.output;
       },
     ),
   },
@@ -123,21 +127,21 @@ export const researchReport = restate.service({
         output: z.string(),
       },
       function* ({topic, sources}) {
-        const plan = completedOutput(
-          yield* planner.run(
-            JSON.stringify({
-              topic,
-              sources: sources.map(({id, title}) => ({id, title})),
-            }),
-          ),
+        const plan = yield* planner.run(
+          JSON.stringify({topic, sources: sources.map(({id, title}) => ({id, title}))}),
         );
+        if (plan.status !== "completed")
+          throw new TerminalError(`Planner ${plan.status}: ${plan.reason}`);
         // Each worker is a separate durable invocation.
         const findings = yield* restate.all(
-          plan.questions.map((question) =>
+          plan.output.questions.map((question) =>
             restate.client(researchWorker).research({question, sources}),
           ),
         );
-        return completedOutput(yield* writer.run(JSON.stringify({topic, findings})));
+        const report = yield* writer.run(JSON.stringify({topic, findings}));
+        if (report.status !== "completed")
+          throw new TerminalError(`Writer ${report.status}: ${report.reason}`);
+        return report.output;
       },
     ),
   },

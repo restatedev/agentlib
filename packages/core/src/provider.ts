@@ -18,6 +18,7 @@ import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
 import {jsonSchema} from "./validation.js";
 import type {Model, ModelChunk, ModelRequest, ModelResponse, ToolCall} from "./types.js";
+import {strictSchema} from "./strict-schema.js";
 
 type GenerateSettings = Parameters<typeof generateText>[0];
 
@@ -91,10 +92,17 @@ function settingsFor(
   signal: AbortSignal,
 ): GenerateSettings {
   const tools: ToolSet = Object.fromEntries(
-    request.tools.map((t) => [
-      t.name,
-      {description: t.description, inputSchema: aiSchema(t.inputSchema), strict: false},
-    ]),
+    request.tools.map((t) => {
+      const strict = strictSchema(t.inputSchema);
+      return [
+        t.name,
+        {
+          description: t.description,
+          inputSchema: aiSchema(strict ?? t.inputSchema),
+          strict: strict !== undefined,
+        },
+      ];
+    }),
   );
   return {
     model: options.model,

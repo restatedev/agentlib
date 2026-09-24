@@ -22,7 +22,8 @@ export const hello = restate.service({
   handlers: {
     ask: restate.schemas({input: z.string().min(1), output: z.string()}, function* (message) {
       const result = yield* assistant.run(message);
-      return replyText(result);
+      if (result.status !== "completed") return result.output ?? result.reason;
+      return result.output;
     }),
   },
 });
@@ -37,7 +38,7 @@ with no history.
 ```ts
 type RunResult<O> = {steps: number; messages: Message[]} & (
   | {status: "completed"; output: O}
-  | {status: "stopped"; reason: "max_steps"; output?: string}
+  | {status: "stopped"; reason: "max_steps" | "max_tool_calls"; output?: string}
   | {status: "interrupted"; reason: string; output?: string}
 );
 ```
@@ -45,16 +46,12 @@ type RunResult<O> = {steps: number; messages: Message[]} & (
 A stopped or interrupted run still gets a short summary in `output`, made by
 a tool-free model call (`finalize`, which defaults to the agent's model; pass
 `finalize: false` to skip it). When a person reads the answer, that summary
-is a fine reply. The lessons use a small helper for it; copy it into your app:
+is a fine reply, with `reason` as the fallback:
 
 ```ts
-import type {RunResult} from "@restate-agents/core";
-
-/** The answer, or a short explanation when the run ended without one. */
-export function replyText(result: RunResult): string {
-  if (result.status === "completed") return result.output;
-  return result.output ?? `Agent ${result.status}: ${result.reason}`;
-}
+const result = yield* assistant.run(message);
+if (result.status !== "completed") return result.output ?? result.reason;
+return result.output;
 ```
 
 When the output feeds the next step of a workflow, a stopped or interrupted
@@ -118,4 +115,6 @@ This makes it the place for trusted data.
 
 `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, and
 `maxOutputTokens` bound a run. `maxSteps` is a loop bound, not a retry
-count. Retries are configured on the model adapter and on each tool.
+count. Using up `maxSteps` or `maxToolCalls` (default 128, counting calls a
+program makes) stops the run with a summary rather than failing it. Retries
+are configured on the model adapter and on each tool.

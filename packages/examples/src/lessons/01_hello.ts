@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const assistant = agent({model});
 
@@ -13,7 +13,8 @@ export const hello = restate.service({
       {input: z.string().min(1).meta({default: "Say hello in one sentence."}), output: z.string()},
       function* (message) {
         const result = yield* assistant.run(message);
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },

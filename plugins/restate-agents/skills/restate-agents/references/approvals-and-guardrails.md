@@ -37,7 +37,8 @@ export const ticketApproval = restate.object({
             restate.state().set("approval", request); // or notify Slack/email via restate.run
           },
         });
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       } finally {
         restate.state().clear("approval"); // never leave a request nobody waits for
       }
@@ -111,6 +112,10 @@ yield* booking.run(question, {context: {hotelId, quotedTotalCents, maxTotalCents
 | `beforeTool(call, ctx)`    | Before every tool call      | deny with `string`/`false`                                          |
 | `afterTool(output, ctx)`   | After every tool call       | the (possibly redacted) output                                      |
 | `afterRun(candidate, ctx)` | On the final result         | nothing to accept, `{output}` to replace, or throw `GuardrailError` |
+
+If `beforeTool` or `afterTool` throws a terminal error, for example because a
+policy model is down, the call is blocked and the model gets an error with
+code `guardrail_failed`. A throwing `afterRun` fails the run.
 
 A hook can also ask a human first: `ctx.approve(call.input, {question,
 details})` waits for the decision. `details` is any JSON value, such as the

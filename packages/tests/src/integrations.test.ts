@@ -95,6 +95,26 @@ void test("Restate discovery filters permissions, rewrites nested refs, and snap
   assert.equal(requests, 1);
 });
 
+void test("web search without an API key uses keyless access", async () => {
+  const search = webSearch({
+    fetch: async (_, init) => {
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get("Authorization"), null);
+      assert.equal(headers.get("X-Tavily-Access-Mode"), "keyless");
+      return Response.json({results: [{title: "t", url: "https://example.test", content: "c"}]});
+    },
+  });
+  const a = agent({
+    tools: {search},
+    *model(req) {
+      if (req.messages.some((m) => m.role === "tool")) return final;
+      return {type: "tool_calls", calls: [{id: "s", name: "search", input: {query: "fact"}}]};
+    },
+  });
+  const {output} = await runHandler((ctx: Context) => r.execute(ctx, a.run("go")));
+  assert.match(JSON.stringify(output.messages), /example\.test/);
+});
+
 void test("web search bounds results, drops malformed items, and replays without HTTP", async () => {
   let requests = 0;
   const search = webSearch({

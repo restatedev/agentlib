@@ -1,8 +1,9 @@
 // 04: Describe the result with a schema so callers receive validated, typed data.
+import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {z} from "zod";
-import {completedOutput, exampleModel as model} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const classificationSchema = z.object({
   category: z.enum(["billing", "technical", "other"]),
@@ -28,7 +29,9 @@ export const ticketTriage = restate.service({
       },
       function* (message) {
         const result = yield* triage.run(message);
-        return completedOutput(result);
+        if (result.status !== "completed")
+          throw new TerminalError(`Triage ${result.status}: ${result.reason}`);
+        return result.output;
       },
     ),
   },

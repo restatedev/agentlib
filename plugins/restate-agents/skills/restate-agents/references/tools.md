@@ -100,7 +100,9 @@ in `finally` (lesson 11):
 function* (task) {
   const sandbox = yield* connect();          // restate.run creates it once
   try {
-    return replyText(yield* coder.run(task, {context: {sandbox}}));
+    const result = yield* coder.run(task, {context: {sandbox}});
+    if (result.status !== "completed") return result.output ?? result.reason;
+    return result.output;
   } finally {
     yield* release(sandbox);                 // restate.run terminates it once
   }
@@ -135,13 +137,20 @@ const docs = yield* mcpTools({
 });
 const result = yield* guide.run(question, {tools: docs.tools});
 
-// Web search through Tavily; results are journaled.
-const researcher = agent({model, tools: {searchWeb: webSearch({apiKey})}});
+// Web search through Tavily; results are journaled. Without an API key it uses
+// Tavily's free, rate-limited keyless access.
+const researcher = agent({model, tools: {searchWeb: webSearch()}});
 ```
 
-`mcpTools` also takes `token` (a generator returning a bearer token) and
-`protocol: "stateful"` for servers that need sessions. Call `close()` when
-done with a stateful session.
+`mcpTools` also takes `token` (a generator returning a bearer token),
+`protocol: "stateful"` for servers that need sessions, and `retry` for tool
+calls (default three attempts; each call sends an `Idempotency-Key`, but a
+server that ignores it may repeat work). Call `close()` when done with a
+stateful session.
+
+Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
+`searchToolsTool`, `programTool`) accepts `description` and `describe` to
+replace its model-facing description and its display info.
 
 ## Large catalogs and advanced tool calling
 

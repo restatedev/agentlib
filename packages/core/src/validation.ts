@@ -3,6 +3,10 @@ import {ModelProtocolError, RunInputError, ToolError} from "./errors.js";
 import type {JsonValue, Message, ModelResponse} from "./types.js";
 
 export const jsonSchema = z.json();
+export const steeringUpdate = z.object({
+  message: z.string().refine((message) => message.trim().length > 0),
+  data: jsonSchema.optional(),
+});
 const callSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),

@@ -277,7 +277,7 @@ void test("steering hands a still-running program to the background instead of w
             assert.deepEqual(results.get("l"), {status: "success", output: "sunny"});
             return {
               type: "tool_calls",
-              calls: [{id: "c", name: "cancel", input: {operationId: "p"}}],
+              calls: [{id: "c", name: "cancel", input: {operationId: "p", reason: null}}],
             };
           }
           assert.deepEqual(results.get("c"), {status: "success", output: {cancelled: true}});

@@ -84,9 +84,13 @@ conversation history.
 curl --globoff "$RESTATE_CALL_URL/Hello/ask" --json '"Say hello in one sentence."'
 ```
 
-The response is just the answer, such as `"Hello!"`. The `replyText` helper
-extracts the answer from the run result, or returns a short explanation if the
-run stopped or was interrupted without producing an answer.
+The response is just the answer, such as `"Hello!"`. A run that stopped or was
+interrupted has no answer, so the handler returns its short summary instead:
+
+```ts
+if (result.status !== "completed") return result.output ?? result.reason;
+return result.output;
+```
 
 ## 02 — Give the agent a tool
 
@@ -154,8 +158,8 @@ curl --globoff "$RESTATE_CALL_URL/CodeReview/generate" \
 The response is the accepted code as a string. If all three reviews reject the
 draft, the response explains that it still needs work and includes the latest
 feedback and code. Acceptance is the model's review decision; the code is
-returned as text and never executed. The shared `completedOutput` helper makes
-a stopped or interrupted run fail the stage instead of advancing the workflow.
+returned as text and never executed. A stopped or interrupted run throws a
+`TerminalError`, so it fails the stage instead of advancing the workflow.
 
 A **run** completes one task; a **step** is one planning model call inside that
 run. This loop starts fresh runs for successive drafts. See the
@@ -301,7 +305,8 @@ function* (task) {
   const sandbox = yield* connect();
   try {
     const result = yield* coder.run(task, {context: {sandbox}});
-    return replyText(result);
+    if (result.status !== "completed") return result.output ?? result.reason;
+    return result.output;
   } finally {
     yield* release(sandbox);
   }
@@ -331,9 +336,11 @@ then let the chosen specialist answer. The application owns the branch:
 
 ```ts
 function* (question) {
-  const {specialist} = completedOutput(yield* route.run(question));
-  const result = yield* specialists[specialist].run(question);
-  return replyText(result);
+  const routed = yield* route.run(question);
+  if (routed.status !== "completed") throw new TerminalError(`Router ${routed.status}`);
+  const result = yield* specialists[routed.output.specialist].run(question);
+  if (result.status !== "completed") return result.output ?? result.reason;
+  return result.output;
 }
 ```
 
@@ -371,9 +378,9 @@ own trusted service.
 
 ## 14 — Answer with current public sources
 
-Set `TAVILY_API_KEY` before starting the example endpoint. `webSearch` sends a
-public query to Tavily and journals the bounded results, so a replay does not
-repeat the HTTP request. The agent is instructed to cite returned URLs and treat
+`webSearch` sends a public query to Tavily and journals the bounded results, so
+a replay does not repeat the HTTP request. Without an API key it uses Tavily's
+free, rate-limited keyless access; pass `webSearch({apiKey})` for higher limits. The agent is instructed to cite returned URLs and treat
 snippets as evidence, not instructions.
 
 ```ts
@@ -381,7 +388,7 @@ const researcher = agent({
   model,
   maxSteps: 4,
   instructions: "Search the web before answering. Cite URLs returned by searchWeb, ...",
-  tools: {searchWeb: webSearch({apiKey: apiKey ?? ""})},
+  tools: {searchWeb: webSearch()},
 });
 ```
 

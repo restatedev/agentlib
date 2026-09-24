@@ -72,8 +72,9 @@ export type ProgressEvent =
   | {type: "tool-start"; callId: string; name: string; input: JsonValue}
   | {type: "tool-info"; callId: string; info: ToolInfo}
   | {type: "tool-progress"; callId: string; value: JsonValue}
-  | {type: "tool-end"; callId: string; name: string; result: ToolResult}
-  | {type: "steering"; message: string}
+  /** `info` is the call's final display information, as set by `describe`. */
+  | {type: "tool-end"; callId: string; name: string; result: ToolResult; info: ToolInfo}
+  | {type: "steering"; message: string; data?: JsonValue}
   | {type: "handoff"; agent?: string};
 /** Receives each event before the run continues. Spawn work that should not block it. */
 export type ProgressHandler<Context = unknown> = (
@@ -145,7 +146,7 @@ export type AsyncToolDefinition<Schema extends z.ZodType, Context = unknown> = O
 };
 export type RunResult<Output = string> = {steps: number; messages: Message[]} & (
   | {status: "completed"; output: Output}
-  | {status: "stopped"; reason: "max_steps"; output?: string}
+  | {status: "stopped"; reason: "max_steps" | "max_tool_calls"; output?: string}
   | {status: "interrupted"; reason: string; output?: string}
 );
 // Keep recursive JSON arrays behind an array interface so diagnostics terminate.
@@ -171,7 +172,9 @@ export type OutputDecision<Output = string> = {
   reason?: never;
   messages?: never;
 };
-export type SteeringSource = () => Future<string>;
+/** A steering message, with application data returned on its progress event. */
+export type SteeringUpdate = {message: string; data?: JsonValue};
+export type SteeringSource = () => Future<string | SteeringUpdate>;
 export type RunControls = {steering?: SteeringSource; interrupt?: Future<string>};
 export type RunOptions<Context> = {
   /** Completed prior messages. The SDK copies these and returns the new history. */

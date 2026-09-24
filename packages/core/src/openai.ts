@@ -10,6 +10,7 @@ import type {RetryOptions} from "@restatedev/restate-sdk-gen";
 import {ModelProtocolError} from "./errors.js";
 import {journaledModel} from "./model.js";
 import type {Model, ModelRequest, ModelResponse, ToolCall} from "./types.js";
+import {strictSchema} from "./strict-schema.js";
 
 export type OpenAIModelOptions = {
   model: string;
@@ -52,15 +53,19 @@ function payload(
   };
   if (request.tools.length) {
     if (/^gpt-5\.6(?:$|-)/.test(model)) body.reasoning_effort = settings.reasoning_effort ?? "none";
-    body.tools = request.tools.map(({name, description, inputSchema}) => ({
-      type: "function",
-      function: {name, description, parameters: inputSchema, strict: false},
-    }));
+    body.tools = request.tools.map(({name, description, inputSchema}) => {
+      const strict = strictSchema(inputSchema);
+      return {
+        type: "function",
+        function: {name, description, parameters: strict ?? inputSchema, strict: !!strict},
+      };
+    });
   }
   if (request.outputSchema) {
+    const strict = strictSchema(request.outputSchema);
     body.response_format = {
       type: "json_schema",
-      json_schema: {name: "agent_output", schema: request.outputSchema, strict: false},
+      json_schema: {name: "agent_output", schema: strict ?? request.outputSchema, strict: !!strict},
     };
   }
   return body;

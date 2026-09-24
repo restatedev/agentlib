@@ -20,7 +20,8 @@ export const chatSession = restate.object({
       const messages = (yield* restate.state().get<Message[]>("messages")) ?? [];
       const result = yield* assistant.run(message, {messages});
       restate.state().set("messages", result.messages);
-      return replyText(result);
+      if (result.status !== "completed") return result.output ?? result.reason;
+      return result.output;
     },
   },
 });
@@ -58,7 +59,8 @@ invocation while the exclusive turn holds the object's lock:
       steeringSignal: "steering",   // a string added as a user message before the next step
       interruptSignal: "interrupt", // stops the run; output is a short summary
     });
-    return replyText(result);
+    if (result.status !== "completed") return result.output ?? result.reason;
+    return result.output;
   } finally {
     restate.state().clear("active");
   }
@@ -77,13 +79,18 @@ interrupt cancels unfinished tools and child invocations and returns
 `{status: "interrupted", reason, output}`.
 
 To control the run from your own loop instead of signals, pass
-`controls: {steering, interrupt}` with futures.
+`controls: {steering, interrupt}` with futures. A steering future resolves to
+a message string, or to `{message, data}`: `data` comes back on the
+`steering` progress event, so the app can tell which of its messages the run
+accepted.
 
 ## Progress events
 
 `onProgress` receives each event as the run goes: `step`, `tool-start`,
 `tool-info`, `tool-progress`, `tool-end`, `steering`, and `handoff`. A tool
-reports partial progress with `context.progress(value)`.
+reports partial progress with `context.progress(value)`. `tool-end` carries
+the call's final display `info`, so a UI can label a finished call from one
+event.
 
 ```ts
 const feed = restate.sendClient(progressFeed, job);

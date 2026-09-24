@@ -32,8 +32,9 @@ const specialists = {billing: agent({...}), account: agent({...}), product: agen
 function* (question) {
   const routed = yield* route.run(question);
   if (routed.status !== "completed") throw new TerminalError(`Router ${routed.status}`);
-  const {specialist} = routed.output;
-  return replyText(yield* specialists[specialist].run(question));
+  const result = yield* specialists[routed.output.specialist].run(question);
+  if (result.status !== "completed") return result.output ?? result.reason;
+  return result.output;
 }
 ```
 

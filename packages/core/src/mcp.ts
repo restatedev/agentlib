@@ -25,6 +25,9 @@ export type McpOptions = {
   /** Persist refreshed credentials before returning; may wait on a human signal. */
   onAuthorizationRequired?(): restate.Operation<void>;
   timeoutMs?: number;
+  /** Transport retries for tool calls (default: three attempts). Each call sends an
+   * Idempotency-Key, but a retry repeats the call on servers that ignore it. */
+  retry?: restate.RetryOptions;
   /** Restrict the catalog before exposing tools to the agent. */
   allow?(remoteName: string): boolean;
   deferred?: boolean;
@@ -121,6 +124,7 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
   function* authorized<T>(
     name: string,
     fn: (token: string | undefined, signal: AbortSignal) => Promise<T>,
+    retry: restate.RetryOptions = {maxAttempts: 3},
   ): restate.Operation<T> {
     for (let attempt = 1; ; attempt++) {
       const token = options.token ? yield* options.token() : undefined;
@@ -136,7 +140,7 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
         },
         // Authorization failures return a value and are handled by this loop;
         // thrown transport errors retry. Tool calls carry an Idempotency-Key.
-        {name, retry: {maxAttempts: 3}},
+        {name, retry},
       );
       if (result.type === "ok") return result.value;
       if (attempt === MAX_AUTH_ATTEMPTS)
@@ -198,24 +202,27 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
         deferred: options.deferred ?? true,
         input,
         *execute(input, context) {
-          const result = yield* authorized(`mcp-${name}`, (token, signal) =>
-            withClient(token, signal, catalog, (client) =>
-              client.callTool(
-                {
-                  name: definition.name,
-                  arguments: input as Record<string, unknown>,
-                },
-                {
-                  signal,
-                  timeout,
-                  maxTotalTimeout: timeout,
-                  toolDefinition: definition,
-                  headers: {
-                    "Idempotency-Key": `${context.invocationId}:${context.name}:${context.callId}`,
+          const result = yield* authorized(
+            `mcp-${name}`,
+            (token, signal) =>
+              withClient(token, signal, catalog, (client) =>
+                client.callTool(
+                  {
+                    name: definition.name,
+                    arguments: input as Record<string, unknown>,
                   },
-                },
+                  {
+                    signal,
+                    timeout,
+                    maxTotalTimeout: timeout,
+                    toolDefinition: definition,
+                    headers: {
+                      "Idempotency-Key": `${context.invocationId}:${context.name}:${context.callId}`,
+                    },
+                  },
+                ),
               ),
-            ),
+            options.retry,
           );
           if (JSON.stringify(result).length > 128000)
             throw new ToolError("MCP result exceeds 128000 characters", "output_limit");

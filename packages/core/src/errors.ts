@@ -27,6 +27,8 @@ export class RunInputError extends TerminalError {
   }
 }
 export class AgentLimitError extends TerminalError {}
+/** The run's tool-call budget is spent; the run stops instead of failing. */
+export class ToolBudgetExceeded extends AgentLimitError {}
 /** Invalid model output must not dispatch partial or ambiguous tool batches. */
 export class ModelProtocolError extends TerminalError {
   constructor(message: string) {

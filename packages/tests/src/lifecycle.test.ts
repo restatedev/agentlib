@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
+import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
@@ -9,6 +9,7 @@ import {
   cancelOperationTool,
   GuardrailError,
   humanApprovalTool,
+  sleepTool,
   tool,
   ToolError,
   type ModelResponse,
@@ -326,7 +327,7 @@ void test("selective background cancellation produces a model message and keeps 
     },
     *model(req) {
       if (++step === 1) return batch(call("wait"));
-      if (step === 2) return batch(call("cancel", "cancel", {operationId: "wait"}));
+      if (step === 2) return batch(call("cancel", "cancel", {operationId: "wait", reason: null}));
       assert.match(JSON.stringify(req.messages), /cancelled/);
       return done;
     },
@@ -373,7 +374,7 @@ void test(
             }
             if (step === 3) {
               assert.match(JSON.stringify(request.messages), /cancel the sleep/);
-              return batch(call("cancel", "cancel", {operationId: "wait"}));
+              return batch(call("cancel", "cancel", {operationId: "wait", reason: null}));
             }
             assert.match(JSON.stringify(request.messages), /background-tool-result/);
             return done;
@@ -694,6 +695,136 @@ void test("approval details reach the approval handlers", async () => {
   const result = await r.execute(ctx(), a.run("go"));
   assert.equal(result.status, "completed");
   assert.deepEqual(seen, [{policy: "large-refunds"}, {policy: "large-refunds"}]);
+});
+
+void test("a spent tool-call budget stops the run with a summary instead of failing it", async () => {
+  let step = 0;
+  let executed = 0;
+  const a = agent({
+    maxToolCalls: 2,
+    finalize: function* () {
+      return {type: "final", text: "Stopped early."};
+    },
+    tools: {
+      work: tool({
+        ...base,
+        *execute() {
+          executed++;
+          return "ok";
+        },
+      }),
+    },
+    *model() {
+      step++;
+      if (step === 1) return batch(call("work", "a"), call("work", "b"));
+      return batch(call("work", "c"));
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status, "stopped");
+  assert.equal(result.status === "stopped" && result.reason, "max_tool_calls");
+  assert.equal(result.output, "Stopped early.");
+  assert.equal(executed, 2);
+  // The rejected batch never entered history, so it stays protocol-complete.
+  assert.equal(JSON.stringify(result.messages).includes('"c"'), false);
+});
+
+void test("a failing policy blocks the call and is reported as a guardrail failure", async () => {
+  let step = 0;
+  let executed = false;
+  const a = agent({
+    tools: {
+      work: tool({
+        ...base,
+        *execute() {
+          executed = true;
+          return "ok";
+        },
+      }),
+    },
+    *beforeTool() {
+      throw new TerminalError("policy model unavailable");
+    },
+    *model(req) {
+      if (++step === 1) return batch(call("work"));
+      const result = req.messages.find((m) => m.role === "tool");
+      assert.deepEqual(result?.role === "tool" && result.result, {
+        status: "error",
+        code: "guardrail_failed",
+        message: "Policy check failed: policy model unavailable",
+      });
+      return done;
+    },
+  });
+  assert.equal((await r.execute(ctx(), a.run("go"))).status, "completed");
+  assert.equal(executed, false);
+});
+
+void test("steering data returns on the steering progress event", async () => {
+  const events: unknown[] = [];
+  const result = await r.execute(
+    ctx(),
+    (function* () {
+      const change = r.channel<{message: string; data: {id: number}}>();
+      const never = r.channel<string>();
+      let listens = 0;
+      let step = 0;
+      const a = agent({
+        tools: {
+          wait: tool({
+            ...base,
+            *execute() {
+              yield* change.send({message: "use the other file", data: {id: 7}});
+              return "waited";
+            },
+          }),
+        },
+        *model(req) {
+          if (++step === 1) return batch(call("wait"));
+          assert.match(JSON.stringify(req.messages), /use the other file/);
+          return done;
+        },
+      });
+      return yield* a.run("go", {
+        controls: {steering: () => (listens++ === 0 ? change.receive : never.receive)},
+        *onProgress(event) {
+          if (event.type === "steering") events.push(event);
+        },
+      });
+    })(),
+  );
+  assert.equal(result.status, "completed");
+  assert.deepEqual(events, [{type: "steering", message: "use the other file", data: {id: 7}}]);
+});
+
+void test("built-in tools accept a description and display override", async () => {
+  const events: unknown[] = [];
+  let step = 0;
+  const ask = humanApprovalTool({
+    description: "Ask the account owner.",
+    describe: ({question}) => ({name: `Asked: ${question}`}),
+  });
+  assert.equal(ask.description, "Ask the account owner.");
+  assert.equal(sleepTool({description: "Pause."}).description, "Pause.");
+  const a = agent({
+    tools: {ask},
+    *onHumanApproval() {
+      return true;
+    },
+    *model() {
+      if (++step === 1) return batch(call("ask", "a", {question: "Refund?"}));
+      return done;
+    },
+  });
+  await r.execute(
+    ctx(),
+    a.run("go", {
+      *onProgress(event) {
+        if (event.type === "tool-end") events.push(event.info);
+      },
+    }),
+  );
+  assert.deepEqual(events, [{name: "Asked: Refund?"}]);
 });
 
 void test("an instructions function is called as a method", async () => {

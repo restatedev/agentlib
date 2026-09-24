@@ -193,7 +193,7 @@ const runner = r.service({
             assert.match(JSON.stringify(request.messages), /Do not sleep/);
             return {
               type: "tool_calls",
-              calls: [{id: "cancel", name: "cancel", input: {operationId: "sleep"}}],
+              calls: [{id: "cancel", name: "cancel", input: {operationId: "sleep", reason: null}}],
             };
           }
           assert.match(JSON.stringify(request.messages), /background-tool-result/);
@@ -244,8 +244,8 @@ const runner = r.service({
         },
       });
       try {
-        yield* a.run("go");
-        return {executed, error: "Expected a tool limit failure"};
+        const result = yield* a.run("go");
+        return {executed, stopped: result.status === "stopped" ? result.reason : undefined};
       } catch (error) {
         return {executed, error: String(error)};
       }
@@ -680,10 +680,9 @@ for (const limit of ["calls", "depth"] as const) {
   void test(`native always-replay: shared tool ${limit} limit`, {timeout: 20000}, async () => {
     const result = await connect({url: env.baseUrl()}).client(runner).toolLimits(limit);
     assert.deepEqual(result.executed, ["outer", "nested"]);
-    assert.match(
-      result.error,
-      limit === "calls" ? /Maximum tool calls exceeded/ : /Maximum nested tool depth exceeded/,
-    );
+    // A spent budget stops the run; nesting past the depth limit fails it.
+    if (limit === "calls") assert.equal(result.stopped, "max_tool_calls");
+    else assert.match(result.error ?? "", /Maximum nested tool depth exceeded/);
     assert.equal(effects.get(`limit-${limit}`) ?? 0, 0);
   });
 }

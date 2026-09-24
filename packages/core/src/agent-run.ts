@@ -13,6 +13,7 @@ import {
   GuardrailError,
   ModelProtocolError,
   RunInterrupted,
+  ToolBudgetExceeded,
 } from "./errors.js";
 import {RunHistory} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
@@ -20,7 +21,7 @@ import {RunTools} from "./run-tools.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
-import {jsonSchema, modelResponse} from "./validation.js";
+import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
@@ -35,6 +36,7 @@ import type {
   RunOptions,
   RunResult,
   SteeringSource,
+  SteeringUpdate,
 } from "./types.js";
 
 export type RunConfiguration = ToolExecutionLimits &
@@ -87,7 +89,7 @@ function resolveControls<C>(options?: RunOptions<C>): RunControls {
 class AgentRun<C, O> {
   private step = 0;
   private steeringSource: SteeringSource | undefined;
-  private steering: Future<string> | undefined;
+  private steering: Future<string | SteeringUpdate> | undefined;
   private interrupt: Future<string> | undefined;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
@@ -122,16 +124,16 @@ class AgentRun<C, O> {
   *run(): Operation<RunResult<O>> {
     try {
       yield* this.start();
-      let interruption: RunInterrupted | undefined;
+      let stop: RunInterrupted | ToolBudgetExceeded | undefined;
       try {
         const result = yield* this.steps();
         if (result) return result;
       } catch (error) {
-        if (!(error instanceof RunInterrupted)) throw error;
-        interruption = error;
+        if (!(error instanceof RunInterrupted || error instanceof ToolBudgetExceeded)) throw error;
+        stop = error;
       }
       // Outside the catch: a failing stop propagates instead of stopping twice.
-      return yield* this.stop(interruption);
+      return yield* this.stop(stop);
     } finally {
       yield* this.tasks.close();
     }
@@ -178,8 +180,8 @@ class AgentRun<C, O> {
       throw new RunInterrupted(value);
     }
     if (tag === "steering") {
-      this.acceptSteering(value);
-      yield* this.emit({type: "steering", message: value as string});
+      const {message, data} = this.acceptSteering(value);
+      yield* this.emit({type: "steering", message, ...(data === undefined ? {} : {data})});
     }
     return {tag, value};
   }
@@ -318,15 +320,17 @@ class AgentRun<C, O> {
     return {output: parsed.data};
   }
 
-  private acceptSteering(value: unknown): void {
-    if (typeof value !== "string" || !value.trim())
-      throw new TypeError("Steering must be a nonempty string");
+  private acceptSteering(value: unknown): SteeringUpdate {
+    const update = steeringUpdate.safeParse(typeof value === "string" ? {message: value} : value);
+    if (!update.success) throw new TypeError("Steering must be a nonempty message");
+    const {message} = update.data;
     this.history.append({
       role: "user",
-      content: JSON.stringify({source: "agent-runtime", type: "steering", message: value}),
+      content: JSON.stringify({source: "agent-runtime", type: "steering", message}),
     });
     // A steering future only exists when its source does.
     this.steering = this.steeringSource!();
+    return update.data;
   }
 
   private *review(result: RunResult<O>): Operation<RunResult<O>> {
@@ -339,9 +343,13 @@ class AgentRun<C, O> {
     return result;
   }
 
-  /** Ends a run that did not complete: settles owned work, then reviews and saves. */
-  private *stop(interruption: RunInterrupted | undefined): Operation<RunResult<O>> {
-    const reason = interruption ?? new InterruptedError("Maximum model steps reached");
+  /** Ends a run that did not complete: settles owned work, then reviews and saves.
+   * Without a cause, the run used its last step. */
+  private *stop(cause: RunInterrupted | ToolBudgetExceeded | undefined): Operation<RunResult<O>> {
+    const reason =
+      cause instanceof RunInterrupted
+        ? cause
+        : new InterruptedError(cause?.message ?? "Maximum model steps reached");
     yield* this.tasks.stop(reason);
     this.tools.commitBatch(reason.message);
     this.history.append(...this.tools.settlePending(reason));
@@ -349,9 +357,11 @@ class AgentRun<C, O> {
       steps: Math.min(this.step, this.config.maxSteps),
       messages: this.history.committed(),
     };
-    const result: RunResult<O> = interruption
-      ? {...end, status: "interrupted", reason: interruption.message}
-      : {...end, status: "stopped", reason: "max_steps"};
+    let result: RunResult<O>;
+    if (cause instanceof RunInterrupted)
+      result = {...end, status: "interrupted", reason: cause.message};
+    else if (cause) result = {...end, status: "stopped", reason: "max_tool_calls"};
+    else result = {...end, status: "stopped", reason: "max_steps"};
     return yield* this.finish(yield* this.review(result));
   }
 

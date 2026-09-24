@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, type Message} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const assistant = agent({
   model,
@@ -24,7 +24,8 @@ export const chatSession = restate.object({
         const messages = (yield* restate.state().get<Message[]>("messages")) ?? [];
         const result = yield* assistant.run(message, {messages});
         restate.state().set("messages", result.messages);
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },
