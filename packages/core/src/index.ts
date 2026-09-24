@@ -43,6 +43,8 @@ export type {
   RunContext,
   ApprovalRequest,
   ApprovalHandler,
+  ProgressEvent,
+  ProgressHandler,
   GuardrailResult,
   AgentRuntime,
 } from "./types.js";

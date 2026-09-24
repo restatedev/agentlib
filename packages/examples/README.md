@@ -30,6 +30,7 @@ the request body required; object fields use `.default(...)`.
 | 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/lessons/13_tool_guardrail.ts)           |
 | 14     | Search the public web                 | [14_web_search.ts](src/lessons/14_web_search.ts)                   |
 | 15     | Exchange feedback over durable RPC    | [15_peer_review_rpc.ts](src/lessons/15_peer_review_rpc.ts)         |
+| 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 
 If you have a specific goal, start here:
 
@@ -44,6 +45,7 @@ If you have a specific goal, start here:
 | Enforce a budget before an action    | [13](src/lessons/13_tool_guardrail.ts)  |
 | Answer with current public sources   | [14](src/lessons/14_web_search.ts)      |
 | Let agents review each other\'s work | [15](src/lessons/15_peer_review_rpc.ts) |
+| Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
 
 ## Start
 
@@ -424,6 +426,16 @@ The caller receives only the revised answer. Restate journals each RPC, so a
 replay does not repeat completed author or reviewer calls. The example uses
 `awaitChild` to cancel unfinished child invocations if the coordinator is
 interrupted. There is no shared mailbox or bespoke agent-to-agent protocol.
+
+## 16 — Follow an agent's progress
+
+The agent's `onProgress` handler sends each event to a `ProgressFeed` object.
+Its shared `subscribe` handler waits for the next event.
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" &
+curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit" --json '{"job":"audit-1"}'
+```
 
 ## Model configuration
 

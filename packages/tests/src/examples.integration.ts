@@ -208,6 +208,17 @@ const fixtureModel: Model = function* (request) {
     }
     return {type: "final", text: `Session answer; previous turns: ${turns.length - 1}`};
   }
+  if (instructions.startsWith("Audit stock.")) {
+    const result = request.messages.find((message) => message.role === "tool");
+    if (!result)
+      return {
+        type: "tool_calls",
+        calls: [{id: "count", name: "countStock", input: {warehouses: ["Berlin", "Oslo"]}}],
+      };
+    assert.equal(result.role, "tool");
+    assert.deepEqual(result.result, {status: "success", output: {Berlin: 42, Oslo: 28}});
+    return {type: "final", text: "Oslo has the least stock."};
+  }
   if (instructions.startsWith("Choose the one specialist")) {
     const specialist = prompt(request).includes("feature") ? "product" : "account";
     return answer({specialist});
@@ -303,6 +314,7 @@ const [
   {supportRouter},
   {guardedBooking},
   {peerAuthor, peerReviewer, peerReview},
+  {progressFeed, inventoryAudit},
 ] = await Promise.all([
   import("@restate-agents/examples/hello"),
   import("@restate-agents/examples/tools"),
@@ -316,6 +328,7 @@ const [
   import("@restate-agents/examples/routing"),
   import("@restate-agents/examples/tool-guardrail"),
   import("@restate-agents/examples/peer-review-rpc"),
+  import("@restate-agents/examples/progress-feed"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -339,6 +352,8 @@ before(
         peerAuthor,
         peerReviewer,
         peerReview,
+        progressFeed,
+        inventoryAudit,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -599,3 +614,19 @@ void test("racing fails clearly if neither agent completes", async () => {
     /Neither candidate produced a completed answer/,
   );
 });
+
+void test(
+  "16: a subscriber receives the audit's next progress event",
+  {timeout: 30000},
+  async () => {
+    const subscriber = ingress().client(progressFeed, "audit-test").subscribe();
+    // Start the audit only once the subscriber is registered.
+    const feed = env.stateOf(progressFeed, "audit-test");
+    while (!(await feed.get<string[]>("subscribers"))?.length) await delay(50);
+    const reply = await ingress()
+      .client(inventoryAudit)
+      .audit({job: "audit-test", request: "Count stock in Berlin and Oslo."});
+    assert.equal(reply, "Oslo has the least stock.");
+    assert.deepEqual(await subscriber, {type: "step", step: 1});
+  },
+);

@@ -83,6 +83,12 @@ Permission to proceed with a particular tool action. It does not grant permissio
 for all later calls in the run.
 _Avoid_: Run authorization
 
+**Progress event**:
+A report of what a run is doing: a step, a tool call starting, reporting, or
+ending, steering, or a handoff. The run waits for its handler, and replay
+delivers the same events again, so external effects belong in a journaled step.
+_Avoid_: Model chunk, stream
+
 **Accepted output**:
 A final value that has passed the run's output validation and policies. Candidate
 answers and streamed model chunks have not yet earned this status.

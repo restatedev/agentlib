@@ -226,6 +226,8 @@ export function agentTool<C, O>(
         name: `${context.name}/${context.callId}`,
         // The sub-agent's approval requests reach whoever the parent run publishes to.
         onApproval: context.publishApproval,
+        // Each sub-agent event arrives as progress of the parent's call.
+        onProgress: (event) => context.progress(event),
       } as RunOptions<C>;
       const run = subAgent.run as (
         input: string,

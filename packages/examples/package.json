@@ -63,6 +63,10 @@
     "./peer-review-rpc": {
       "types": "./dist/lessons/15_peer_review_rpc.d.ts",
       "import": "./dist/lessons/15_peer_review_rpc.js"
+    },
+    "./progress-feed": {
+      "types": "./dist/lessons/16_progress_feed.d.ts",
+      "import": "./dist/lessons/16_progress_feed.js"
     }
   },
   "scripts": {
