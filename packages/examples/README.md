@@ -441,11 +441,11 @@ curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit" --json '{"job":"audit-1"
 ## 17 — Use tools from an MCP server
 
 `mcpTools` lists a remote server's tools once, journals the catalog, and turns
-each tool into a journaled step. The lesson uses the public
-[DeepWiki](https://deepwiki.com) server; set `MCP_SERVER_URL` to use another.
+each tool into a journaled step. The lesson gives an agent the tools of the
+Restate docs server at `https://docs.restate.dev/mcp`.
 
 ```sh
-curl "$RESTATE_CALL_URL/RepoGuide/ask" --json '"In restatedev/restate, what is a virtual object?"'
+curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '"What is a virtual object?"'
 ```
 
 ## Model configuration

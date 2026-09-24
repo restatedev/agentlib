@@ -1,0 +1,124 @@
+---
+name: restate-agents
+description: >
+  Build durable AI agents with the Restate agent SDK (@restate-agents/core):
+  an agent runs inside a Restate generator handler, and every model call, tool
+  result, approval, and sub-agent step is journaled, so work survives crashes,
+  deploys, and long waits. Use when the user wants to build, extend, or debug
+  an AI agent on Restate; mentions @restate-agents/core, agent(), asyncTool,
+  handoff, agentTool, serviceTool, mcpTools, needsApproval, steering, or
+  interrupting an agent; or wants multi-agent workflows (routing, racing,
+  orchestrator-workers, evaluator-optimizer, peer review) composed from Restate
+  services. Also use when teaching someone the SDK step by step.
+---
+
+# Restate agents
+
+An agent is a value you define once and `run` from any Restate handler. The
+handler owns everything around the run: where history is stored, who
+approves, what happens after. The agent owns the model/tool loop. Because the
+run happens inside a Restate invocation, completed model calls and tool
+results replay from the journal instead of repeating.
+
+```ts
+import * as restate from "@restatedev/restate-sdk-gen";
+import {agent} from "@restate-agents/core";
+import {openAIModel} from "@restate-agents/core/openai";
+
+const assistant = agent({model: openAIModel({model: "gpt-5.6-luna"})});
+
+export const hello = restate.service({
+  name: "Hello",
+  handlers: {
+    *ask(question: string) {
+      const result = yield* assistant.run(question);
+      return result.status === "completed" ? result.output : result.reason;
+    },
+  },
+});
+```
+
+Agents build on the generator SDK. Load the `restate-gen-sdk` skill as well:
+its rules (generators, `yield*`, no `Promise.all`, journal every side effect)
+apply to agent handlers and tools too.
+
+## Setup
+
+- Dependencies: `@restate-agents/core`, `@restatedev/restate-sdk`,
+  `@restatedev/restate-sdk-gen`, and `zod`. The agent SDK lives in
+  https://github.com/restatedev/agentsdk.
+- A model adapter: `openAIModel` (`/openai`, reads `OPENAI_API_KEY`) or any AI
+  SDK provider through `aiModel` (`/provider`). See `references/models-and-testing.md`.
+- Serve the handlers with `serve({services, port: 9080})` and register them,
+  as in `restate-gen-sdk`'s `references/running-and-testing.md`.
+
+## Learning path
+
+The numbered lessons in the repository introduce one concept at a time:
+https://github.com/restatedev/agentsdk/tree/main/packages/examples/src/lessons.
+Follow the same order when teaching or when growing an agent step by step.
+
+| #   | Concept                              | API                                                          | Reference                                  |
+| --- | ------------------------------------ | ------------------------------------------------------------ | ------------------------------------------ |
+| 01  | One agent in one handler             | `agent({model})`, `run`, `RunResult`                         | `references/agent-basics.md`               |
+| 02  | A tool with validated arguments      | `asyncTool`, `tool`                                          | `references/tools.md`                      |
+| 03  | Conversation history in an object    | `run(input, {messages})`                                     | `references/conversations-and-controls.md` |
+| 04  | Typed output                         | `agent({output})`                                            | `references/agent-basics.md`               |
+| 05  | A bounded draft-and-review loop      | two agents, distinct run `name`s                             | `references/multi-agent.md`                |
+| 06  | Human approval before a tool         | `needsApproval`, `onApproval`                                | `references/approvals-and-guardrails.md`   |
+| 07  | Race two agents                      | `restate.spawn`, `restate.any`                               | `references/multi-agent.md`                |
+| 08  | Parallel workers over RPC            | `restate.all` of `restate.client` calls                      | `references/multi-agent.md`                |
+| 09  | Steer and interrupt a running turn   | `LazyStateConversation`, `steeringSignal`, `interruptSignal` | `references/conversations-and-controls.md` |
+| 10  | A Restate service as a tool          | `serviceTool`, `handlerTool`                                 | `references/tools.md`                      |
+| 11  | Tools backed by a sandbox            | run `context`, `asyncTool`                                   | `references/tools.md`                      |
+| 12  | Route to a specialist                | structured-output router                                     | `references/multi-agent.md`                |
+| 13  | Enforce a policy before an action    | tool `before`, agent guardrails                              | `references/approvals-and-guardrails.md`   |
+| 14  | Web search                           | `webSearch` (`/web-search`)                                  | `references/tools.md`                      |
+| 15  | Agents reviewing each other over RPC | typed services per role                                      | `references/multi-agent.md`                |
+| 16  | Stream progress to subscribers       | `onProgress`, `context.progress`                             | `references/conversations-and-controls.md` |
+| 17  | Tools from an MCP server             | `mcpTools` (`/mcp`)                                          | `references/tools.md`                      |
+
+**When teaching:** go one row at a time. Show the smallest code that adds
+the new concept to the previous step, run it with curl, and explain what
+Restate journals. Move on only when the learner is ready.
+
+## Find the right tool for a goal
+
+| Goal                                                           | Use                                                                                       |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Call an API from a tool                                        | `asyncTool` with `retry`                                                                  |
+| Compose Restate operations inside a tool (RPC, sleep, signals) | `tool` with `*execute`                                                                    |
+| Let the model call one or all handlers of a Restate service    | `handlerTool` / `serviceTool`                                                             |
+| Remote tools                                                   | `mcpTools`; web: `webSearch`; your own registered services: `restateTools` (`/discovery`) |
+| Many tools, load schemas on demand                             | `deferred: true` + `searchToolsTool()`                                                    |
+| Let the model script several tool calls in one step            | `programTool()` (`/program`)                                                              |
+| Keep working while a slow tool runs                            | `background: true`, `sleepTool()`, `cancelOperationTool()`                                |
+| A human decides first                                          | `needsApproval`, or `humanApprovalTool()` for free-form questions                         |
+| Enforce policy the model cannot bypass                         | tool `before`, agent `beforeTool` / `afterRun`                                            |
+| Delegate a subtask, keep control                               | `agentTool(subAgent, {description})`                                                      |
+| Hand over the conversation                                     | `handoff(specialist)`                                                                     |
+| Independent, separately retried agents                         | one Restate service per agent, called with `restate.client`                               |
+
+## Rules to check before finishing
+
+- [ ] Define agents at module scope. Run them inside handlers or tools with
+      `yield* agent.run(...)`.
+- [ ] Handle every `RunResult` status: `completed`, `stopped` (hit
+      `maxSteps`), and `interrupted`. Do not read `output` as the answer
+      unless the status is `completed`.
+- [ ] Give each run a distinct `name` when one handler runs the same agent
+      more than once (loops, races), so journal entries and approval signals
+      stay apart.
+- [ ] Tool side effects run in `asyncTool.execute` or `restate.run`. Code in a
+      `tool` generator outside those is replayed.
+- [ ] Give external writes an idempotency key (`context.callId` is stable
+      across retries).
+- [ ] Throw `ToolError` for failures the model should see and recover from,
+      and `TerminalError` to stop retrying. A tool that fails terminally
+      reports an error to the model; the run continues.
+- [ ] Trusted values (prices, user IDs, limits) come from run `context`,
+      never from model-supplied tool arguments.
+- [ ] Approval requests and active-turn IDs stored in state are cleared in a
+      `finally`.
+- [ ] Tests use a fixture model (`journaledModel`) against
+      `RestateContainer().alwaysReplay()`. No paid model calls.
