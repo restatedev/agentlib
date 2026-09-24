@@ -256,9 +256,13 @@ tool reads; factual quality and final prose still depend on the model.
 A keyed object owns one conversation per key. `doTurn` runs one turn at a time
 and stores the messages in object state, compacting long conversations. While a
 turn runs, shared handlers inspect and control it: `status` shows the active
-turn and any pending approval, `steer` adds a message, `interrupt` stops the
-turn with a short summary, and `approve` answers an approval request. Ticket
-effects are demonstrations.
+turn, its latest progress event, and any pending approval, `steer` adds a
+message, `interrupt` stops the turn with a short summary, and `approve` answers
+an approval request. Ticket effects are demonstrations.
+
+`onProgress` receives each event before the run continues, and receives the
+same events again on replay. Writing state is safe; wrap an external call in
+`restate.run`, or send it to another service, so it happens once.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \
