@@ -1,0 +1,17 @@
+{
+  "name": "restate-agents",
+  "metadata": {
+    "description": "Skills for building agents and applications with Restate's generator SDK",
+    "pluginRoot": "plugins"
+  },
+  "owner": {
+    "name": "Restate"
+  },
+  "plugins": [
+    {
+      "name": "restate-agents",
+      "source": "restate-agents",
+      "description": "Build durable AI agents and compose Restate applications with the generator SDK."
+    }
+  ]
+}

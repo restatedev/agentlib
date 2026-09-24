@@ -1,16 +1,14 @@
 {
-  "name": "restatedev-plugin",
+  "name": "restate-agents",
   "interface": {
-    "displayName": "Restate"
+    "displayName": "Restate Agents"
   },
   "plugins": [
     {
-      "name": "restatedev",
+      "name": "restate-agents",
       "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/restatedev/skills.git",
-        "path": "./plugins/restatedev",
-        "ref": "main"
+        "source": "local",
+        "path": "./plugins/restate-agents"
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -7,6 +7,7 @@
     "**/node_modules/**",
     ".pnpm-store/**",
     ".turbo/**",
-    "pnpm-lock.yaml"
+    "pnpm-lock.yaml",
+    "plugins/**/*.md"
   ]
 }

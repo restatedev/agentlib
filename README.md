@@ -156,6 +156,34 @@ Agents run inside Restate's generator SDK. A promise-based entry point existed
 earlier and was removed; [PROMISE_SDK.md](PROMISE_SDK.md) explains how to bring
 it back.
 
+## Skills for coding agents
+
+[`plugins/restate-agents`](plugins/restate-agents) teaches coding agents to
+build with this SDK. It follows the same learning order as the lessons, with
+two skills:
+
+- **`restate-gen-sdk`** covers Restate's generator SDK: services, objects,
+  workflows, durable RPC, fan-out, signals, and patterns for composing small
+  handlers into larger applications.
+- **`restate-agents`** covers the agent SDK: tools, conversations,
+  approvals, guardrails, live controls, and multi-agent workflows.
+
+The plugin also connects the Restate docs MCP server.
+
+```sh
+# Claude Code
+/plugin marketplace add restatedev/agentsdk
+/plugin install restate-agents@restate-agents
+# Codex
+codex plugin marketplace add restatedev/agentsdk
+# Cursor, Copilot, Gemini CLI, and others
+npx skills add restatedev/agentsdk
+```
+
+In Cursor, add `https://github.com/restatedev/agentsdk` as a marketplace
+instead. To try local changes in Claude Code, run
+`claude --plugin-dir plugins/restate-agents`.
+
 ## Workspace
 
 | Package                                         | Purpose                                                              |

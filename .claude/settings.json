@@ -1,13 +1,13 @@
 {
   "extraKnownMarketplaces": {
-    "restatedev-plugin": {
+    "restate-agents": {
       "source": {
         "source": "github",
-        "repo": "restatedev/skills"
+        "repo": "restatedev/agentsdk"
       }
     }
   },
   "enabledPlugins": {
-    "restatedev@restatedev-plugin": true
+    "restate-agents@restate-agents": true
   }
 }
