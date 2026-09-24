@@ -2,7 +2,7 @@
 // Reimplements the orchestrator-worker pattern from restatedev/ai-examples.
 // Source links and the differences are documented in ../../README.md.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, awaitChild, GuardrailError, tool, ToolError} from "@restate-agents/core";
+import {agent, GuardrailError, tool, ToolError} from "@restate-agents/core";
 import {z} from "zod";
 import {completedOutput, exampleModel as model} from "../shared.js";
 
@@ -131,18 +131,12 @@ export const researchReport = restate.service({
             }),
           ),
         );
-        // Each worker is a separate durable invocation. Await through the SDK's
-        // cancellation bridge so an interrupted report cancels unfinished RPCs.
-        const workers = plan.questions.map((question) =>
-          restate.spawn(awaitChild(restate.client(researchWorker).research({question, sources}))),
+        // Each worker is a separate durable invocation.
+        const findings = yield* restate.all(
+          plan.questions.map((question) =>
+            restate.client(researchWorker).research({question, sources}),
+          ),
         );
-        let findings: Finding[];
-        try {
-          findings = yield* restate.all(workers);
-        } finally {
-          for (const worker of workers) worker.interrupt();
-          yield* restate.allSettled(workers);
-        }
         return completedOutput(yield* writer.run(JSON.stringify({topic, findings})));
       },
     ),

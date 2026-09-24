@@ -1,6 +1,6 @@
 // 15: Exchange drafts and feedback between agents through typed Restate RPCs.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, awaitChild} from "@restate-agents/core";
+import {agent} from "@restate-agents/core";
 import {z} from "zod";
 import {completedOutput, exampleModel as model} from "../shared.js";
 
@@ -68,31 +68,16 @@ export const peerReview = restate.service({
         output: draft,
       },
       function* (request) {
-        const firstDraft = yield* awaitChild(
-          restate.client(peerAuthor).write({brief: request, feedback: []}),
-        );
-        const reviews = reviewFocuses.map((reviewFocus) =>
-          restate.spawn(
-            awaitChild(
-              restate.client(peerReviewer).review({
-                brief: request,
-                draft: firstDraft,
-                focus: reviewFocus,
-              }),
-            ),
+        const firstDraft = yield* restate.client(peerAuthor).write({brief: request, feedback: []});
+        const comments = yield* restate.all(
+          reviewFocuses.map((focus) =>
+            restate.client(peerReviewer).review({brief: request, draft: firstDraft, focus}),
           ),
         );
-        let comments: string[];
-        try {
-          comments = yield* restate.all(reviews);
-        } finally {
-          for (const review of reviews) review.interrupt();
-          yield* restate.allSettled(reviews);
-        }
         const feedback = comments.map((comment, index) => `${reviewFocuses[index]}: ${comment}`);
-        return yield* awaitChild(
-          restate.client(peerAuthor).write({brief: request, draft: firstDraft, feedback}),
-        );
+        return yield* restate
+          .client(peerAuthor)
+          .write({brief: request, draft: firstDraft, feedback});
       },
     ),
   },

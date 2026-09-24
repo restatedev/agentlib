@@ -425,9 +425,8 @@ curl --globoff "$RESTATE_CALL_URL/PeerReview/answer" \
 ```
 
 The caller receives only the revised answer. Restate journals each RPC, so a
-replay does not repeat completed author or reviewer calls. The example uses
-`awaitChild` to cancel unfinished child invocations if the coordinator is
-interrupted. There is no shared mailbox or bespoke agent-to-agent protocol.
+replay does not repeat completed author or reviewer calls. There is no shared
+mailbox or bespoke agent-to-agent protocol.
 
 ## 16 — Follow an agent's progress
 
