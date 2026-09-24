@@ -281,7 +281,11 @@ void test("invocation cancellation is not converted to a tool result", async () 
 });
 
 void test("maxSteps stops a tool-only loop with a complete transcript", async () => {
-  const a = agent({maxSteps: 2, model: scripted(call("a", "missing"), call("b", "missing"))});
+  const a = agent({
+    maxSteps: 2,
+    finalize: false,
+    model: scripted(call("a", "missing"), call("b", "missing")),
+  });
   const result = await execute(context(), a.run("Loop"));
   assert.equal(result.status, "stopped");
   if (result.status === "stopped") assert.equal(result.reason, "max_steps");

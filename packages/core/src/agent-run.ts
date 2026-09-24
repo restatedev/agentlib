@@ -317,7 +317,8 @@ class AgentRun<C, O> {
   }
 
   private *review(result: RunResult<O>): Operation<RunResult<O>> {
-    result = yield* summarizeStoppedRun(result, this.root.finalize);
+    const finalize = this.root.finalize ?? this.root.model;
+    if (finalize) result = yield* summarizeStoppedRun(result, finalize);
     if (this.root.afterRun) {
       const decision = yield* this.root.afterRun(createOutputCandidate(result), this.context);
       result = applyOutputDecision(result, decision);

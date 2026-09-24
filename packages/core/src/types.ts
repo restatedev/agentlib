@@ -194,8 +194,8 @@ export type AgentOptions<Context, Output = string> = {
   onApproval?: ApprovalHandler<Context>;
   /** Override the decision mechanism; onApproval only publishes the request. */
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
-  /** Optional tool-free final model call after interruption or a step limit. */
-  finalize?: Model;
+  /** Tool-free model call that summarizes an interrupted or step-limited run. Default: model; false skips it. */
+  finalize?: Model | false;
 };
 export type RunArguments<Context> = undefined extends Context
   ? [options?: RunOptions<Context>]

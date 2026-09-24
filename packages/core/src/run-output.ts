@@ -7,9 +7,9 @@ import {modelResponse} from "./validation.js";
 /** Summaries may fail, but native cancellation must still reach the caller. */
 export function* summarizeStoppedRun<O>(
   result: RunResult<O>,
-  finalize?: Model,
+  finalize: Model,
 ): Operation<RunResult<O>> {
-  if (result.status === "completed" || !finalize) return result;
+  if (result.status === "completed") return result;
   const request = {
     messages: [
       ...result.messages,

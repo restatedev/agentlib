@@ -282,6 +282,7 @@ const runner = r.service({
       let modelReturned = false;
       const a = agent({
         maxSteps: 6,
+        finalize: false,
         tools: {
           approval: tool({
             ...base,
@@ -467,6 +468,7 @@ const session = r.object({
       };
       const a = agent({
         maxSteps: ending === "stopped" ? 1 : 3,
+        finalize: false,
         tools: {
           write: tool({
             ...base,
@@ -523,6 +525,7 @@ const session = r.object({
     *interruptGuard() {
       const conversation = new LazyStateConversation();
       const result = yield* agent({
+        finalize: false,
         *model(): r.Operation<ModelResponse> {
           return {type: "final", text: "unapproved candidate"};
         },
