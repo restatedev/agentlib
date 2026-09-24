@@ -31,6 +31,7 @@ the request body required; object fields use `.default(...)`.
 | 14     | Search the public web                 | [14_web_search.ts](src/lessons/14_web_search.ts)                   |
 | 15     | Exchange feedback over durable RPC    | [15_peer_review_rpc.ts](src/lessons/15_peer_review_rpc.ts)         |
 | 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
+| 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
 
 If you have a specific goal, start here:
 
@@ -46,6 +47,7 @@ If you have a specific goal, start here:
 | Answer with current public sources   | [14](src/lessons/14_web_search.ts)      |
 | Let agents review each other\'s work | [15](src/lessons/15_peer_review_rpc.ts) |
 | Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
+| Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
 
 ## Start
 
@@ -435,6 +437,16 @@ Its shared `subscribe` handler waits for the next event.
 ```sh
 curl --globoff "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" &
 curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit" --json '{"job":"audit-1"}'
+```
+
+## 17 — Use tools from an MCP server
+
+`mcpTools` lists a remote server's tools once, journals the catalog, and turns
+each tool into a journaled step. The lesson uses the public
+[DeepWiki](https://deepwiki.com) server; set `MCP_SERVER_URL` to use another.
+
+```sh
+curl "$RESTATE_CALL_URL/RepoGuide/ask" --json '"In restatedev/restate, what is a virtual object?"'
 ```
 
 ## Model configuration

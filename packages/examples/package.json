@@ -67,6 +67,10 @@
     "./progress-feed": {
       "types": "./dist/lessons/16_progress_feed.d.ts",
       "import": "./dist/lessons/16_progress_feed.js"
+    },
+    "./mcp-tools": {
+      "types": "./dist/lessons/17_mcp_tools.d.ts",
+      "import": "./dist/lessons/17_mcp_tools.js"
     }
   },
   "scripts": {
