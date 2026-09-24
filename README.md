@@ -137,13 +137,13 @@ repeat a completed model call.
 | Typed output                 | `agent({output})`                                                          | [04](packages/examples/src/lessons/04_structured_output.ts) |
 | Human approval               | `needsApproval`, `onApproval`, `humanApprovalTool`                         | [06](packages/examples/src/lessons/06_human_approval.ts)    |
 | Steering and interruption    | `run(input, {steeringSignal, interruptSignal})`                            | [09](packages/examples/src/lessons/09_support_session.ts)   |
-| Handoffs                     | `handoff`                                                                  | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Handoffs                     | `handoff`                                                                  | —                                                           |
 | Sub-agents as tools          | `agentTool`                                                                | —                                                           |
 | Restate services as tools    | `serviceTool`, `handlerTool`, `restateTools` (`/discovery`)                | [10](packages/examples/src/lessons/10_service_tool.ts)      |
-| Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | [09](packages/examples/src/lessons/09_support_session.ts)   |
-| Tool search                  | `searchToolsTool`, `deferred: true`                                        | [09](packages/examples/src/lessons/09_support_session.ts)   |
-| Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | [09](packages/examples/src/lessons/09_support_session.ts)   |
-| MCP                          | `mcpTools` (`/mcp`)                                                        | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | —                                                           |
+| Tool search                  | `searchToolsTool`, `deferred: true`                                        | —                                                           |
+| Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
+| MCP                          | `mcpTools` (`/mcp`)                                                        | —                                                           |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
 | Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Models                       | `openAIModel` (`/openai`), `aiModel` and `modelGateway` (`/provider`)      | [shared.ts](packages/examples/src/shared.ts)                |

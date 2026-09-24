@@ -191,6 +191,7 @@ void test("interruption cancels inference and prevents its proposed tools", asyn
     (function* () {
       const stop = r.channel<string>();
       const a = agent({
+        finalize: false,
         *model() {
           steps++;
           try {

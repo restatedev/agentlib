@@ -71,6 +71,7 @@ void test("interruption during an output guard never persists the unaccepted can
       const stop = r.channel<string>();
       const convo = conversation();
       const a = agent({
+        finalize: false,
         *model() {
           return {type: "final", text: "unapproved secret"};
         },
