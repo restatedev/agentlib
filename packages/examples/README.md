@@ -23,7 +23,7 @@ the request body required; object fields use `.default(...)`.
 | 06     | Human approval                        | [06_human_approval.ts](src/lessons/06_human_approval.ts)           |
 | 07     | Concurrent agents                     | [07_racing_agents.ts](src/lessons/07_racing_agents.ts)             |
 | 08     | Parallel worker RPCs and synthesis    | [08_research_report.ts](src/lessons/08_research_report.ts)         |
-| 09     | Handoffs and session controls         | [09_support_session.ts](src/lessons/09_support_session.ts)         |
+| 09     | Conversation and turn controls        | [09_support_session.ts](src/lessons/09_support_session.ts)         |
 | 10     | A whole Restate service as one tool   | [10_service_tool.ts](src/lessons/10_service_tool.ts)               |
 | 11     | A coding agent in a Modal sandbox     | [11_coding_agent.ts](src/lessons/11_coding_agent.ts)               |
 | 12     | Route to a specialist                 | [12_routing.ts](src/lessons/12_routing.ts)                         |
@@ -251,26 +251,22 @@ The response is the final report as a string. Worker findings remain internal. T
 supplied documents and does not browse the web. Citation IDs are checked against
 tool reads; factual quality and final prose still depend on the model.
 
-## 09 — Build a controlled support session
+## 09 — Run a controlled support session
 
-This lesson combines persisted conversations and compaction, deferred tool
-search, programmatic tool calls, handoffs, background tools, approvals, steering,
-interruption, and optional MCP. The application's handlers expose history,
-approvals, controls, and run status. Ticket effects are demonstrations.
+A keyed object owns one conversation per key. `doTurn` runs one turn at a time
+and stores the messages in object state, compacting long conversations. While a
+turn runs, shared handlers inspect and control it: `status` shows the active
+turn and any pending approval, `steer` adds a message, `interrupt` stops the
+turn with a short summary, and `approve` answers an approval request. Ticket
+effects are demonstrations.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \
-  --json '{"message":"What can you do?"}'
+  --json '{"message":"Look up ticket T-42, then close it after my approval."}'
 ```
 
-Optional MCP configuration uses `MCP_SERVER_URL`, `MCP_PROTOCOL`, and `MCP_TOKEN`,
-read once at startup. It is the largest lesson; read the smaller ones first.
-
 `doTurn` returns only the answer or interruption summary. Read conversation
-history through `history` and control details through `status` when needed.
-
-The default turn requests a ticket lookup, a handoff, and approval before
-closing the demo ticket. `steer` and `interrupt` have example messages too.
+history through `history`. `steer` and `interrupt` have example messages.
 For `approve`, copy `invocationId` and `signalName` from `status().approval` and set
 `approved` to `true` to allow the action; its default is `false`.
 
@@ -342,8 +338,8 @@ curl --globoff "$RESTATE_CALL_URL/SupportRouter/answer" \
   --json '"I cannot log into my account. How can I regain access?"'
 ```
 
-The specialist starts a fresh run with only the question. Use the handoff in
-lesson 09 when the specialist should take over the **same** run and history.
+The specialist starts a fresh run with only the question. Use `handoff` when
+the specialist should take over the **same** run and history.
 
 ## 13 — Enforce a policy before an action
 

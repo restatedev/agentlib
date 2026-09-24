@@ -1,87 +1,36 @@
-// 09: Combine tools, handoffs, approvals, and controls in an application-owned session.
+// 09: Keep a conversation in a keyed object and control its running turn.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {
-  agent,
-  asyncTool,
-  cancelOperationTool,
-  handoff,
-  LazyStateConversation,
-  searchToolsTool,
-  sleepTool,
-  type ApprovalRequest,
-  type AsyncToolContext,
-} from "@restate-agents/core";
-import {mcpTools, type McpToolSet} from "@restate-agents/core/mcp";
-import {programTool} from "@restate-agents/core/program";
+import {agent, asyncTool, LazyStateConversation, type ApprovalRequest} from "@restate-agents/core";
 import {z} from "zod";
 import {exampleModel as model, replyText} from "../shared.js";
 
-// Read once at startup. Whether the MCP catalog is fetched decides which steps
-// the journal holds, so every replica must run with the same setting.
-const mcpServerUrl = process.env.MCP_SERVER_URL;
-const mcpProtocol = process.env.MCP_PROTOCOL === "stateful" ? "stateful" : "stateless";
-
-type SessionContext = {sessionKey: string};
 type ActiveTurn = {invocationId: string};
-const lookupTicket = asyncTool({
-  description:
-    "Look up a demo support ticket. This example does not connect to a ticketing system.",
-  input: z.object({ticket: z.string().min(1)}),
-  deferred: true,
-  provider: "support",
-  async execute({ticket}, {context}: AsyncToolContext<SessionContext>) {
-    return {ticket, status: "open", session: context.sessionKey};
-  },
-});
-const closeTicket = asyncTool({
-  description: "Close a demo ticket after human approval. No external ticket is changed.",
-  input: z.object({ticket: z.string().min(1)}),
-  needsApproval: true,
-  *before({ticket}) {
-    if (ticket === "locked") return "The locked ticket cannot be changed";
-  },
-  async execute({ticket}, context) {
-    return {
-      ticket,
-      status: "closed",
-      demo: true,
-      idempotencyKey: `${context.invocationId}:${context.callId}`,
-    };
-  },
-});
-const resolution = agent<SessionContext>({
-  name: "resolution",
-  model,
-  tools: {lookupTicket, closeTicket, searchTools: searchToolsTool()},
-  instructions:
-    "Resolve the support ticket. Tool policies require approval before closing a ticket.",
-});
-const support = agent<SessionContext>({
+
+const support = agent({
   name: "support",
   model,
-  finalize: model,
-  maxSteps: 12,
   instructions:
-    "Help with the user's task. Search for unfamiliar tools. Use the program tool for parallel data processing. Transfer ticket resolution to the specialist. Inspect background outcomes before finishing.",
+    "Help with the user's task. Look up tickets before changing them. Closing a ticket needs human approval.",
   tools: {
-    lookupTicket,
-    searchTools: searchToolsTool(),
-    program: programTool(),
-    sleep: sleepTool(),
-    cancelOperation: cancelOperationTool(),
-    resolution: handoff(resolution),
+    lookupTicket: asyncTool({
+      description: "Look up a demo support ticket. No ticketing system is called.",
+      input: z.object({ticket: z.string().min(1)}),
+      async execute({ticket}) {
+        return {ticket, status: "open"};
+      },
+    }),
+    closeTicket: asyncTool({
+      description: "Close a demo ticket after human approval. No external ticket is changed.",
+      input: z.object({ticket: z.string().min(1)}),
+      needsApproval: true,
+      async execute({ticket}) {
+        return {ticket, status: "closed"};
+      },
+    }),
   },
 });
 
-/** Deliver a control to the running turn; false when no turn is active. */
-function* signalActiveTurn(name: string, value: string): restate.Operation<boolean> {
-  const active = yield* restate.sharedState().get<ActiveTurn>("active");
-  if (!active) return false;
-  restate.invocation(active.invocationId).signal(name).resolve(value);
-  return true;
-}
-
-/** Application-owned session and control surface; none of this is required by the SDK. */
+/** One session per key. Turns run one at a time; the shared handlers inspect and control them. */
 export const aiSession = restate.object({
   name: "AiSession",
   handlers: {
@@ -91,34 +40,19 @@ export const aiSession = restate.object({
           message: z
             .string()
             .min(1)
-            .default(
-              "Look up ticket T-42, then transfer it to the resolution specialist to close it after my approval.",
-            ),
+            .default("Look up ticket T-42, then close it after my approval."),
         }),
         output: z.string(),
       },
       function* ({message}) {
-        const invocationId = restate.handlerRequest().id;
-        const context = {sessionKey: restate.handlerRequest().key!};
+        // The conversation lives in this object's state; long ones are summarized.
         const conversation = new LazyStateConversation({
           compaction: {model, policy: {maxMessages: 64, retainMessages: 12}},
         });
-        restate.state().set("active", {invocationId});
-        let remote: McpToolSet<SessionContext> | undefined;
+        restate.state().set("active", {invocationId: restate.handlerRequest().id});
         try {
-          if (mcpServerUrl)
-            remote = yield* mcpTools<SessionContext>({
-              url: mcpServerUrl,
-              namespace: "remote",
-              protocol: mcpProtocol,
-              *token() {
-                return process.env.MCP_TOKEN;
-              },
-            });
           const result = yield* support.run(message, {
-            context,
             conversation,
-            tools: remote?.tools,
             steeringSignal: "steering",
             interruptSignal: "interrupt",
             *onApproval(request) {
@@ -129,7 +63,6 @@ export const aiSession = restate.object({
         } finally {
           restate.state().clear("active");
           restate.state().clear("approval");
-          if (remote) yield* remote.close();
         }
       },
     ),
@@ -144,10 +77,7 @@ export const aiSession = restate.object({
     },
     steer: restate.schemas(
       {
-        input: z
-          .string()
-          .min(1)
-          .meta({default: "Focus on ticket T-42 and keep your answer short."}),
+        input: z.string().min(1).meta({default: "Only look up the ticket; do not close it."}),
         output: z.boolean(),
       },
       function* (message) {
@@ -179,6 +109,7 @@ export const aiSession = restate.object({
     ),
   },
   options: {
+    // Shared handlers run while doTurn holds the object's lock.
     handlers: {
       status: {shared: true},
       history: {shared: true},
@@ -188,3 +119,11 @@ export const aiSession = restate.object({
     },
   },
 });
+
+/** Deliver a control to the running turn; false when no turn is active. */
+function* signalActiveTurn(name: string, value: string): restate.Operation<boolean> {
+  const active = yield* restate.sharedState().get<ActiveTurn>("active");
+  if (!active) return false;
+  restate.invocation(active.invocationId).signal(name).resolve(value);
+  return true;
+}
