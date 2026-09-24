@@ -30,6 +30,7 @@ the request body required; object fields use `.default(...)`.
 | 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/lessons/13_tool_guardrail.ts)           |
 | 14     | Search the public web                 | [14_web_search.ts](src/lessons/14_web_search.ts)                   |
 | 15     | Exchange feedback over durable RPC    | [15_peer_review_rpc.ts](src/lessons/15_peer_review_rpc.ts)         |
+| 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 
 If you have a specific goal, start here:
 
@@ -44,6 +45,7 @@ If you have a specific goal, start here:
 | Enforce a budget before an action    | [13](src/lessons/13_tool_guardrail.ts)  |
 | Answer with current public sources   | [14](src/lessons/14_web_search.ts)      |
 | Let agents review each other\'s work | [15](src/lessons/15_peer_review_rpc.ts) |
+| Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
 
 ## Start
 
@@ -256,13 +258,9 @@ tool reads; factual quality and final prose still depend on the model.
 A keyed object owns one conversation per key. `doTurn` runs one turn at a time
 and stores the messages in object state, compacting long conversations. While a
 turn runs, shared handlers inspect and control it: `status` shows the active
-turn, its latest progress event, and any pending approval, `steer` adds a
-message, `interrupt` stops the turn with a short summary, and `approve` answers
-an approval request. Ticket effects are demonstrations.
-
-`onProgress` receives each event before the run continues, and receives the
-same events again on replay. Writing state is safe; wrap an external call in
-`restate.run`, or send it to another service, so it happens once.
+turn and any pending approval, `steer` adds a message, `interrupt` stops the
+turn with a short summary, and `approve` answers an approval request. Ticket
+effects are demonstrations.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/AiSession/bob/doTurn" \
@@ -428,6 +426,29 @@ The caller receives only the revised answer. Restate journals each RPC, so a
 replay does not repeat completed author or reviewer calls. The example uses
 `awaitChild` to cancel unfinished child invocations if the coordinator is
 interrupted. There is no shared mailbox or bespoke agent-to-agent protocol.
+
+## 16 — Follow an agent's progress
+
+`InventoryAudit` runs an agent whose tool counts several warehouses and reports
+after each one with `context.progress`. The run's `onProgress` handler sends
+every event one way to a `ProgressFeed` object keyed by the job, so the agent
+never waits for the feed. After the run, the service publishes a `done` message
+with the reply.
+
+`ProgressFeed` keeps the messages in order. Its shared `subscribe` handler
+returns the messages after an offset, or waits until the next one is published.
+A client reads from `0`, then from the number of messages it has seen, until it
+receives `done`.
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit/send" \
+  --json '{"job":"audit-1","request":"Count stock in Berlin, Lisbon, and Oslo, then name the lowest one."}'
+curl --globoff "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" --json '{"after":0}'
+```
+
+`onProgress` runs before the agent continues, and replay delivers the same
+events again. The sends are journaled, so each event reaches the feed once.
+Wrap any other external effect in `restate.run`.
 
 ## Model configuration
 

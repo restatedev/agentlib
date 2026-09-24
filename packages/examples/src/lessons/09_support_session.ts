@@ -1,12 +1,6 @@
 // 09: Keep a conversation in a keyed object and control its running turn.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {
-  agent,
-  asyncTool,
-  LazyStateConversation,
-  type ApprovalRequest,
-  type ProgressEvent,
-} from "@restate-agents/core";
+import {agent, asyncTool, LazyStateConversation, type ApprovalRequest} from "@restate-agents/core";
 import {z} from "zod";
 import {exampleModel as model, replyText} from "../shared.js";
 
@@ -64,16 +58,11 @@ export const aiSession = restate.object({
             *onApproval(request) {
               restate.state().set("approval", request);
             },
-            // Keep only the latest event; status() shows what the turn is doing.
-            *onProgress(event) {
-              restate.state().set("progress", event);
-            },
           });
           return replyText(result);
         } finally {
           restate.state().clear("active");
           restate.state().clear("approval");
-          restate.state().clear("progress");
         }
       },
     ),
@@ -81,7 +70,6 @@ export const aiSession = restate.object({
       return {
         active: yield* restate.sharedState().get<ActiveTurn>("active"),
         approval: yield* restate.sharedState().get<ApprovalRequest>("approval"),
-        progress: yield* restate.sharedState().get<ProgressEvent>("progress"),
       };
     },
     *history() {

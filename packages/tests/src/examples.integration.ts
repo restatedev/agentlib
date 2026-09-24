@@ -208,6 +208,17 @@ const fixtureModel: Model = function* (request) {
     }
     return {type: "final", text: `Session answer; previous turns: ${turns.length - 1}`};
   }
+  if (instructions.startsWith("Audit stock.")) {
+    const result = request.messages.find((message) => message.role === "tool");
+    if (!result)
+      return {
+        type: "tool_calls",
+        calls: [{id: "count", name: "countStock", input: {warehouses: ["Berlin", "Oslo"]}}],
+      };
+    assert.equal(result.role, "tool");
+    assert.deepEqual(result.result, {status: "success", output: {Berlin: 42, Oslo: 28}});
+    return {type: "final", text: "Oslo has the least stock."};
+  }
   if (instructions.startsWith("Choose the one specialist")) {
     const specialist = prompt(request).includes("feature") ? "product" : "account";
     return answer({specialist});
@@ -303,6 +314,7 @@ const [
   {supportRouter},
   {guardedBooking},
   {peerAuthor, peerReviewer, peerReview},
+  {progressFeed, inventoryAudit},
 ] = await Promise.all([
   import("@restate-agents/examples/hello"),
   import("@restate-agents/examples/tools"),
@@ -316,6 +328,7 @@ const [
   import("@restate-agents/examples/routing"),
   import("@restate-agents/examples/tool-guardrail"),
   import("@restate-agents/examples/peer-review-rpc"),
+  import("@restate-agents/examples/progress-feed"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -339,6 +352,8 @@ before(
         peerAuthor,
         peerReviewer,
         peerReview,
+        progressFeed,
+        inventoryAudit,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -599,3 +614,32 @@ void test("racing fails clearly if neither agent completes", async () => {
     /Neither candidate produced a completed answer/,
   );
 });
+
+void test(
+  "16: a subscriber follows the audit's progress until it is done",
+  {timeout: 30000},
+  async () => {
+    const feed = ingress().client(progressFeed, "audit-test");
+    // Nothing is published yet, so this subscriber waits for the first message.
+    const first = feed.subscribe({after: 0});
+    const reply = await ingress()
+      .client(inventoryAudit)
+      .audit({job: "audit-test", request: "Count stock in Berlin and Oslo."});
+    assert.equal(reply, "Oslo has the least stock.");
+    const seen = await first;
+    while (seen.at(-1)?.type !== "done") seen.push(...(await feed.subscribe({after: seen.length})));
+    // Always-replay runs the handler again, but each journaled send reaches the feed once.
+    assert.deepEqual(
+      seen.map((message) => message.type),
+      ["step", "tool-start", "tool-progress", "tool-progress", "tool-end", "step", "done"],
+    );
+    assert.deepEqual(
+      seen.filter((message) => message.type === "tool-progress").map((message) => message.value),
+      [
+        {counted: 1, of: 2},
+        {counted: 2, of: 2},
+      ],
+    );
+    assert.deepEqual(seen.at(-1), {type: "done", reply});
+  },
+);

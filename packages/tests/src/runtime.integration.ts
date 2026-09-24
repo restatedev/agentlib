@@ -761,7 +761,6 @@ void test("the embeddable session example exposes shared controls without model 
   const client = connect({url: env.baseUrl()}).client(aiSession, "example");
   const status = await client.status();
   assert.equal(status.approval, null);
-  assert.equal(status.progress, null);
   assert.deepEqual(await client.history(), {messages: [], next: 0});
   assert.equal(await client.steer("new note"), false);
   assert.equal(await client.interrupt("stop"), false);
