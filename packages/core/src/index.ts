@@ -42,6 +42,7 @@ export type {
 export type {
   RunContext,
   ApprovalRequest,
+  ApproveOptions,
   ApprovalHandler,
   ProgressEvent,
   ProgressHandler,

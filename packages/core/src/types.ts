@@ -57,7 +57,10 @@ export type ApprovalRequest = {
   call: ToolCall;
   signalName: string;
   question?: string;
+  /** Application data for the approval handlers, such as the policy that asked. */
+  details?: JsonValue;
 };
+export type ApproveOptions = {question?: string; details?: JsonValue};
 /** Publish an approval request before the SDK waits for its decision. */
 export type ApprovalHandler<Context = unknown> = (
   request: ApprovalRequest,
@@ -89,7 +92,7 @@ export type ToolContext<Context> = RunContext<Context> & {
   availableTools(): string[];
   searchTools(query: string): Operation<{name: string; description: string}[]>;
   step: number;
-  approve(input: JsonValue, question?: string): Operation<boolean>;
+  approve(input: JsonValue, options?: ApproveOptions): Operation<boolean>;
   /** Publish an approval request through this run's handlers without waiting for it,
    * e.g. one raised inside a sub-agent. */
   readonly publishApproval: (request: ApprovalRequest) => Operation<void>;

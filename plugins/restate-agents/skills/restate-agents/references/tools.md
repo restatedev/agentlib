@@ -86,7 +86,9 @@ Objects and workflows also take a `key`. Configure retries with
 
 `restateTools({adminUrl, allow})` from `@restate-agents/core/discovery`
 builds tools from every registered handler annotated with the metadata key
-`restate.dev/agent`. Filter the result with `allow`.
+`restate.dev/agent`. Filter the result with `allow`. The result's `targets`
+maps each tool name to its handler (`service`, `handler`, `keyed`), for
+permissions keyed by `service/handler`.
 
 ## Per-request resources through context
 

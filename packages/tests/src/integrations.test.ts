@@ -80,6 +80,9 @@ void test("Restate discovery filters permissions, rewrites nested refs, and snap
           },
         });
         assert.deepEqual(Object.keys(found.tools), ["read"]);
+        assert.deepEqual(found.targets, {
+          read: {service: "Allowed", handler: "read", keyed: true, acceptsInput: true},
+        });
         const schema = found.tools.read.inputSchema;
         assert.match(JSON.stringify(schema), /key/);
         assert.match(JSON.stringify(schema), /id/);
