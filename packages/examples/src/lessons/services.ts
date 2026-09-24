@@ -15,6 +15,7 @@ import {guardedBooking} from "./13_tool_guardrail.js";
 import {webResearch} from "./14_web_search.js";
 import {peerAuthor, peerReview, peerReviewer} from "./15_peer_review_rpc.js";
 import {inventoryAudit, progressFeed} from "./16_progress_feed.js";
+import {docsGuide} from "./17_mcp_tools.js";
 
 export const services = [
   hello,
@@ -38,4 +39,5 @@ export const services = [
   peerReview,
   progressFeed,
   inventoryAudit,
+  docsGuide,
 ];

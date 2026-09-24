@@ -144,7 +144,7 @@ repeat a completed model call.
 | Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | —                                                           |
 | Tool search                  | `searchToolsTool`, `deferred: true`                                        | —                                                           |
 | Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
-| MCP                          | `mcpTools` (`/mcp`)                                                        | —                                                           |
+| MCP                          | `mcpTools` (`/mcp`)                                                        | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
 | Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Models                       | `openAIModel` (`/openai`), `aiModel` and `modelGateway` (`/provider`)      | [shared.ts](packages/examples/src/shared.ts)                |
