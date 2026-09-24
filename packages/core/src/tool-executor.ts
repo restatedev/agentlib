@@ -123,12 +123,13 @@ export function createToolExecutor<C>({
         });
         return registry.search.load(selected);
       },
-      *approve(input, question) {
+      *approve(input, {question, details} = {}) {
         const request: ApprovalRequest = {
           invocationId: context.invocationId,
           call: {...call, input},
           signalName: `${context.name}:approval:${call.id}:${approvals++}`,
           ...(question === undefined ? {} : {question}),
+          ...(details === undefined ? {} : {details: jsonSchema.parse(details)}),
         };
         yield* publishApproval(request);
         const decider = policies.findLast((p) => p.onHumanApproval);

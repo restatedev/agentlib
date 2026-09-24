@@ -28,7 +28,7 @@ export function humanApprovalTool() {
     background: true,
     *execute(input, context) {
       // Approve here rather than with needsApproval, so the request carries the question.
-      if (!(yield* context.approve(input, input.question)))
+      if (!(yield* context.approve(input, {question: input.question})))
         throw new ToolDenied("Human approval denied");
       return {approved: true};
     },

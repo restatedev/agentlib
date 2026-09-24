@@ -88,7 +88,12 @@ function byCodeUnits(left: string, right: string): number {
 /** Snapshot annotated Restate handlers once per run. */
 export function* restateTools<C = unknown>(
   options: RestateDiscoveryOptions,
-): Operation<{tools: Record<string, Tool<C>>; warnings: string[]}> {
+): Operation<{
+  tools: Record<string, Tool<C>>;
+  /** The handler behind each tool, e.g. for permissions keyed by service/handler. */
+  targets: Record<string, RestateToolTarget>;
+  warnings: string[];
+}> {
   const token = options.token ? yield* options.token() : undefined;
   const catalog = yield* run(
     async ({signal}) => {
@@ -109,6 +114,7 @@ export function* restateTools<C = unknown>(
   );
   const reserved = new Set(options.reservedNames ?? []);
   const tools = new Map<string, Tool<C>>();
+  const targets = new Map<string, RestateToolTarget>();
   const warnings: string[] = [];
   const handlers = catalog.services
     .flatMap((service) => service.handlers.map((handler) => ({service, handler})))
@@ -161,7 +167,8 @@ export function* restateTools<C = unknown>(
       }),
       inputSchema: inputSchema(raw, target),
     });
+    targets.set(name, target);
     reserved.add(name);
   }
-  return {tools: Object.fromEntries(tools), warnings};
+  return {tools: Object.fromEntries(tools), targets: Object.fromEntries(targets), warnings};
 }

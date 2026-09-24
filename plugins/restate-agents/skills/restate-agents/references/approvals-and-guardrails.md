@@ -112,6 +112,11 @@ yield* booking.run(question, {context: {hotelId, quotedTotalCents, maxTotalCents
 | `afterTool(output, ctx)`   | After every tool call       | the (possibly redacted) output                                      |
 | `afterRun(candidate, ctx)` | On the final result         | nothing to accept, `{output}` to replace, or throw `GuardrailError` |
 
+A hook can also ask a human first: `ctx.approve(call.input, {question,
+details})` waits for the decision. `details` is any JSON value, such as the
+policy that asked; it reaches `onApproval` and `onHumanApproval` on the
+request.
+
 Lesson 08 uses `afterRun` to reject a research finding that cites a source
 the worker never read. The tool records reads in `context`, and `afterRun`
 compares them with the cited IDs.

@@ -662,6 +662,40 @@ void test("humanApprovalTool puts the model's question on the approval request",
   assert.deepEqual(questions, ["Refund $40?"]);
 });
 
+void test("approval details reach the approval handlers", async () => {
+  let step = 0;
+  const seen: unknown[] = [];
+  const a = agent({
+    tools: {
+      refund: tool({
+        description: "Refund an order.",
+        input: z.object({cents: z.number()}),
+        *execute(input, context) {
+          const approved = yield* context.approve(input, {
+            question: "Refund?",
+            details: {policy: "large-refunds"},
+          });
+          return {approved};
+        },
+      }),
+    },
+    *onApproval(request) {
+      seen.push(request.details);
+    },
+    *onHumanApproval(request) {
+      seen.push(request.details);
+      return true;
+    },
+    *model() {
+      if (++step === 1) return batch(call("refund", "refund", {cents: 4000}));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status, "completed");
+  assert.deepEqual(seen, [{policy: "large-refunds"}, {policy: "large-refunds"}]);
+});
+
 void test("an instructions function is called as a method", async () => {
   const definition = {
     tone: "brief",
