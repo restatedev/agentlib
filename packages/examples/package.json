@@ -59,6 +59,10 @@
     "./web-search": {
       "types": "./dist/lessons/14_web_search.d.ts",
       "import": "./dist/lessons/14_web_search.js"
+    },
+    "./peer-review-rpc": {
+      "types": "./dist/lessons/15_peer_review_rpc.d.ts",
+      "import": "./dist/lessons/15_peer_review_rpc.js"
     }
   },
   "scripts": {
