@@ -41,12 +41,6 @@ importers:
       '@opentelemetry/api':
         specifier: 1.9.0
         version: 1.9.0
-      '@restatedev/restate-sdk':
-        specifier: ^1.17.2
-        version: 1.17.2
-      '@restatedev/restate-sdk-gen':
-        specifier: 1.17.2
-        version: 1.17.2(@restatedev/restate-sdk@1.17.2)
       ai:
         specifier: 7.0.26
         version: 7.0.26(zod@4.6.5)
@@ -62,6 +56,13 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+    devDependencies:
+      '@restatedev/restate-sdk':
+        specifier: ^1.17.2
+        version: 1.17.2
+      '@restatedev/restate-sdk-gen':
+        specifier: 1.17.2
+        version: 1.17.2(@restatedev/restate-sdk@1.17.2)
 
   packages/examples:
     dependencies:

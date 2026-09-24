@@ -45,12 +45,18 @@
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.31.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@opentelemetry/api": "1.9.0",
-    "@restatedev/restate-sdk": "^1.17.2",
-    "@restatedev/restate-sdk-gen": "1.17.2",
     "ai": "7.0.26",
     "minisearch": "7.2.0",
     "openai": "^7.17.0",
     "quickjs-emscripten-core": "0.31.0",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@restatedev/restate-sdk": "^1.17.2",
+    "@restatedev/restate-sdk-gen": "1.17.2"
+  },
+  "peerDependencies": {
+    "@restatedev/restate-sdk": "^1.17.2",
+    "@restatedev/restate-sdk-gen": "1.17.2"
   }
 }

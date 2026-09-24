@@ -105,6 +105,18 @@ function* (task) {
 }
 ```
 
+Inside `agent<Ctx>({tools: {...}})`, `context` is typed from the agent. A
+tool defined on its own needs the type on its variable, or `context` is
+`unknown`:
+
+```ts
+const readFile: Tool<Ctx> = asyncTool({
+  description: "Read a text file.",
+  input: z.object({path: z.string()}),
+  execute: ({path}, {context}) => context.sandbox.filesystem.readText(path),
+});
+```
+
 ## Remote and built-in tools
 
 ```ts
