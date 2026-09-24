@@ -13,6 +13,7 @@ import {codingAgent} from "./11_coding_agent.js";
 import {supportRouter} from "./12_routing.js";
 import {guardedBooking} from "./13_tool_guardrail.js";
 import {webResearch} from "./14_web_search.js";
+import {peerAuthor, peerReview, peerReviewer} from "./15_peer_review_rpc.js";
 
 export const services = [
   hello,
@@ -31,4 +32,7 @@ export const services = [
   supportRouter,
   guardedBooking,
   webResearch,
+  peerAuthor,
+  peerReviewer,
+  peerReview,
 ];

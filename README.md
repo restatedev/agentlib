@@ -104,8 +104,10 @@ console.log(answer);
   budget before it runs.
   [See human approval](packages/examples/src/lessons/06_human_approval.ts) and
   [a tool guardrail](packages/examples/src/lessons/13_tool_guardrail.ts).
-- **Research across workers.** Fan out typed Restate RPCs and synthesize their
-  results. [See the research report](packages/examples/src/lessons/08_research_report.ts).
+- **Agents working together over RPC.** Fan out typed Restate RPCs and
+  synthesize the results, or have agents review each other's drafts.
+  [See the research report](packages/examples/src/lessons/08_research_report.ts)
+  and [the peer review](packages/examples/src/lessons/15_peer_review_rpc.ts).
 - **Coding in a Modal sandbox.** Give an agent file and shell tools backed by a
   [Modal](https://modal.com) sandbox (needs Modal credentials).
   [See the coding agent](packages/examples/src/lessons/11_coding_agent.ts).
