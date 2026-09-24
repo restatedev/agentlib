@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, tool, type ProgressEvent} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 /** A tiny pub/sub object: each subscriber receives the next published event. */
 export const progressFeed = restate.object({
@@ -65,7 +65,8 @@ export const inventoryAudit = restate.service({
             feed.publish(event);
           },
         });
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },

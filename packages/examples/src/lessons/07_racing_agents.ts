@@ -4,7 +4,7 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {z} from "zod";
-import {completedOutput, exampleModel as model} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const candidates = {
   quick: agent({
@@ -26,7 +26,10 @@ type Candidate = (typeof candidates)[keyof typeof candidates];
 
 function* answerWith(name: string, candidate: Candidate, question: string) {
   const result = yield* candidate.run(question, {name});
-  return completedOutput(result);
+  // A stopped or interrupted run fails its branch, so it cannot win the race.
+  if (result.status !== "completed")
+    throw new TerminalError(`${name} ${result.status}: ${result.reason}`);
+  return result.output;
 }
 
 export const racingAgents = restate.service({

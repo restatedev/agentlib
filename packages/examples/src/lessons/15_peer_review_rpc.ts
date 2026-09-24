@@ -1,8 +1,9 @@
 // 15: Exchange drafts and feedback between agents through typed Restate RPCs.
+import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {z} from "zod";
-import {completedOutput, exampleModel as model} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const brief = z.string().min(1).max(4000);
 const draft = z.string().min(1).max(12000);
@@ -36,7 +37,10 @@ export const peerAuthor = restate.service({
       },
       function* (request) {
         const name = request.draft ? "revision" : "first-draft";
-        return completedOutput(yield* author.run(JSON.stringify(request), {name}));
+        const result = yield* author.run(JSON.stringify(request), {name});
+        if (result.status !== "completed")
+          throw new TerminalError(`Author ${result.status}: ${result.reason}`);
+        return result.output;
       },
     ),
   },
@@ -48,9 +52,12 @@ export const peerReviewer = restate.service({
     review: restate.schemas(
       {input: z.object({brief, draft, focus}), output: z.string().min(1).max(2000)},
       function* (request) {
-        return completedOutput(
-          yield* reviewer.run(JSON.stringify(request), {name: `review-${request.focus}`}),
-        );
+        const result = yield* reviewer.run(JSON.stringify(request), {
+          name: `review-${request.focus}`,
+        });
+        if (result.status !== "completed")
+          throw new TerminalError(`Reviewer ${result.status}: ${result.reason}`);
+        return result.output;
       },
     ),
   },

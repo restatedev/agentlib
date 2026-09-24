@@ -19,6 +19,7 @@ function fixture(
     expired?: boolean;
     toolError?: boolean;
     badSchema?: boolean;
+    unavailable?: boolean;
   } = {},
 ) {
   const seen: Seen[] = [];
@@ -51,6 +52,8 @@ function fixture(
       return new Response(null, {status: 401});
     if (config.expired && message.method === "tools/call")
       return new Response("Session not found", {status: 404});
+    if (config.unavailable && message.method === "tools/call")
+      return new Response("Unavailable", {status: 503});
     let result: Record<string, unknown>;
     const out: Record<string, string> = {"Content-Type": "application/json"};
     if (message.method === "initialize") {
@@ -124,6 +127,41 @@ void test("MCP skips a tool whose input schema is unsupported and keeps the rest
     tools: ["remote_lookup", "remote_forbidden"],
     warnings: ["Ignored MCP tool with an unsupported input schema: remote_broken"],
   });
+});
+
+void test("MCP tool calls use the configured retry policy", async () => {
+  const mock = fixture("stateless", {unavailable: true});
+  const {output} = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        const mcp = yield* mcpTools({
+          url: "https://fixture.test/mcp",
+          namespace: "remote",
+          protocol: "stateless",
+          fetch: mock.fetch,
+          retry: {maxAttempts: 1},
+          deferred: false,
+        });
+        const a = agent({
+          tools: mcp.tools,
+          *model(req): r.Operation<ModelResponse> {
+            const result = req.messages.find((m) => m.role === "tool");
+            if (!result)
+              return {
+                type: "tool_calls",
+                calls: [{id: "lookup-1", name: "remote_lookup", input: {id: "42"}}],
+              };
+            assert.equal(result.result.status, "error");
+            return {type: "final", text: "done"};
+          },
+        });
+        return (yield* a.run("find it")).status;
+      })(),
+    ),
+  );
+  assert.equal(output, "completed");
+  assert.equal(mock.seen.filter((x) => x.method === "tools/call").length, 1);
 });
 
 for (const protocol of ["stateless", "stateful"] as const) {

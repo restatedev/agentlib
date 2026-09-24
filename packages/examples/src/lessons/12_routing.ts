@@ -1,8 +1,9 @@
 // 12: Use a structured decision to route a request to one specialist.
+import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {z} from "zod";
-import {completedOutput, exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const route = agent({
   model,
@@ -40,9 +41,13 @@ export const supportRouter = restate.service({
         output: z.string(),
       },
       function* (question) {
-        const {specialist} = completedOutput(yield* route.run(question));
+        const routed = yield* route.run(question);
+        if (routed.status !== "completed")
+          throw new TerminalError(`Router ${routed.status}: ${routed.reason}`);
+        const {specialist} = routed.output;
         const result = yield* specialists[specialist].run(question);
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },

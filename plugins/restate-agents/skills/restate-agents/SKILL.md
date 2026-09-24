@@ -104,7 +104,7 @@ Restate journals. Move on only when the learner is ready.
 - [ ] Define agents at module scope. Run them inside handlers or tools with
       `yield* agent.run(...)`.
 - [ ] Handle every `RunResult` status: `completed`, `stopped` (hit
-      `maxSteps`), and `interrupted`. Do not read `output` as the answer
+      `maxSteps` or `maxToolCalls`), and `interrupted`. Do not read `output` as the answer
       unless the status is `completed`.
 - [ ] Give each run a distinct `name` when one handler runs the same agent
       more than once (loops, races), so journal entries and approval signals

@@ -1,9 +1,10 @@
 // 05: Compose structured agent runs in a bounded draft-and-review loop.
 // Reimplements restatedev/ai-examples' evaluator-optimizer using typed agent outputs.
+import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {z} from "zod";
-import {completedOutput, exampleModel as model} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const MAX_ITERATIONS = 3;
 const evaluationSchema = z.object({approved: z.boolean(), feedback: z.string().min(1).max(4000)});
@@ -45,19 +46,19 @@ export const codeReview = restate.service({
         let feedback = "";
         for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           // Distinct run names keep event IDs and approval namespaces independent.
-          const draft = completedOutput(
-            yield* generator.run(JSON.stringify({task, previousCode: code, feedback}), {
-              name: `write-${iteration}`,
-            }),
-          );
-          code = draft.code;
-          const review = completedOutput(
-            yield* evaluator.run(JSON.stringify({task, code}), {
-              name: `review-${iteration}`,
-            }),
-          );
-          if (review.approved) return code;
-          feedback = review.feedback;
+          const draft = yield* generator.run(JSON.stringify({task, previousCode: code, feedback}), {
+            name: `write-${iteration}`,
+          });
+          if (draft.status !== "completed")
+            throw new TerminalError(`Writer ${draft.status}: ${draft.reason}`);
+          code = draft.output.code;
+          const review = yield* evaluator.run(JSON.stringify({task, code}), {
+            name: `review-${iteration}`,
+          });
+          if (review.status !== "completed")
+            throw new TerminalError(`Reviewer ${review.status}: ${review.reason}`);
+          if (review.output.approved) return code;
+          feedback = review.output.feedback;
         }
         return `The draft still needs work after ${MAX_ITERATIONS} reviews: ${feedback}\n\n${code}`;
       },

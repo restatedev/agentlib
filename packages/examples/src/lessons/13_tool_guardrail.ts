@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, asyncTool} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 type BookingContext = {hotelId: string; quotedTotalCents: number; maxTotalCents: number};
 
@@ -42,7 +42,8 @@ export const guardedBooking = restate.service({
         const question = `Book demo hotel ${hotelId} at the quoted total of $${(quotedTotalCents / 100).toFixed(2)}.`;
         const context = {hotelId, quotedTotalCents, maxTotalCents};
         const result = yield* bookingAgent.run(question, {context});
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },

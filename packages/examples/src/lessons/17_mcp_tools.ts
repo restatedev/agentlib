@@ -3,7 +3,7 @@ import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restate-agents/core";
 import {mcpTools} from "@restate-agents/core/mcp";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const guide = agent({
   model,
@@ -29,7 +29,8 @@ export const docsGuide = restate.service({
           allow: (name) => name !== "submit_feedback",
         });
         const result = yield* guide.run(question, {tools: docs.tools});
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },

@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, asyncTool, type ApprovalRequest} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 const support = agent({
   model,
@@ -36,7 +36,8 @@ export const ticketApproval = restate.object({
               restate.state().set("approval", request);
             },
           });
-          return replyText(result);
+          if (result.status !== "completed") return result.output ?? result.reason;
+          return result.output;
         } finally {
           // A failed run must not leave a request that nobody is waiting for.
           restate.state().clear("approval");

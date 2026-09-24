@@ -49,7 +49,13 @@ void test("a tool call reports start, display info, progress, and its result in 
     {type: "tool-start", callId: "b", name: "build", input: {}},
     {type: "tool-info", callId: "b", info: {name: "Build the project"}},
     {type: "tool-progress", callId: "b", value: {percent: 50}},
-    {type: "tool-end", callId: "b", name: "build", result: {status: "success", output: "built"}},
+    {
+      type: "tool-end",
+      callId: "b",
+      name: "build",
+      result: {status: "success", output: "built"},
+      info: {name: "Build the project"},
+    },
     {type: "step", step: 2},
   ]);
 });
@@ -192,6 +198,7 @@ void test("an interrupted tool still reports its cancelled result", async () => 
     callId: "wait",
     name: "wait",
     result: {status: "cancelled", message: "stop"},
+    info: {name: "wait", details: {}},
   });
 });
 

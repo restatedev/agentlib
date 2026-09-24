@@ -28,6 +28,12 @@ export const model = aiModel({model: anthropic("claude-sonnet-5"), retry: {maxAt
 `onChunk` for streaming text to a UI. Different agents can use different
 models: set `model` on each agent.
 
+Both adapters send a tool schema in strict mode when it has an exact strict
+form, so the model's arguments always match it: every property is required
+(use `.nullable()` rather than `.optional()`) and there are no free-form maps.
+`openAIModel` does the same for `output` schemas. Other schemas are sent as
+they are.
+
 `modelGateway(call)` sends model requests to another Restate handler. Use it
 to centralize keys, quotas, or routing in one service:
 

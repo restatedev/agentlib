@@ -4,6 +4,7 @@ import {
   AgentLimitError,
   denial,
   RunInterrupted,
+  ToolBudgetExceeded,
   ToolCancelled,
   ToolDenied,
   ToolError,
@@ -58,14 +59,14 @@ export function createToolExecutor<C>({
     registry: ToolCatalog<C>,
     depth = 0,
   ): Operation<ToolResult> {
-    if (++calls > maxToolCalls) throw new AgentLimitError("Maximum tool calls exceeded");
+    if (++calls > maxToolCalls) throw new ToolBudgetExceeded("Maximum tool calls reached");
     if (depth > maxToolDepth) throw new AgentLimitError("Maximum nested tool depth exceeded");
     const definition = registry.registry.get(call.name);
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
     yield* progress({type: "tool-start", callId: call.id, name: call.name, input: call.input});
-    const result = yield* runCall(call, callStep, owner, registry, definition, depth);
-    yield* progress({type: "tool-end", callId: call.id, name: call.name, result});
+    const {result, info} = yield* runCall(call, callStep, owner, registry, definition, depth);
+    yield* progress({type: "tool-end", callId: call.id, name: call.name, result, info});
     return result;
   }
 
@@ -76,7 +77,7 @@ export function createToolExecutor<C>({
     registry: ToolCatalog<C>,
     definition: Tool<C>,
     depth: number,
-  ): Operation<ToolResult> {
+  ): Operation<{result: ToolResult; info: ToolInfo}> {
     // Root policies wrap the owner's: they check first and post-process last.
     const policies = [...new Set([root, owner])];
     let nestedCalls = 0;
@@ -162,31 +163,53 @@ export function createToolExecutor<C>({
     try {
       for (const policy of policies) {
         if (!policy.beforeTool) continue;
-        const reason = denial(yield* policy.beforeTool(structuredClone(call), toolContext));
+        const reason = denial(
+          yield* checked(policy.beforeTool(structuredClone(call), toolContext)),
+        );
         if (reason !== undefined) throw new ToolDenied(reason);
       }
       let output = yield* definition.execute(call.input, toolContext);
       for (const policy of policies.toReversed()) {
-        if (policy.afterTool) output = yield* policy.afterTool(output, toolContext);
+        if (policy.afterTool) output = yield* checked(policy.afterTool(output, toolContext));
       }
       output = toolOutput(output);
       if (JSON.stringify(output).length > maxOutputChars)
         throw new ToolError("Tool output exceeds maxOutputChars", "output_limit");
-      return {status: "success", output};
+      return {result: {status: "success", output}, info: structuredClone(info)};
     } catch (error) {
-      return failedResult(error);
+      return {result: failedResult(error), info: structuredClone(info)};
     }
   }
 
   return {
     // Reject an oversized model batch before any of its effects start.
     assertCapacity(count: number) {
-      if (calls + count > maxToolCalls) throw new AgentLimitError("Maximum tool calls exceeded");
+      if (calls + count > maxToolCalls) throw new ToolBudgetExceeded("Maximum tool calls reached");
     },
     execute(call: ToolCall, step: number, owner: AgentRuntime<C>, catalog: ToolCatalog<C>) {
       return executeCall(call, step, owner, catalog);
     },
   };
+}
+
+/** A policy that fails terminally blocks the call, and tells the model the check
+ * failed rather than the tool. */
+function* checked<T>(policy: Operation<T>): Operation<T> {
+  try {
+    return yield* policy;
+  } catch (error) {
+    if (terminalFailure(error))
+      throw new ToolError(`Policy check failed: ${error.message}`, "guardrail_failed");
+    throw error;
+  }
+}
+
+function terminalFailure(error: unknown): error is TerminalError {
+  return (
+    error instanceof TerminalError &&
+    !(error instanceof CancelledError) &&
+    !(error instanceof AgentLimitError)
+  );
 }
 
 /** Maps settled tool failures to results the model can act on. A terminal
@@ -199,12 +222,7 @@ function failedResult(error: unknown): ToolResult {
   if (error instanceof ToolDenied) return {status: "denied", message: error.message};
   if (error instanceof ToolError)
     return {status: "error", code: error.code, message: error.message};
-  if (
-    error instanceof TerminalError &&
-    !(error instanceof CancelledError) &&
-    !(error instanceof AgentLimitError)
-  )
-    return {status: "error", code: "tool_failed", message: error.message};
+  if (terminalFailure(error)) return {status: "error", code: "tool_failed", message: error.message};
   throw error;
 }
 

@@ -2,7 +2,7 @@
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, serviceTool} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 // The interface (contract). Its descriptions are surfaced to the model by serviceTool,
 // so the agent knows what each handler does without any extra wiring.
@@ -55,7 +55,8 @@ export const refundAgent = restate.service({
       },
       function* (message) {
         const result = yield* support.run(message);
-        return replyText(result);
+        if (result.status !== "completed") return result.output ?? result.reason;
+        return result.output;
       },
     ),
   },

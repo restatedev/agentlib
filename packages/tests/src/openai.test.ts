@@ -73,6 +73,8 @@ void test(
     assert.equal(requests[0]!.model, "test-model");
     assert.equal(requests[0]!.temperature, 0);
     assert.equal(requests[0]!.tools[0].function.name, "lookup");
+    assert.equal(requests[0]!.tools[0].function.strict, true);
+    assert.equal(requests[0]!.tools[0].function.parameters.additionalProperties, false);
     assert.deepEqual(requests[1]!.messages, [
       {role: "system", content: "Help with tickets"},
       {role: "user", content: "Find ticket 123"},

@@ -3,7 +3,7 @@ import * as restate from "@restatedev/restate-sdk-gen";
 import {ModalClient, Sandbox, SandboxFilesystemNotFoundError} from "modal";
 import {agent, asyncTool, ToolError} from "@restate-agents/core";
 import {z} from "zod";
-import {exampleModel as model, replyText} from "../shared.js";
+import {exampleModel as model} from "../shared.js";
 
 // Created on first use, so the other lessons run without Modal credentials.
 let client: ModalClient | undefined;
@@ -103,7 +103,8 @@ export const codingAgent = restate.service({
         const sandbox = yield* connect();
         try {
           const result = yield* coder.run(task, {context: {sandbox}});
-          return replyText(result);
+          if (result.status !== "completed") return result.output ?? result.reason;
+          return result.output;
         } finally {
           yield* release(sandbox);
         }

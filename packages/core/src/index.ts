@@ -27,6 +27,7 @@ export type {
   RunOptions,
   RunControls,
   SteeringSource,
+  SteeringUpdate,
   RunResult,
   Tool,
   ToolCall,
@@ -50,6 +51,7 @@ export type {
   AgentRuntime,
 } from "./types.js";
 export {sleepTool, humanApprovalTool, cancelOperationTool, searchToolsTool} from "./builtins.js";
+export type {BuiltinToolOptions} from "./builtins.js";
 
 export {
   LazyStateConversation,
