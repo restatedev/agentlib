@@ -63,6 +63,20 @@ export type ApprovalHandler<Context = unknown> = (
   request: ApprovalRequest,
   context: Context,
 ) => Operation<void>;
+/** What a run is doing, in journal order. Replay delivers the same sequence again. */
+export type ProgressEvent =
+  | {type: "step"; step: number}
+  | {type: "tool-start"; callId: string; name: string; input: JsonValue}
+  | {type: "tool-info"; callId: string; info: ToolInfo}
+  | {type: "tool-progress"; callId: string; value: JsonValue}
+  | {type: "tool-end"; callId: string; name: string; result: ToolResult}
+  | {type: "steering"; message: string}
+  | {type: "handoff"; agent?: string};
+/** Receives each event before the run continues. Spawn work that should not block it. */
+export type ProgressHandler<Context = unknown> = (
+  event: ProgressEvent,
+  context: Context,
+) => Operation<void>;
 export type ToolContext<Context> = RunContext<Context> & {
   callId: string;
   toolName: string;
@@ -70,6 +84,8 @@ export type ToolContext<Context> = RunContext<Context> & {
   readonly info: ToolInfo;
   /** Publish display information without modifying this call's input or identity. */
   describe(info: ToolInfo): Operation<void>;
+  /** Report partial progress to the run's onProgress handler. */
+  progress(value: JsonValue): Operation<void>;
   availableTools(): string[];
   searchTools(query: string): Operation<{name: string; description: string}[]>;
   step: number;
@@ -160,6 +176,7 @@ export type RunOptions<Context> = {
   conversation?: import("./conversation.js").Conversation;
   name?: string;
   onApproval?: ApprovalHandler<Context>;
+  onProgress?: ProgressHandler<Context>;
   steeringSignal?: string;
   interruptSignal?: string;
   /** Application-supplied control futures, useful when embedding in another loop. */

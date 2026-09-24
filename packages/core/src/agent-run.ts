@@ -29,6 +29,7 @@ import type {
   ModelFinalResponse,
   ModelResponse,
   ModelToolCallsResponse,
+  ProgressEvent,
   RunContext,
   RunControls,
   RunOptions,
@@ -113,6 +114,7 @@ class AgentRun<C, O> {
       config,
       this.tasks,
       history,
+      (event) => this.emit(event),
       options?.onApproval?.bind(options),
     );
   }
@@ -149,6 +151,7 @@ class AgentRun<C, O> {
   /** Returns the completed result, or undefined when the step budget runs out. */
   private *steps(): Operation<RunResult<O> | undefined> {
     for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
+      yield* this.emit({type: "step", step: this.step});
       const response = yield* this.candidate(this.plan(this.history.snapshot()));
       if (!response || this.collectBackground()) continue;
       if (response.type === "tool_calls") {
@@ -174,8 +177,17 @@ class AgentRun<C, O> {
       if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
       throw new RunInterrupted(value);
     }
-    if (tag === "steering") this.acceptSteering(value);
+    if (tag === "steering") {
+      this.acceptSteering(value);
+      yield* this.emit({type: "steering", message: value as string});
+    }
     return {tag, value};
+  }
+
+  private *emit(event: ProgressEvent): Operation<void> {
+    // Called as a method, so a handler can use `this`, like onApproval.
+    if (this.options?.onProgress)
+      yield* this.options.onProgress(structuredClone(event), this.context.context);
   }
 
   /** Runs work that steering supersedes; returns undefined when it was discarded. */
@@ -239,6 +251,7 @@ class AgentRun<C, O> {
     this.collectBackground();
     if (transfer) {
       this.active = transfer();
+      yield* this.emit({type: "handoff", agent: this.active.name});
       // Run-level tools belong to the run, not the agent, so they survive a handoff.
       this.catalog = createToolCatalog(this.active.tools, this.options?.tools);
     }

@@ -12,7 +12,9 @@ import type {
   AgentRuntime,
   ApprovalHandler,
   ApprovalRequest,
+  ProgressEvent,
   RunContext,
+  Tool,
   ToolCall,
   ToolContext,
   ToolInfo,
@@ -31,6 +33,7 @@ type ToolExecutorOptions<C> = ToolExecutionLimits & {
   root: AgentRuntime<C>;
   context: RunContext<C>;
   onApproval?: ApprovalHandler<C>;
+  progress: (event: ProgressEvent) => Operation<void>;
   cancelOperation: ToolContext<C>["cancelOperation"];
 };
 
@@ -43,6 +46,7 @@ export function createToolExecutor<C>({
   maxToolDepth,
   maxOutputChars,
   onApproval,
+  progress,
   cancelOperation,
 }: ToolExecutorOptions<C>) {
   let calls = 0;
@@ -59,6 +63,20 @@ export function createToolExecutor<C>({
     const definition = registry.registry.get(call.name);
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
+    yield* progress({type: "tool-start", callId: call.id, name: call.name, input: call.input});
+    const result = yield* runCall(call, callStep, owner, registry, definition, depth);
+    yield* progress({type: "tool-end", callId: call.id, name: call.name, result});
+    return result;
+  }
+
+  function* runCall(
+    call: ToolCall,
+    callStep: number,
+    owner: AgentRuntime<C>,
+    registry: ToolCatalog<C>,
+    definition: Tool<C>,
+    depth: number,
+  ): Operation<ToolResult> {
     // Root policies wrap the owner's: they check first and post-process last.
     const policies = [...new Set([root, owner])];
     let nestedCalls = 0;
@@ -89,6 +107,13 @@ export function createToolExecutor<C>({
         if (JSON.stringify(snapshot).length > maxOutputChars)
           throw new AgentLimitError("Tool display information exceeds maxOutputChars");
         info = snapshot;
+        yield* progress({type: "tool-info", callId: call.id, info: structuredClone(snapshot)});
+      },
+      *progress(value) {
+        const snapshot = jsonSchema.parse(value);
+        if (JSON.stringify(snapshot).length > maxOutputChars)
+          throw new AgentLimitError("Tool progress exceeds maxOutputChars");
+        yield* progress({type: "tool-progress", callId: call.id, value: snapshot});
       },
       availableTools: () => [...registry.registry.keys()],
       *searchTools(query) {

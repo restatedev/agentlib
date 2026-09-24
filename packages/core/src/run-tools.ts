@@ -9,6 +9,7 @@ import type {
   ApprovalHandler,
   Message,
   ModelToolCallsResponse,
+  ProgressEvent,
   RunContext,
   ToolCall,
   ToolResult,
@@ -43,6 +44,7 @@ export class RunTools<C> {
     limits: ToolExecutionLimits,
     private readonly tasks: RunTasks,
     private readonly history: RunHistory,
+    progress: (event: ProgressEvent) => Operation<void>,
     onApproval?: ApprovalHandler<C>,
   ) {
     this.usedIds = new Set(
@@ -56,6 +58,7 @@ export class RunTools<C> {
       context,
       ...limits,
       onApproval,
+      progress,
       cancelOperation: (id, reason) => this.cancel(id, reason),
     });
   }
