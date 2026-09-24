@@ -90,7 +90,8 @@ accepted.
 `tool-info`, `tool-progress`, `tool-end`, `steering`, and `handoff`. A tool
 reports partial progress with `context.progress(value)`. `tool-end` carries
 the call's final display `info`, so a UI can label a finished call from one
-event.
+event; `tool-start` carries it too when the tool's `describe` is a fixed
+label rather than a function of the input.
 
 ```ts
 const feed = restate.sendClient(progressFeed, job);

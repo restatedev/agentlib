@@ -95,6 +95,12 @@ void test("Restate discovery filters permissions, rewrites nested refs, and snap
   assert.equal(requests, 1);
 });
 
+void test("web search accepts a description and display override", () => {
+  const search = webSearch({description: "Search docs.", describe: {name: "Searched"}});
+  assert.equal(search.description, "Search docs.");
+  assert.deepEqual(search.info, {name: "Searched"});
+});
+
 void test("web search without an API key uses keyless access", async () => {
   const search = webSearch({
     fetch: async (_, init) => {

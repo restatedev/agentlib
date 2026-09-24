@@ -3,6 +3,7 @@ import {run as journal, signal, type Operation} from "@restatedev/restate-sdk-ge
 import {
   AgentLimitError,
   denial,
+  RunFailedError,
   RunInterrupted,
   ToolBudgetExceeded,
   ToolCancelled,
@@ -64,7 +65,13 @@ export function createToolExecutor<C>({
     const definition = registry.registry.get(call.name);
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
-    yield* progress({type: "tool-start", callId: call.id, name: call.name, input: call.input});
+    yield* progress({
+      type: "tool-start",
+      callId: call.id,
+      name: call.name,
+      input: call.input,
+      ...(definition.info ? {info: structuredClone(definition.info)} : {}),
+    });
     const {result, info} = yield* runCall(call, callStep, owner, registry, definition, depth);
     yield* progress({type: "tool-end", callId: call.id, name: call.name, result, info});
     return result;
@@ -208,7 +215,8 @@ function terminalFailure(error: unknown): error is TerminalError {
   return (
     error instanceof TerminalError &&
     !(error instanceof CancelledError) &&
-    !(error instanceof AgentLimitError)
+    !(error instanceof AgentLimitError) &&
+    !(error instanceof RunFailedError)
   );
 }
 
