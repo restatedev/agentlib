@@ -67,6 +67,11 @@ export class RunTools<C> {
     return this.background.size > 0;
   }
 
+  /** Background calls whose results the model has not seen yet. */
+  pendingCalls(): {operationId: string; name: string}[] {
+    return [...this.background.values()].map(({call}) => ({operationId: call.id, name: call.name}));
+  }
+
   pendingTasks(): FutureBranches {
     return Object.fromEntries(
       [...this.background].map(([id, entry]) => [`pending:${id}`, entry.task!]),

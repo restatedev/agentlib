@@ -1,18 +1,20 @@
 import {CancelledError} from "@restatedev/restate-sdk";
 import {InterruptedError, type Operation} from "@restatedev/restate-sdk-gen";
 import {GuardrailError, ModelProtocolError} from "./errors.js";
-import type {Model, OutputCandidate, OutputDecision, RunResult} from "./types.js";
+import type {Message, Model, OutputCandidate, OutputDecision, RunResult} from "./types.js";
 import {modelResponse} from "./validation.js";
 
-/** Summaries may fail, but native cancellation must still reach the caller. */
+/** Summaries may fail, but native cancellation must still reach the caller.
+ * `messages` is the model's view of the run, which compaction may have shortened. */
 export function* summarizeStoppedRun<O>(
   result: RunResult<O>,
   finalize: Model,
+  messages: readonly Message[] = result.messages,
 ): Operation<RunResult<O>> {
   if (result.status === "completed") return result;
   const request = {
     messages: [
-      ...result.messages,
+      ...messages,
       {
         role: "user" as const,
         content: `The run stopped: ${result.reason}. Summarize completed results and unresolved work. Do not claim cancelled work succeeded. No tools are available.`,

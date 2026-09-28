@@ -1,3 +1,4 @@
+import {CancelledError} from "@restatedev/restate-sdk";
 import {
   handlerRequest,
   InterruptedError,
@@ -21,6 +22,7 @@ import {RunTools} from "./run-tools.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
+import {compactContext} from "./context-compaction.js";
 import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
@@ -44,6 +46,7 @@ export type RunConfiguration = ToolExecutionLimits &
     maxSteps: number;
     maxOutputTokens: number;
     outputSchema?: Record<string, unknown>;
+    compaction?: {maxChars: number; retainChars: number};
   }>;
 
 export function* runAgent<C, O>(
@@ -91,6 +94,8 @@ class AgentRun<C, O> {
   private steeringSource: SteeringSource | undefined;
   private steering: Future<string | SteeringUpdate> | undefined;
   private interrupt: Future<string> | undefined;
+  /** Set once in-run compaction failed; the run does not try again. */
+  private compactionFailed = false;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
   private readonly context: RunContext<C>;
@@ -154,6 +159,7 @@ class AgentRun<C, O> {
   private *steps(): Operation<RunResult<O> | undefined> {
     for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
       yield* this.emit({type: "step", step: this.step});
+      yield* this.compactContext();
       const response = yield* this.candidate(this.plan(this.history.snapshot()));
       if (!response || this.collectBackground()) continue;
       if (response.type === "tool_calls") {
@@ -184,6 +190,25 @@ class AgentRun<C, O> {
       yield* this.emit({type: "steering", message, ...(data === undefined ? {} : {data})});
     }
     return {tag, value};
+  }
+
+  /** Not raced against controls: steering and interrupts are handled once the
+   * smaller view is in place, so a stopped run still has room to finalize. */
+  private *compactContext(): Operation<void> {
+    const settings = this.config.compaction;
+    if (!settings || this.compactionFailed) return;
+    const model = this.root.compaction?.model ?? this.root.model;
+    try {
+      if (!(yield* compactContext(this.history, {...settings, model}, this.tools.pendingCalls())))
+        return;
+    } catch (error) {
+      if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
+      // The full view stays; the next model call may still fit, or fail as it would without compaction.
+      this.compactionFailed = true;
+      yield* this.emit({type: "compaction", status: "failed", error: String(error)});
+      return;
+    }
+    yield* this.emit({type: "compaction", status: "applied"});
   }
 
   private *emit(event: ProgressEvent): Operation<void> {
@@ -335,7 +360,10 @@ class AgentRun<C, O> {
 
   private *review(result: RunResult<O>): Operation<RunResult<O>> {
     const finalize = this.root.finalize ?? this.root.model;
-    if (finalize) result = yield* summarizeStoppedRun(result, finalize);
+    if (finalize && result.status !== "completed") {
+      yield* this.compactContext();
+      result = yield* summarizeStoppedRun(result, finalize, this.history.finalContext());
+    }
     if (this.root.afterRun) {
       const decision = yield* this.root.afterRun(createOutputCandidate(result), this.context);
       result = applyOutputDecision(result, decision);
