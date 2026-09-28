@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
+import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
@@ -115,20 +115,65 @@ void test("compaction retains complete tool exchanges and leaves the original lo
         ...pairs(2),
       ];
       yield* convo.append(messages, 0);
-      // Desired cut falls between a call and its result; move it before the call.
+      // Desired cut falls between a call and its result; move it back to the
+      // user message that asked for the call.
       const plan = yield* convo.prepareCompaction({maxMessages: 8, retainMessages: 5});
       assert.ok(plan);
-      assert.equal(plan.through, 6);
+      assert.equal(plan.through, 4);
       history(plan.messages);
       assert.equal(
         yield* convo.applyCompaction({plan, summary: "earlier goals and results"}),
         true,
       );
       const snapshot = yield* convo.load();
-      assert.equal(snapshot.messages.length, 7);
+      assert.equal(snapshot.messages.length, 9);
+      assert.deepEqual(snapshot.messages[1], {role: "user", content: "question 2"});
       history(snapshot.messages);
       assert.match(JSON.stringify(snapshot.messages[0]), /earlier goals/);
       assert.deepEqual((yield* convo.page()).messages, messages);
+    })(),
+  );
+});
+
+void test("the retained tail starts at a user message", async () => {
+  const {store} = memoryStore();
+  const convo = new LazyStateConversation({store});
+  await r.execute(
+    context(),
+    (function* () {
+      yield* convo.append(pairs(6), 0);
+      // Retaining 3 would start the tail at "answer 4"; keep its question too.
+      const plan = yield* convo.prepareCompaction({maxMessages: 8, retainMessages: 3});
+      assert.ok(plan);
+      assert.equal(plan.through, 8);
+      assert.deepEqual(plan.messages.at(-1), {role: "assistant", content: "answer 3"});
+    })(),
+  );
+});
+
+void test("a summary without text fails compaction terminally and keeps history", async () => {
+  const {store} = memoryStore();
+  const convo = new LazyStateConversation({
+    store,
+    compaction: {
+      *model() {
+        return {type: "final", text: " ", output: {summary: "structured"}};
+      },
+      policy: {maxMessages: 4, retainMessages: 2},
+    },
+  });
+  await r.execute(
+    context(),
+    (function* () {
+      yield* convo.append(pairs(4), 0);
+      try {
+        yield* convo.compact();
+        assert.fail("must fail");
+      } catch (error) {
+        assert.ok(error instanceof TerminalError);
+        assert.match(String(error), /empty summary/);
+      }
+      assert.deepEqual((yield* convo.load()).messages, pairs(4));
     })(),
   );
 });
