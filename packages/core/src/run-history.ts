@@ -6,6 +6,7 @@ import {history} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
 type ToolMessage = Extract<Message, {role: "tool"}>;
+export type NoteMessage = Extract<Message, {role: "user"}>;
 
 /** Events arrive in execution order. Model protocols require each batch's tool
  * results immediately after its assistant call, ahead of intervening steering. */
@@ -38,14 +39,20 @@ function modelTranscript(events: readonly Message[]): Message[] {
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
   private readonly provisional = new Set<Message>();
+  /** Set by in-run compaction: the model sees `note` instead of the events before `from`. */
+  private view: {from: number; note: NoteMessage} | undefined;
+  /** Index of this run's input message among the events. */
+  private inputAt: number;
 
   private constructor(
-    private readonly input: string,
+    readonly input: string,
     private readonly messages: Message[],
     private version: number,
     private persisted: number,
     private readonly conversation?: Conversation,
-  ) {}
+  ) {
+    this.inputAt = messages.length;
+  }
 
   static *load(input: string, source: HistorySource = {}): Operation<RunHistory> {
     if (typeof input !== "string" || !input.trim())
@@ -68,7 +75,32 @@ export class RunHistory {
 
   /** What the model sees during this run, including provisional feedback. */
   snapshot(): Message[] {
-    return modelTranscript(this.messages);
+    if (!this.view) return modelTranscript(this.messages);
+    return [this.view.note, ...modelTranscript(this.messages.slice(this.view.from))];
+  }
+
+  /** What a tool-free finalization sees: the model's view without provisional feedback. */
+  finalContext(): Message[] {
+    const from = this.view?.from ?? 0;
+    const events = this.messages.slice(from).filter((message) => !this.provisional.has(message));
+    return [...(this.view ? [this.view.note] : []), ...modelTranscript(events)];
+  }
+
+  /** The events the model still sees verbatim, in execution order. */
+  contextEvents(): {from: number; events: readonly Message[]; note?: NoteMessage} {
+    const from = this.view?.from ?? 0;
+    return {from, events: this.messages.slice(from), note: this.view?.note};
+  }
+
+  /** Whether this run's input message is among the events before `index`. */
+  inputBefore(index: number): boolean {
+    return this.inputAt < index;
+  }
+
+  /** Shows the model `note` instead of the events before `through`. The saved
+   * and returned transcript is unchanged. */
+  compactContext(through: number, note: NoteMessage): void {
+    this.view = {from: through, note};
   }
 
   /** What the turn commits: the persisted and returned transcript. */
@@ -104,6 +136,7 @@ export class RunHistory {
       content: this.input,
     });
     this.persisted = compacted.messages.length;
+    this.inputAt = compacted.messages.length;
     this.version = compacted.version;
   }
 }

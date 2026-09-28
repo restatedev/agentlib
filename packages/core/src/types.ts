@@ -76,7 +76,9 @@ export type ProgressEvent =
   /** `info` is the call's final display information, as set by `describe`. */
   | {type: "tool-end"; callId: string; name: string; result: ToolResult; info: ToolInfo}
   | {type: "steering"; message: string; data?: JsonValue}
-  | {type: "handoff"; agent?: string};
+  | {type: "handoff"; agent?: string}
+  /** The run replaced older messages of the model's view with a handoff note, or failed to. */
+  | {type: "compaction"; status: "applied" | "failed"; error?: string};
 /** Receives each event before the run continues. Spawn work that should not block it. */
 export type ProgressHandler<Context = unknown> = (
   event: ProgressEvent,
@@ -222,6 +224,11 @@ export type AgentOptions<Context, Output = string> = {
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
   /** Tool-free model call that summarizes an interrupted or step-limited run. Default: model; false skips it. */
   finalize?: Model | false;
+  /** Summarizes this run's older messages when the model's view outgrows
+   * `maxChars` (default 400000, counting messages only). The newest messages
+   * that fit `retainChars` (default a quarter of maxChars) stay verbatim. The
+   * saved and returned transcript is unchanged. `model` defaults to the agent's. */
+  compaction?: {model?: Model; maxChars?: number; retainChars?: number};
 };
 export type RunArguments<Context> = undefined extends Context
   ? [options?: RunOptions<Context>]

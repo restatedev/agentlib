@@ -45,6 +45,34 @@ const result = yield* support.run(message, {conversation});
 
 Read it from a shared handler with `yield* new LazyStateConversation().page()`.
 
+## Long runs: compaction
+
+Conversation compaction runs before a run starts. A single run can still
+outgrow the model's window as its tool results pile up. Set `compaction` on
+the agent to summarize the run's older messages before a model call once the
+messages it would send pass `maxChars`:
+
+```ts
+const researcher = agent({
+  model,
+  tools: {search, fetchPage},
+  maxSteps: 40,
+  compaction: {maxChars: 400000, retainChars: 100000}, // the defaults; `model` defaults to the agent's
+});
+```
+
+- The newest messages that fit `retainChars` stay verbatim; a tool call is
+  never separated from its results. The rest become one handoff note, which
+  restates the run's input once it is summarized and lists background calls
+  still running.
+- Only the model's view changes: `result.messages` and the saved conversation
+  keep every message.
+- The tool-free finalization of a stopped run also sees the compacted view.
+- Steering and interrupts wait until compaction finishes. A failed compaction
+  keeps the full view and is not retried in that run.
+- `maxChars` counts messages only, not instructions or tool schemas; leave
+  room for them.
+
 ## Steer and interrupt a running turn
 
 Name two signals on the run. Shared handlers deliver them to the running
@@ -87,7 +115,8 @@ accepted.
 ## Progress events
 
 `onProgress` receives each event as the run goes: `step`, `tool-start`,
-`tool-info`, `tool-progress`, `tool-end`, `steering`, and `handoff`. A tool
+`tool-info`, `tool-progress`, `tool-end`, `steering`, `handoff`, and
+`compaction` (`applied` or `failed`). A tool
 reports partial progress with `context.progress(value)`. `tool-end` carries
 the call's final display `info`, so a UI can label a finished call from one
 event; `tool-start` carries it too when the tool's `describe` is a fixed
