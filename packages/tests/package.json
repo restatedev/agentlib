@@ -6,9 +6,10 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test --test-timeout=60000 'src/*.test.ts'",
-    "test:integration": "node --experimental-test-module-mocks --import tsx --test --test-timeout=180000 'src/*.integration.ts'"
+    "test:integration": "node --experimental-test-module-mocks --import tsx --test --test-timeout=180000 'src/*.integration.ts' && node --experimental-test-module-mocks --test --test-timeout=180000 src/ag-ui.integration.mts"
   },
   "devDependencies": {
+    "@ag-ui/client": "1.0.0",
     "@restate-agents/core": "workspace:*",
     "@restate-agents/examples": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",
