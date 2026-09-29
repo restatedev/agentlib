@@ -11,22 +11,28 @@ curl localhost:8080/Counter/user-42/add --json '1'           # object: /Name/key
 curl localhost:8080/Greeter/greet/send --json '"Ada"'        # one-way, returns an invocation ID
 ```
 
-Rerun `register` after adding or changing handlers. The UI at
+After adding or changing handlers, re-register the same URL with `--force`;
+without it the registration is left unchanged. The UI at
 http://localhost:9070 shows each invocation's journal, which is the fastest
 way to see why a handler is waiting or retrying.
 
 ## Calling from application code
 
+Use `connect` from `@restatedev/restate-sdk-clients` (add it to
+`package.json`). It accepts generator-SDK definitions:
+
 ```ts
-import {clients} from "@restatedev/restate-sdk-gen";
+import {connect} from "@restatedev/restate-sdk-clients";
 import {greeter} from "./greeter.js";
 
-const ingress = clients.connect({url: "http://localhost:8080"});
-const greeting = await clients.client(ingress, greeter).greet("Ada");
+const ingress = connect({url: "http://localhost:8080"});
+const greeting = await ingress.client(greeter).greet("Ada");
 ```
 
-`clients.sendClient` starts an invocation without waiting. Use
-`clients.Opts.from({idempotencyKey})` to make a call safe to retry.
+`ingress.sendClient(def)` starts an invocation without waiting. To make a
+call safe to retry, pass `Opts.from({idempotencyKey})`, from the same
+package, as the last argument. The `clients.*` helpers in
+`@restatedev/restate-sdk-gen` are deprecated.
 
 ## Tests with forced replay
 
@@ -67,6 +73,6 @@ needs a test like this that passes before the change is done.
 - **Journal mismatch after a deploy:** the handler changed the order or kind
   of its steps while invocations were in flight. Version the service or let
   in-flight work drain.
-- **Endless retries:** an ordinary error keeps retrying. Throw
-  `TerminalError` for failures that retrying cannot fix, or set a
-  `retryPolicy`.
+- **Retrying or paused invocation:** an ordinary error is retried, and by
+  default the invocation pauses after 70 attempts. Throw `TerminalError`
+  for failures that retrying cannot fix, or set a `retryPolicy`.
