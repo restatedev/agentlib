@@ -32,6 +32,7 @@ the request body required; object fields use `.default(...)`.
 | 15     | Exchange feedback over durable RPC    | [15_peer_review_rpc.ts](src/lessons/15_peer_review_rpc.ts)         |
 | 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 | 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
+| 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
 
 If you have a specific goal, start here:
 
@@ -48,6 +49,7 @@ If you have a specific goal, start here:
 | Let agents review each other\'s work | [15](src/lessons/15_peer_review_rpc.ts) |
 | Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
 | Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
+| Connect a UI such as CopilotKit      | [18](src/lessons/18_ag_ui.ts)           |
 
 ## Start
 
@@ -454,6 +456,29 @@ Restate docs server at `https://docs.restate.dev/mcp`.
 ```sh
 curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '"What is a virtual object?"'
 ```
+
+## 18 — Serve an AG-UI client
+
+[AG-UI](https://docs.ag-ui.com) is an open protocol between agents and user
+interfaces; CopilotKit is one client. An `AgUiThread` object, one per AG-UI
+thread, runs each turn and appends the AG-UI events of its work to its state.
+`agUiHandler` is AG-UI's HTTP transport: it takes a `RunAgentInput`, sends the
+last user message as a turn, and streams the turn's events as server-sent
+events. [app.ts](src/app.ts) serves it on port 9081.
+
+An approval ends the AG-UI run with an interrupt. The turn waits on a durable
+signal meanwhile, and a run with `resume` answers it
+(`payload: {"approved": true}`) and follows the turn on, including what the
+turn did while no stream was open. Closing a stream never stops a turn.
+
+```sh
+curl -N localhost:9081 --json '{"threadId":"t1","runId":"r1","messages":[{"id":"m1","role":"user","content":"Cancel order O-7."}]}'
+curl -N localhost:9081 --json '{"threadId":"t1","runId":"r2","messages":[],"resume":[{"interruptId":"<id from the interrupt>","status":"resolved","payload":{"approved":true}}]}'
+```
+
+The handler polls the object's state, which keeps the lesson small. It ignores
+the client's `tools`, `context` and `state`, and reads only the newest user
+message: the object holds the conversation.
 
 ## Model configuration
 
