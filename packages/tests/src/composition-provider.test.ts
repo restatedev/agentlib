@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
+import type {Context, TerminalError} from "@restatedev/restate-sdk";
+import {APICallError, LoadAPIKeyError, UnsupportedFunctionalityError} from "ai";
 import * as r from "@restatedev/restate-sdk-gen";
 import {MockLanguageModelV4, simulateReadableStream} from "ai/test";
 import {z} from "zod";
@@ -295,4 +296,62 @@ void test("live chunks occur only during provider I/O and are not replayed", asy
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);
   assert.equal(live.length, 3);
+});
+
+const failing = (error: Error) => {
+  let calls = 0;
+  const provider = new MockLanguageModelV4({
+    doGenerate: async () => {
+      calls++;
+      throw error;
+    },
+  });
+  const a = agent({model: aiModel({model: provider})});
+  const run = runHandler((context) =>
+    r.execute(
+      context,
+      (function* () {
+        try {
+          yield* a.run("go");
+          return {message: "unexpected success", code: 0};
+        } catch (e) {
+          return {message: String(e), code: (e as TerminalError).code};
+        }
+      })(),
+    ),
+  );
+  return {run, calls: () => calls};
+};
+const rejected = (statusCode: number, isRetryable: boolean) =>
+  new APICallError({
+    message: `status ${statusCode}`,
+    url: "https://provider.test",
+    requestBodyValues: {},
+    statusCode,
+    isRetryable,
+  });
+
+void test("provider failures a retry cannot fix fail the run terminally", async () => {
+  const cases = [
+    {error: new LoadAPIKeyError({message: "OPENAI_API_KEY is not set"}), message: /OPENAI_API_KEY/},
+    {
+      error: new UnsupportedFunctionalityError({functionality: "structured outputs"}),
+      message: /structured outputs/,
+    },
+    {error: rejected(400, false), message: /status 400/, code: 400},
+  ];
+  for (const {error, message, code} of cases) {
+    const {run, calls} = failing(error);
+    const {output} = await run;
+    assert.equal(calls(), 1);
+    assert.match(output.message, message);
+    if (code) assert.equal(output.code, code);
+  }
+});
+
+void test("a throttled provider call stays retryable", async () => {
+  const {run, calls} = failing(rejected(429, true));
+  // The harness surfaces a retryable failure instead of retrying it.
+  await assert.rejects(run, /SDK failure.*status 429/);
+  assert.equal(calls(), 1);
 });

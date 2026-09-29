@@ -4,9 +4,11 @@ import {
   APICallError,
   generateText,
   jsonSchema as aiSchema,
+  LoadAPIKeyError,
   NoObjectGeneratedError,
   Output,
   streamText,
+  UnsupportedFunctionalityError,
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
@@ -177,8 +179,13 @@ export function aiModel(options: ProviderOptions): Model {
           validationError: "The response did not match the requested output schema.",
         };
       }
-      if (APICallError.isInstance(error) && !error.isRetryable)
+      // Restate owns retries. A missing API key, a feature the provider does not
+      // support and a rejected request fail the same way on every attempt;
+      // throttling and transient provider failures stay retryable.
+      if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
         throw new TerminalError(error.message);
+      if (APICallError.isInstance(error) && !error.isRetryable)
+        throw new TerminalError(error.message, {errorCode: error.statusCode});
       throw error;
     }
   }
