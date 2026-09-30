@@ -282,8 +282,19 @@ const fixtureModel: Model = function* (request) {
   }
   if (instructions.startsWith("Graph lesson. Triage"))
     return answer({category: prompt(request).includes("rude") ? "complaint" : "refund"});
+  if (instructions.startsWith("Graph lesson. Policy"))
+    return {type: "final", text: "Duplicate charges are refunded within 30 days."};
   if (instructions.startsWith("Graph lesson. Draft")) {
-    const input = JSON.parse(prompt(request)) as {draft?: string; feedback?: string};
+    const input = JSON.parse(prompt(request)) as {
+      notes: string[];
+      draft?: string;
+      feedback?: string;
+    };
+    // Fan-in: the draft starts only after both parallel branches added notes.
+    assert.deepEqual(input.notes.toSorted(), [
+      "history: O-7 was charged $40 twice on 2026-09-28",
+      "policy: Duplicate charges are refunded within 30 days.",
+    ]);
     if (input.draft) assert.equal(input.feedback, "Confirm the refund amount.");
     return {type: "final", text: input.draft ? "Revised reply." : "First reply."};
   }
@@ -415,17 +426,17 @@ void test("routing chooses a specialist and gives it a fresh run", async () => {
   );
 });
 
-void test("19: the state machine revises a rejected draft and escalates a complaint", async () => {
+void test("19: the graph fans out, joins, revises a rejected draft and escalates a complaint", async () => {
   const client = ingress().client(supportGraph);
   assert.deepEqual(await client.reply("Please refund my double charge."), {
     reply: "Revised reply.",
-    path: ["triage", "draft", "review", "draft", "review"],
+    path: [["triage"], ["policy", "history"], ["draft"], ["review"], ["draft"], ["review"]],
   });
   assert.deepEqual(await client.reply("Your rude agent hung up on me."), {
     reply: "Thank you for telling us. A member of our team will contact you today.",
-    path: ["triage", "escalate"],
+    path: [["triage"], ["escalate"]],
   });
-  assert.match(await client.diagram(), /review --> draft/);
+  assert.match(await client.diagram(), /triage --> policy\n  triage --> history/);
 });
 
 void test("tool policy denies an over-budget booking and permits one within budget", async () => {

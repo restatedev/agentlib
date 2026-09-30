@@ -33,7 +33,7 @@ the request body required; object fields use `.default(...)`.
 | 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 | 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
 | 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
-| 19     | Agents as a state machine             | [19_state_machine.ts](src/lessons/19_state_machine.ts)             |
+| 19     | Agents as a graph                     | [19_state_machine.ts](src/lessons/19_state_machine.ts)             |
 
 If you have a specific goal, start here:
 
@@ -482,32 +482,40 @@ The handler polls the object's state, which keeps the lesson small. It ignores
 the client's `tools`, `context` and `state`, and reads only the newest user
 message: the object holds the conversation.
 
-## 19 — Compose agents as a state machine
+## 19 — Compose agents as a graph
 
-A LangGraph-style graph in plain code. Each node is a generator that updates
-the state and returns the next node's name; `edges` lists where each node may
-go, so a wrong return is a type error, and `diagram` draws the graph as
-Mermaid. There is no checkpointer: Restate journals the agent runs inside each
-node, so recovery resumes mid-node, not at the last node boundary.
+A LangGraph-style graph with a small runner, `graph`, that is part of the
+lesson rather than the SDK. A node reads the state and returns an update and
+the next node. Returning several nodes fans out: they run in parallel on the
+same state, their updates merge when all finish (with a reducer for a key
+that several branches set), and branches that name the same node join there.
+`edges` lists where each node may go, so a wrong return or a misspelled edge
+is a type error, and `diagram` draws the graph as Mermaid.
 
 ```mermaid
 flowchart LR
-  triage --> draft
+  triage --> policy
+  triage --> history
   triage --> escalate
+  policy --> draft
+  history --> draft
   draft --> review
   review --> draft
   review --> end
   escalate --> end
 ```
 
+There is no checkpointer: Restate journals the agent runs and steps inside each
+node, so recovery resumes mid-node, not at the last node boundary.
+
 ```sh
 curl "$RESTATE_CALL_URL/SupportGraph/reply" --json '"I was charged twice for my order O-7. Can I get one charge back?"'
 curl -X POST "$RESTATE_CALL_URL/SupportGraph/diagram"
 ```
 
-The response carries the reply and the path of nodes the run took. Parallel
-branches are `restate.all` inside a node, and a node that waits for a person
-uses a signal or an approval, as in lesson 06.
+The response carries the reply and the steps the run took, such as
+`[["triage"], ["policy", "history"], ["draft"], ["review"]]`. A node that
+waits for a person uses a signal or an approval, as in lesson 06.
 
 ## Model configuration
 
