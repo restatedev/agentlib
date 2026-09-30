@@ -75,6 +75,10 @@
     "./ag-ui": {
       "types": "./dist/lessons/18_ag_ui.d.ts",
       "import": "./dist/lessons/18_ag_ui.js"
+    },
+    "./state-machine": {
+      "types": "./dist/lessons/19_state_machine.d.ts",
+      "import": "./dist/lessons/19_state_machine.js"
     }
   },
   "scripts": {

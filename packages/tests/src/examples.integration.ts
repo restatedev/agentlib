@@ -280,6 +280,17 @@ const fixtureModel: Model = function* (request) {
       {name: `fixture:${input.focus}`},
     );
   }
+  if (instructions.startsWith("Graph lesson. Triage"))
+    return answer({category: prompt(request).includes("rude") ? "complaint" : "refund"});
+  if (instructions.startsWith("Graph lesson. Draft")) {
+    const input = JSON.parse(prompt(request)) as {draft?: string; feedback?: string};
+    if (input.draft) assert.equal(input.feedback, "Confirm the refund amount.");
+    return {type: "final", text: input.draft ? "Revised reply." : "First reply."};
+  }
+  if (instructions.startsWith("Graph lesson. Review")) {
+    const {reply} = JSON.parse(prompt(request)) as {reply: string};
+    return answer({approved: reply === "Revised reply.", feedback: "Confirm the refund amount."});
+  }
   const last = request.messages.at(-1);
   if (last?.role === "user" && last.content.startsWith("The run stopped:"))
     return {type: "final", text: "Stopped as requested."};
@@ -315,6 +326,7 @@ const [
   {guardedBooking},
   {peerAuthor, peerReviewer, peerReview},
   {progressFeed, inventoryAudit},
+  {supportGraph},
 ] = await Promise.all([
   import("@restate-agents/examples/hello"),
   import("@restate-agents/examples/tools"),
@@ -329,6 +341,7 @@ const [
   import("@restate-agents/examples/tool-guardrail"),
   import("@restate-agents/examples/peer-review-rpc"),
   import("@restate-agents/examples/progress-feed"),
+  import("@restate-agents/examples/state-machine"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -354,6 +367,7 @@ before(
         peerReview,
         progressFeed,
         inventoryAudit,
+        supportGraph,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -399,6 +413,19 @@ void test("routing chooses a specialist and gives it a fresh run", async () => {
     await client.answer("How does this feature work?"),
     "Here is how the feature works.",
   );
+});
+
+void test("19: the state machine revises a rejected draft and escalates a complaint", async () => {
+  const client = ingress().client(supportGraph);
+  assert.deepEqual(await client.reply("Please refund my double charge."), {
+    reply: "Revised reply.",
+    path: ["triage", "draft", "review", "draft", "review"],
+  });
+  assert.deepEqual(await client.reply("Your rude agent hung up on me."), {
+    reply: "Thank you for telling us. A member of our team will contact you today.",
+    path: ["triage", "escalate"],
+  });
+  assert.match(await client.diagram(), /review --> draft/);
 });
 
 void test("tool policy denies an over-budget booking and permits one within budget", async () => {

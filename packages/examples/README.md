@@ -33,6 +33,7 @@ the request body required; object fields use `.default(...)`.
 | 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 | 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
 | 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
+| 19     | Agents as a state machine             | [19_state_machine.ts](src/lessons/19_state_machine.ts)             |
 
 If you have a specific goal, start here:
 
@@ -50,6 +51,7 @@ If you have a specific goal, start here:
 | Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
 | Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
 | Connect a UI such as CopilotKit      | [18](src/lessons/18_ag_ui.ts)           |
+| Port a LangGraph-style graph         | [19](src/lessons/19_state_machine.ts)   |
 
 ## Start
 
@@ -479,6 +481,33 @@ curl -N localhost:9081 --json '{"threadId":"t1","runId":"r2","messages":[],"resu
 The handler polls the object's state, which keeps the lesson small. It ignores
 the client's `tools`, `context` and `state`, and reads only the newest user
 message: the object holds the conversation.
+
+## 19 — Compose agents as a state machine
+
+A LangGraph-style graph in plain code. Each node is a generator that updates
+the state and returns the next node's name; `edges` lists where each node may
+go, so a wrong return is a type error, and `diagram` draws the graph as
+Mermaid. There is no checkpointer: Restate journals the agent runs inside each
+node, so recovery resumes mid-node, not at the last node boundary.
+
+```mermaid
+flowchart LR
+  triage --> draft
+  triage --> escalate
+  draft --> review
+  review --> draft
+  review --> end
+  escalate --> end
+```
+
+```sh
+curl "$RESTATE_CALL_URL/SupportGraph/reply" --json '"I was charged twice for my order O-7. Can I get one charge back?"'
+curl -X POST "$RESTATE_CALL_URL/SupportGraph/diagram"
+```
+
+The response carries the reply and the path of nodes the run took. Parallel
+branches are `restate.all` inside a node, and a node that waits for a person
+uses a signal or an approval, as in lesson 06.
 
 ## Model configuration
 
