@@ -146,6 +146,7 @@ repeat a completed model call.
 | Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
 | MCP                          | `mcpTools` (`/mcp`)                                                        | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
 | AG-UI clients                | `onProgress` and `onApproval` as AG-UI events and interrupts               | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
+| LangGraph.js graphs          | durable models, tools and waits for an unchanged LangGraph graph           | [20](packages/examples/src/lessons/20_langgraph.ts)         |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
 | Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Models                       | `openAIModel` (`/openai`), `aiModel` and `modelGateway` (`/provider`)      | [shared.ts](packages/examples/src/shared.ts)                |

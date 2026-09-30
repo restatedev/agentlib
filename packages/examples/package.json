@@ -75,6 +75,10 @@
     "./ag-ui": {
       "types": "./dist/lessons/18_ag_ui.d.ts",
       "import": "./dist/lessons/18_ag_ui.js"
+    },
+    "./langgraph": {
+      "types": "./dist/lessons/20_langgraph.d.ts",
+      "import": "./dist/lessons/20_langgraph.js"
     }
   },
   "scripts": {
@@ -85,6 +89,9 @@
   },
   "dependencies": {
     "@ag-ui/core": "1.0.0",
+    "@langchain/core": "1.2.13",
+    "@langchain/langgraph": "1.4.18",
+    "@langchain/openai": "1.6.0",
     "@restate-agents/core": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",
     "@restatedev/restate-sdk-clients": "1.17.2",

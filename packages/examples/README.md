@@ -33,6 +33,7 @@ the request body required; object fields use `.default(...)`.
 | 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 | 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
 | 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
+| 20     | Run a LangGraph.js graph on Restate   | [20_langgraph.ts](src/lessons/20_langgraph.ts)                     |
 
 If you have a specific goal, start here:
 
@@ -50,6 +51,7 @@ If you have a specific goal, start here:
 | Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
 | Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
 | Connect a UI such as CopilotKit      | [18](src/lessons/18_ag_ui.ts)           |
+| Make a LangGraph.js graph durable    | [20](src/lessons/20_langgraph.ts)       |
 
 ## Start
 
@@ -479,6 +481,37 @@ curl -N localhost:9081 --json '{"threadId":"t1","runId":"r2","messages":[],"resu
 The handler polls the object's state, which keeps the lesson small. It ignores
 the client's `tools`, `context` and `state`, and reads only the newest user
 message: the object holds the conversation.
+
+## 20 — Run a LangGraph.js graph on Restate
+
+The graph is plain [LangGraph.js](https://langchain-ai.github.io/langgraphjs/):
+a `StateGraph` over `MessagesAnnotation` with a model node, a `ToolNode`, a
+review node and conditional edges. It runs inside a `LangGraphThread` object,
+one per thread, and three adapters in the lesson make its work durable:
+
+| Adapter        | Replaces                  | What Restate adds                                               |
+| -------------- | ------------------------- | --------------------------------------------------------------- |
+| `durableModel` | the chat model            | each model call is journaled and retried by Restate             |
+| `durableTool`  | a LangChain tool          | each tool call is journaled as one step                         |
+| `waitForHuman` | `interrupt()`             | the node waits on a durable promise and does not re-run         |
+| the object     | a checkpointer and thread | the conversation is object state; the journal is the checkpoint |
+
+LangGraph checkpoints between nodes: a node that fails halfway starts over,
+and `interrupt()` re-runs its node on resume, repeating the work before it.
+Here recovery replays the journal, so a node continues after its last
+completed model or tool call.
+
+```sh
+curl "$RESTATE_CALL_URL/LangGraphThread/t1/ask" --json '"Please refund order O-7."' &
+curl -X POST "$RESTATE_CALL_URL/LangGraphThread/t1/pending"
+curl "$RESTATE_CALL_URL/LangGraphThread/t1/answer" --json 'true'
+```
+
+The graph runs with `maxConcurrency: 1`: nodes in one step run one after
+another, so the journal records the same order on every replay. `ToolNode`
+still runs a message's tool calls in parallel, which is safe because each is a
+single journaled step. The lesson uses `@langchain/openai` with
+`OPENAI_API_KEY`; any LangChain chat model works in `durableModel`.
 
 ## Model configuration
 

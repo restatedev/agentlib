@@ -10,6 +10,8 @@
   },
   "devDependencies": {
     "@ag-ui/client": "1.0.0",
+    "@langchain/core": "1.2.13",
+    "@langchain/openai": "1.6.0",
     "@restate-agents/core": "workspace:*",
     "@restate-agents/examples": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",
