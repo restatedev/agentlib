@@ -81,8 +81,16 @@ export type ProgressEvent =
   | {type: "tool-end"; callId: string; name: string; result: ToolResult; info: ToolInfo}
   | {type: "steering"; message: string; data?: JsonValue}
   | {type: "handoff"; agent?: string}
-  /** The run replaced older messages of the model's view with a handoff note, or failed to. */
-  | {type: "compaction"; status: "applied" | "failed"; error?: string};
+  /** The run replaced older messages of the model's view, with a handoff note
+   * (`summary`) or a short runtime note (`truncate`), or failed to summarize.
+   * `overflow` means the model had rejected the view as too long. */
+  | {
+      type: "compaction";
+      mode: "summary" | "truncate";
+      status: "applied" | "failed";
+      reason: "threshold" | "overflow";
+      error?: string;
+    };
 /** Receives each event before the run continues. Spawn work that should not block it. */
 export type ProgressHandler<Context = unknown> = (
   event: ProgressEvent,

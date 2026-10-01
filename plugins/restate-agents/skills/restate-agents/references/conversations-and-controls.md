@@ -93,8 +93,18 @@ const researcher = agent({
   restates the run's input once it is summarized and lists background calls
   still running. A previewed result keeps its ref, so it can still be read.
 - The tool-free finalization of a stopped run also sees the compacted view.
-- Steering and interrupts wait until compaction finishes. A failed compaction
-  keeps the full view and is not retried in that run.
+- Steering and interrupts wait until compaction finishes. If the compactor
+  fails, the run stops summarizing and truncates instead: the older messages
+  give way to a short note that restates the input and lists pending calls.
+
+**Overflow recovery is always on.** When the model rejects a request as too
+long for its window, the run keeps at most half of the view (summarized when
+`compaction` is set, truncated otherwise) and asks again once. If that request
+overflows too, the run fails with a terminal error that `isContextOverflow`
+recognizes, also after a replay. Both adapters classify these rejections; a
+custom model throws `ContextOverflowError` for them. Progress reports each
+cut as a `compaction` event with `mode` (`summary` or `truncate`) and
+`reason` (`threshold` or `overflow`).
 
 ## Steer and interrupt a running turn
 

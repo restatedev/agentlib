@@ -7,7 +7,7 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import type {RetryOptions} from "@restatedev/restate-sdk-gen";
-import {ModelProtocolError} from "./errors.js";
+import {ContextOverflowError, ModelProtocolError, overflowResponse} from "./errors.js";
 import {journaledModel} from "./model.js";
 import type {Model, ModelRequest, ModelResponse, ModelUsage, ToolCall} from "./types.js";
 import {strictSchema} from "./strict-schema.js";
@@ -72,8 +72,14 @@ function payload(
 }
 
 /** Restate owns retries, but invalid requests/credentials do not improve on
- * retry. Connection failures, rate limits and server errors stay retryable. */
+ * retry. Connection failures, rate limits and server errors stay retryable.
+ * A request too long for the window is an overflow, which the run recovers from. */
 function classifyError(error: unknown): never {
+  if (
+    error instanceof OpenAI.APIError &&
+    (error.code === "context_length_exceeded" || overflowResponse(error.status, error.message))
+  )
+    throw new ContextOverflowError(error.message);
   if (
     error instanceof OpenAI.APIError &&
     error.status !== undefined &&

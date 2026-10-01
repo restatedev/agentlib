@@ -3,15 +3,19 @@ import {test} from "node:test";
 import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import OpenAI from "openai";
+import {APICallError} from "ai";
 import {MockLanguageModelV4} from "ai/test";
 import {
   agent,
+  ContextOverflowError,
+  isContextOverflow,
   tool,
   type JsonValue,
   type Message,
   type Model,
   type ModelRequest,
   type ModelResponse,
+  type ProgressEvent,
 } from "@restate-agents/core";
 import {openAIModel} from "@restate-agents/core/openai";
 import {aiModel} from "@restate-agents/core/provider";
@@ -313,4 +317,215 @@ void test("the adapters report usage", async () => {
   });
   const ai = await ask(aiModel({model: provider}));
   assert.deepEqual(ai.output.usage, {inputTokens: 50, outputTokens: 3, cachedInputTokens: 40});
+});
+
+const small = tool({
+  description: "A small result",
+  input: z.object({}),
+  *execute() {
+    return "x".repeat(400);
+  },
+});
+const firstNote = (request: ModelRequest) => {
+  const first = request.messages[0];
+  return first?.role === "user" && first.content.startsWith("{")
+    ? (JSON.parse(first.content) as {type: string; request?: string; handoff?: string})
+    : undefined;
+};
+
+/** Rejects any view of more than `limit` messages, as a provider rejects a long prompt. */
+function windowed(limit: number, steps: number) {
+  const requests: ModelRequest[] = [];
+  let overflows = 0;
+  const model: Model = function* (request) {
+    if (request.messages.length > limit) {
+      overflows++;
+      throw new ContextOverflowError("prompt is too long");
+    }
+    requests.push(structuredClone(request));
+    return requests.length <= steps
+      ? call(`s${requests.length}`, "small")
+      : {type: "final", text: "Done"};
+  };
+  return {model, requests, overflows: () => overflows};
+}
+
+void test("an overflow truncates the view and asks again", async () => {
+  const fixture = windowed(6, 5);
+  const events: ProgressEvent[] = [];
+  const a = agent({tools: {small}, model: fixture.model});
+  const result = await r.execute(
+    context(),
+    a.run("Go", {
+      *onProgress(event) {
+        if (event.type === "compaction") events.push(event);
+      },
+    }),
+  );
+  assert.equal(result.status, "completed");
+  assert.ok(fixture.overflows() >= 1);
+  assert.equal(events.length, fixture.overflows());
+  for (const event of events)
+    assert.deepEqual(event, {
+      type: "compaction",
+      mode: "truncate",
+      status: "applied",
+      reason: "overflow",
+    });
+  const after = fixture.requests.find((request) => firstNote(request));
+  assert.equal(firstNote(after!)?.type, "context-truncated");
+  assert.equal(firstNote(after!)?.request, "Go");
+  assert.equal(result.messages.filter((m) => m.role === "tool").length, 5);
+});
+
+void test("with compaction set, an overflow summarizes below the threshold", async () => {
+  const fixture = windowed(6, 5);
+  const events: ProgressEvent[] = [];
+  const a = agent({
+    tools: {small},
+    model: fixture.model,
+    compaction: {
+      *model() {
+        return {type: "final", text: "read pages"};
+      },
+    },
+  });
+  await r.execute(
+    context(),
+    a.run("Go", {
+      *onProgress(event) {
+        if (event.type === "compaction") events.push(event);
+      },
+    }),
+  );
+  assert.ok(events.length >= 1);
+  assert.deepEqual(events[0], {
+    type: "compaction",
+    mode: "summary",
+    status: "applied",
+    reason: "overflow",
+  });
+  assert.equal(
+    firstNote(fixture.requests.find((request) => firstNote(request))!)?.handoff,
+    "read pages",
+  );
+});
+
+void test("an overflow that shrinking cannot fix fails the run", async () => {
+  // Even the input alone overflows.
+  const fixture = windowed(0, 1);
+  const a = agent({tools: {small}, model: fixture.model});
+  await assert.rejects(r.execute(context(), a.run("Go")), (error) => isContextOverflow(error));
+  // One recovery: the input gives way to a note restating it, which still overflows.
+  assert.equal(fixture.overflows(), 2);
+
+  // A view that still overflows after one cut is not cut again in that step.
+  let asked = 0;
+  const always = agent({
+    tools: {small},
+    *model() {
+      if (++asked > 1) throw new ContextOverflowError("prompt is too long");
+      return call("s1", "small");
+    },
+  });
+  await assert.rejects(r.execute(context(), always.run("Go")), (error) => isContextOverflow(error));
+  assert.equal(asked, 3);
+});
+
+void test("overflow recovery replays from the journal", async () => {
+  let calls = 0;
+  const handler = (ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        let step = 0;
+        const a = agent({
+          tools: {small},
+          *model(request) {
+            return yield* r.run(
+              async () => {
+                calls++;
+                if (request.messages.length > 6)
+                  throw new ContextOverflowError("prompt is too long");
+                step++;
+                return step <= 5
+                  ? call(`s${step}`, "small")
+                  : {type: "final" as const, text: "Done"};
+              },
+              {name: "model"},
+            );
+          },
+        });
+        const result = yield* a.run("Go");
+        return result.messages.length;
+      })(),
+    );
+  const first = await runHandler(handler);
+  const live = calls;
+  const replay = await runHandler(handler, {replay: first.journal});
+  assert.deepEqual(replay.output, first.output);
+  assert.equal(calls, live);
+});
+
+void test("the adapters classify a rejected long prompt as an overflow", async () => {
+  const request: ModelRequest = {messages: [{role: "user", content: "hi"}], tools: []};
+  const failure = (model: Model) =>
+    runHandler((ctx) =>
+      r.execute(
+        ctx,
+        (function* () {
+          try {
+            yield* model(request);
+            return "no error";
+          } catch (error) {
+            return isContextOverflow(error) ? "overflow" : "other";
+          }
+        })(),
+      ),
+    );
+  const openai = (status: number, error: Record<string, unknown>) =>
+    openAIModel({
+      model: "test-model",
+      client: new OpenAI({
+        apiKey: "test-only",
+        maxRetries: 0,
+        fetch: async () => Response.json({error}, {status}),
+      }),
+    });
+  assert.equal(
+    (
+      await failure(
+        openai(400, {
+          message: "This model's maximum context length is 128000 tokens.",
+          code: "context_length_exceeded",
+        }),
+      )
+    ).output,
+    "overflow",
+  );
+  assert.equal(
+    (await failure(openai(400, {message: "Invalid tool schema", code: null}))).output,
+    "other",
+  );
+
+  const ai = (message: string, statusCode: number) =>
+    aiModel({
+      model: new MockLanguageModelV4({
+        doGenerate: async () => {
+          throw new APICallError({
+            message,
+            statusCode,
+            url: "https://example.test",
+            requestBodyValues: {},
+            isRetryable: false,
+          });
+        },
+      }),
+    });
+  assert.equal(
+    (await failure(ai("prompt is too long: 210000 tokens > 200000 maximum", 400))).output,
+    "overflow",
+  );
+  assert.equal((await failure(ai("Request too large", 413))).output, "overflow");
+  assert.equal((await failure(ai("Invalid request", 400))).output, "other");
 });

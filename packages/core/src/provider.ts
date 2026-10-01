@@ -14,7 +14,7 @@ import {
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
-import {ModelProtocolError} from "./errors.js";
+import {ContextOverflowError, ModelProtocolError, overflowResponse} from "./errors.js";
 import {journaledModel} from "./model.js";
 import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
@@ -216,6 +216,11 @@ export function aiModel(options: ProviderOptions): Model {
       // throttling and transient provider failures stay retryable.
       if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
         throw new TerminalError(error.message);
+      if (
+        APICallError.isInstance(error) &&
+        overflowResponse(error.statusCode, `${error.message} ${error.responseBody ?? ""}`)
+      )
+        throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});
       throw error;

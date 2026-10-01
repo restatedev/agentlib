@@ -10,8 +10,10 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {
   AgentLimitError,
+  ContextOverflowError,
   denial,
   GuardrailError,
+  isContextOverflow,
   ModelProtocolError,
   RunInterrupted,
   ToolBudgetExceeded,
@@ -22,7 +24,8 @@ import {RunTools} from "./run-tools.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
-import {compactContext} from "./context-compaction.js";
+import {summarizeContext, truncateContext} from "./context-compaction.js";
+import {estimateTokens} from "./context-size.js";
 import {
   hasPreview,
   READ_TOOL,
@@ -102,7 +105,7 @@ class AgentRun<C, O> {
   private steeringSource: SteeringSource | undefined;
   private steering: Future<string | SteeringUpdate> | undefined;
   private interrupt: Future<string> | undefined;
-  /** Set once in-run compaction failed; the run does not try again. */
+  /** Set once a summary failed; the run truncates from then on. */
   private compactionFailed = false;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
@@ -168,9 +171,7 @@ class AgentRun<C, O> {
     for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
       yield* this.emit({type: "step", step: this.step});
       yield* this.compactContext();
-      const mark = this.history.mark();
-      const response = yield* this.candidate(this.plan(this.history.snapshot()));
-      if (response?.usage) this.history.measure(mark, response.usage.inputTokens);
+      const response = yield* this.ask();
       if (!response || this.collectBackground()) continue;
       if (response.type === "tool_calls") {
         yield* this.toolPhase(response);
@@ -202,23 +203,74 @@ class AgentRun<C, O> {
     return {tag, value};
   }
 
-  /** Not raced against controls: steering and interrupts are handled once the
-   * smaller view is in place, so a stopped run still has room to finalize. */
-  private *compactContext(): Operation<void> {
-    const settings = this.config.compaction;
-    if (!settings || this.compactionFailed) return;
-    const model = this.root.compaction?.model ?? this.root.model;
-    try {
-      if (!(yield* compactContext(this.history, {...settings, model}, this.tools.pendingCalls())))
-        return;
-    } catch (error) {
-      if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
-      // The full view stays; the next model call may still fit, or fail as it would without compaction.
-      this.compactionFailed = true;
-      yield* this.emit({type: "compaction", status: "failed", error: String(error)});
-      return;
+  /** Asks the model for the next step; undefined when steering discarded it.
+   * A view the model rejects as too long is shrunk once, then asked again. */
+  private *ask(): Operation<ModelResponse | undefined> {
+    for (let recovered = false; ; recovered = true) {
+      const mark = this.history.mark();
+      // Caught inside the candidate: a failed task would fail the whole run.
+      const outcome = yield* this.candidate(this.overflowing(this.plan(this.history.snapshot())));
+      if (outcome && "overflow" in outcome) {
+        if (recovered || !(yield* this.compactContext(true))) throw outcome.overflow;
+        continue;
+      }
+      if (outcome?.usage) this.history.measure(mark, outcome.usage.inputTokens);
+      return outcome;
     }
-    yield* this.emit({type: "compaction", status: "applied"});
+  }
+
+  private *overflowing(
+    request: Operation<ModelResponse>,
+  ): Operation<ModelResponse | {overflow: ContextOverflowError}> {
+    try {
+      return yield* request;
+    } catch (error) {
+      if (!isContextOverflow(error)) throw error;
+      // Replay restores a journaled overflow as a plain TerminalError.
+      return {overflow: new ContextOverflowError((error as Error).message)};
+    }
+  }
+
+  /** Shrinks the model's view: past `compaction.maxTokens`, or always after an
+   * overflow, which keeps at most half of the view. A summary comes first when
+   * compaction is set; truncation needs no model, so it is the fallback.
+   * Not raced against controls: steering and interrupts are handled once the
+   * smaller view is in place, so a stopped run still has room to finalize. */
+  private *compactContext(overflow = false): Operation<boolean> {
+    const settings = this.config.compaction;
+    let retainTokens: number;
+    if (overflow) {
+      const half = Math.floor(estimateTokens(this.history.snapshot()) / 2);
+      retainTokens = settings ? Math.min(settings.retainTokens, half) : half;
+    } else {
+      if (!settings || this.history.viewTokens() <= settings.maxTokens) return false;
+      retainTokens = settings.retainTokens;
+    }
+    const reason = overflow ? "overflow" : "threshold";
+    const pending = this.tools.pendingCalls();
+    if (settings && !this.compactionFailed) {
+      const model = this.root.compaction?.model ?? this.root.model;
+      try {
+        if (yield* summarizeContext(this.history, {model, retainTokens}, pending)) {
+          yield* this.emit({type: "compaction", mode: "summary", status: "applied", reason});
+          return true;
+        }
+      } catch (error) {
+        if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
+        // Summaries stop for this run; truncation keeps it within bounds.
+        this.compactionFailed = true;
+        yield* this.emit({
+          type: "compaction",
+          mode: "summary",
+          status: "failed",
+          reason,
+          error: String(error),
+        });
+      }
+    }
+    if (!truncateContext(this.history, retainTokens, pending)) return false;
+    yield* this.emit({type: "compaction", mode: "truncate", status: "applied", reason});
+    return true;
   }
 
   /** Tools that belong to the run rather than an agent, so they survive a handoff. */
