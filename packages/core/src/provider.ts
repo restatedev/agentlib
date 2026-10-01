@@ -14,7 +14,7 @@ import {
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
-import {ContextOverflowError, ModelProtocolError, overflowResponse} from "./errors.js";
+import {ContextOverflowError, ModelProtocolError} from "./errors.js";
 import {journaledModel} from "./model.js";
 import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
@@ -216,10 +216,9 @@ export function aiModel(options: ProviderOptions): Model {
       // throttling and transient provider failures stay retryable.
       if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
         throw new TerminalError(error.message);
-      if (
-        APICallError.isInstance(error) &&
-        overflowResponse(error.statusCode, `${error.message} ${error.responseBody ?? ""}`)
-      )
+      // Providers word an overflow differently and give it no code of its own,
+      // so only a 413 counts here; contextWindow avoids the rest up front.
+      if (APICallError.isInstance(error) && error.statusCode === 413)
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});

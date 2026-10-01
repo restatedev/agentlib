@@ -51,14 +51,6 @@ export class ContextOverflowError extends TerminalError {
 export function isContextOverflow(error: unknown): boolean {
   return error instanceof TerminalError && error.code === CONTEXT_OVERFLOW_CODE;
 }
-// How providers word it: OpenAI, Anthropic, Bedrock, Gemini and gateways in front of them.
-const OVERFLOW_MESSAGE =
-  /context[_ ]length|context window|maximum context|prompt is too long|input is too long|too many (input )?tokens|exceeds the maximum (number of )?(input )?tokens|request_too_large/i;
-/** Whether a rejected request failed for its length: a 413, or a 400 that says so. */
-export function overflowResponse(status: number | undefined, message: string): boolean {
-  return status === 413 || (status === 400 && OVERFLOW_MESSAGE.test(message));
-}
-
 export function denial(result: GuardrailResult): string | undefined {
   if (typeof result === "string") return result;
   if (result === false) return "Rejected by guardrail";

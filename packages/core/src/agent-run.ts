@@ -58,6 +58,7 @@ export type RunConfiguration = ToolExecutionLimits &
     outputSchema?: Record<string, unknown>;
     compaction?: {maxTokens: number; retainTokens: number};
     toolResults?: PreviewSettings;
+    contextWindow?: number;
   }>;
 
 export function* runAgent<C, O>(
@@ -231,22 +232,30 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Shrinks the model's view: past `compaction.maxTokens`, or always after an
-   * overflow, which keeps at most half of the view. A summary comes first when
-   * compaction is set; truncation needs no model, so it is the fallback.
+  /** Shrinks the model's view: past `compaction.maxTokens`, when the next
+   * request would not fit `contextWindow`, or always after an overflow, which
+   * keeps at most half of the view. A summary comes first when compaction is
+   * set; truncation needs no model, so it is the fallback.
    * Not raced against controls: steering and interrupts are handled once the
    * smaller view is in place, so a stopped run still has room to finalize. */
   private *compactContext(overflow = false): Operation<boolean> {
-    const settings = this.config.compaction;
+    const {compaction: settings, contextWindow, maxOutputTokens} = this.config;
+    const retain = (limit: number) => Math.min(settings?.retainTokens ?? limit, limit);
+    let reason: "threshold" | "window" | "overflow";
     let retainTokens: number;
     if (overflow) {
-      const half = Math.floor(estimateTokens(this.history.snapshot()) / 2);
-      retainTokens = settings ? Math.min(settings.retainTokens, half) : half;
+      reason = "overflow";
+      retainTokens = retain(Math.floor(estimateTokens(this.history.snapshot()) / 2));
     } else {
-      if (!settings || this.history.viewTokens() <= settings.maxTokens) return false;
-      retainTokens = settings.retainTokens;
+      const tokens = this.history.viewTokens();
+      if (settings && tokens > settings.maxTokens) {
+        reason = "threshold";
+        retainTokens = settings.retainTokens;
+      } else if (contextWindow && tokens + maxOutputTokens > contextWindow) {
+        reason = "window";
+        retainTokens = retain(Math.floor(contextWindow / 4));
+      } else return false;
     }
-    const reason = overflow ? "overflow" : "threshold";
     const pending = this.tools.pendingCalls();
     if (settings && !this.compactionFailed) {
       const model = this.root.compaction?.model ?? this.root.model;

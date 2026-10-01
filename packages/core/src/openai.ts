@@ -7,7 +7,7 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import type {RetryOptions} from "@restatedev/restate-sdk-gen";
-import {ContextOverflowError, ModelProtocolError, overflowResponse} from "./errors.js";
+import {ContextOverflowError, ModelProtocolError} from "./errors.js";
 import {journaledModel} from "./model.js";
 import type {Model, ModelRequest, ModelResponse, ModelUsage, ToolCall} from "./types.js";
 import {strictSchema} from "./strict-schema.js";
@@ -77,7 +77,7 @@ function payload(
 function classifyError(error: unknown): never {
   if (
     error instanceof OpenAI.APIError &&
-    (error.code === "context_length_exceeded" || overflowResponse(error.status, error.message))
+    (error.code === "context_length_exceeded" || error.status === 413)
   )
     throw new ContextOverflowError(error.message);
   if (

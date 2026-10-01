@@ -467,7 +467,7 @@ void test("overflow recovery replays from the journal", async () => {
   assert.equal(calls, live);
 });
 
-void test("the adapters classify a rejected long prompt as an overflow", async () => {
+void test("the adapters classify an overflow by its code, never its message", async () => {
   const request: ModelRequest = {messages: [{role: "user", content: "hi"}], tools: []};
   const failure = (model: Model) =>
     runHandler((ctx) =>
@@ -503,10 +503,16 @@ void test("the adapters classify a rejected long prompt as an overflow", async (
     ).output,
     "overflow",
   );
+  // The same words without the code are not an overflow.
   assert.equal(
-    (await failure(openai(400, {message: "Invalid tool schema", code: null}))).output,
+    (
+      await failure(
+        openai(400, {message: "This model's maximum context length is 128000 tokens.", code: null}),
+      )
+    ).output,
     "other",
   );
+  assert.equal((await failure(openai(413, {message: "Request too large"}))).output, "overflow");
 
   const ai = (message: string, statusCode: number) =>
     aiModel({
@@ -522,10 +528,82 @@ void test("the adapters classify a rejected long prompt as an overflow", async (
         },
       }),
     });
+  // Anthropic words an overflow as a plain 400; contextWindow avoids it instead.
   assert.equal(
     (await failure(ai("prompt is too long: 210000 tokens > 200000 maximum", 400))).output,
-    "overflow",
+    "other",
   );
   assert.equal((await failure(ai("Request too large", 413))).output, "overflow");
   assert.equal((await failure(ai("Invalid request", 400))).output, "other");
+});
+
+void test("contextWindow shrinks a view that would not fit before asking", async () => {
+  const run = async (compaction?: {retainTokens: number}) => {
+    const requests: ModelRequest[] = [];
+    const events: ProgressEvent[] = [];
+    let step = 0;
+    const a = agent({
+      // About 1150 tokens each, under the preview threshold: three outgrow a quarter of the window.
+      tools: {
+        medium: tool({
+          description: "A medium result",
+          input: z.object({}),
+          *execute() {
+            return "x".repeat(2300);
+          },
+        }),
+      },
+      contextWindow: 10000,
+      maxOutputTokens: 1000,
+      ...(compaction
+        ? {
+            compaction: {
+              ...compaction,
+              *model() {
+                return {type: "final" as const, text: "note"};
+              },
+            },
+          }
+        : {}),
+      *model(request) {
+        requests.push(structuredClone(request));
+        step++;
+        // Only the reported usage, which counts instructions too, shows the view near the window.
+        const usage = {inputTokens: step === 3 ? 9500 : 500, outputTokens: 10};
+        if (step <= 4) return {...call(`m${step}`, "medium"), usage};
+        return {type: "final", text: "Done", usage};
+      },
+    });
+    const result = await r.execute(
+      context(),
+      a.run("Go", {
+        *onProgress(event) {
+          if (event.type === "compaction") events.push(event);
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    return {requests, events};
+  };
+  const truncated = await run();
+  assert.deepEqual(truncated.events, [
+    {type: "compaction", mode: "truncate", status: "applied", reason: "window"},
+  ]);
+  assert.equal(firstNote(truncated.requests[2]!), undefined);
+  assert.equal(firstNote(truncated.requests[3]!)?.type, "context-truncated");
+
+  const summarized = await run({retainTokens: 100});
+  assert.deepEqual(summarized.events, [
+    {type: "compaction", mode: "summary", status: "applied", reason: "window"},
+  ]);
+});
+
+void test("contextWindow must leave room for the output", () => {
+  const model: Model = function* () {
+    return {type: "final", text: ""};
+  };
+  assert.throws(
+    () => agent({model, contextWindow: 4096, maxOutputTokens: 4096}),
+    /contextWindow must be greater than maxOutputTokens/,
+  );
 });

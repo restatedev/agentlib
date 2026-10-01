@@ -83,12 +83,14 @@ export type ProgressEvent =
   | {type: "handoff"; agent?: string}
   /** The run replaced older messages of the model's view, with a handoff note
    * (`summary`) or a short runtime note (`truncate`), or failed to summarize.
-   * `overflow` means the model had rejected the view as too long. */
+   * `threshold` means past `compaction.maxTokens`, `window` that the next
+   * request would not fit `contextWindow`, and `overflow` that the model had
+   * rejected the view as too long. */
   | {
       type: "compaction";
       mode: "summary" | "truncate";
       status: "applied" | "failed";
-      reason: "threshold" | "overflow";
+      reason: "threshold" | "window" | "overflow";
       error?: string;
     };
 /** Receives each event before the run continues. Spawn work that should not block it. */
@@ -243,6 +245,13 @@ export type AgentOptions<Context, Output = string> = {
    * `retainTokens` (default a quarter of maxTokens) stay verbatim. The saved
    * and returned transcript is unchanged. `model` defaults to the agent's. */
   compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
+  /** The model's context window in tokens. Before each model call, a view that
+   * would not fit with `maxOutputTokens` is shrunk first: summarized when
+   * `compaction` is set, truncated otherwise, to `compaction.retainTokens` or
+   * a quarter of the window, whichever is smaller. Without it, only an
+   * overflow error the model reports as such (a `ContextOverflowError`) is
+   * recovered from; some providers give an overflow no distinct code. */
+  contextWindow?: number;
   /** Shows the model a preview of each tool result estimated above `maxTokens`
    * (default 1500): its head and tail, `previewTokens` in all (default 750).
    * The model reads the rest with the `read_tool_result` tool, which appears

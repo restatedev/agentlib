@@ -97,14 +97,26 @@ const researcher = agent({
   fails, the run stops summarizing and truncates instead: the older messages
   give way to a short note that restates the input and lists pending calls.
 
-**Overflow recovery is always on.** When the model rejects a request as too
-long for its window, the run keeps at most half of the view (summarized when
-`compaction` is set, truncated otherwise) and asks again once. If that request
-overflows too, the run fails with a terminal error that `isContextOverflow`
-recognizes, also after a replay. Both adapters classify these rejections; a
-custom model throws `ContextOverflowError` for them. Progress reports each
-cut as a `compaction` event with `mode` (`summary` or `truncate`) and
-`reason` (`threshold` or `overflow`).
+**Set `contextWindow` to avoid overflows.** Before each model call, a view
+that would not fit the window with `maxOutputTokens` is shrunk first:
+summarized when `compaction` is set, truncated otherwise, to
+`compaction.retainTokens` or a quarter of the window, whichever is smaller.
+
+```ts
+const researcher = agent({model, tools: {search, fetchPage}, contextWindow: 200000});
+```
+
+**Overflow recovery is always on, for overflows the model reports as such.**
+A `ContextOverflowError` makes the run keep at most half of the view and ask
+again once; if that request overflows too, the run fails with a terminal
+error that `isContextOverflow` recognizes, also after a replay. The adapters
+raise it only for a structured signal, never for an error message: OpenAI's
+`context_length_exceeded` code, or HTTP 413. Some providers, such as
+Anthropic, report an overflow as a plain 400, so set `contextWindow` for them.
+A custom model throws `ContextOverflowError` itself.
+
+Progress reports each cut as a `compaction` event with `mode` (`summary` or
+`truncate`) and `reason` (`threshold`, `window` or `overflow`).
 
 ## Steer and interrupt a running turn
 

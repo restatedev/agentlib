@@ -43,6 +43,13 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     toolResults = {maxTokens, previewTokens};
   }
 
+  const contextWindow =
+    options.contextWindow === undefined
+      ? undefined
+      : positiveInteger(options.contextWindow, "contextWindow");
+  if (contextWindow !== undefined && contextWindow <= maxOutputTokens)
+    throw new TypeError("contextWindow must be greater than maxOutputTokens");
+
   const config = {
     maxSteps,
     maxToolCalls,
@@ -52,6 +59,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     outputSchema,
     compaction,
     toolResults,
+    contextWindow,
   };
   function run(input: string, runOptions?: RunOptions<C>): Operation<RunResult<O>> {
     return runAgent(input, options, config, runOptions);
