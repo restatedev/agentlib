@@ -14,12 +14,19 @@ import {
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
-import {ModelProtocolError} from "./errors.js";
+import {ContextOverflowError, ModelProtocolError} from "./errors.js";
 import {journaledModel} from "./model.js";
 import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
 import {jsonSchema} from "./validation.js";
-import type {Model, ModelChunk, ModelRequest, ModelResponse, ToolCall} from "./types.js";
+import type {
+  Model,
+  ModelChunk,
+  ModelRequest,
+  ModelResponse,
+  ModelUsage,
+  ToolCall,
+} from "./types.js";
 import {strictSchema} from "./strict-schema.js";
 
 type GenerateSettings = Parameters<typeof generateText>[0];
@@ -30,6 +37,11 @@ export type ProviderOptions = {
   providerOptions?: GenerateSettings["providerOptions"];
   telemetry?: GenerateSettings["experimental_telemetry"];
   tracer?: Tracer;
+  /** Marks the instructions and the newest message as cache points, for
+   * providers that cache only where told: Anthropic and Bedrock. A request
+   * then reads its prefix from the previous step's cache. Others cache
+   * prefixes on their own and ignore these options. Default: true. */
+  caching?: boolean;
   /** Best-effort I/O inside one journal attempt. A new start replaces that step's
    * previous attempt; raw text/reasoning precedes output guardrails. */
   onChunk?(
@@ -41,34 +53,47 @@ function finished(reason: string | undefined) {
   if (reason !== "stop" && reason !== "tool-calls")
     throw new ModelProtocolError(`Incomplete model response: ${reason ?? "unknown"}`);
 }
-function messages(request: ModelRequest): ModelMessage[] {
-  return request.messages.map((message) => {
-    if (message.role === "user") return {role: "user", content: message.content};
-    if (message.role === "tool")
-      return {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: message.callId,
-            toolName: message.name,
-            output: {type: "json", value: message.result},
-          },
-        ],
-      };
+// Namespaced: each provider reads its own key, so no provider detection is needed.
+const CACHE_POINT = {
+  anthropic: {cacheControl: {type: "ephemeral"}},
+  bedrock: {cachePoint: {type: "default"}},
+} as const;
+
+function messages(request: ModelRequest, caching: boolean): ModelMessage[] {
+  const rendered = request.messages.map(renderMessage);
+  // The newest message moves the cache point forward each step; the
+  // provider finds the previous step's prefix behind it.
+  const last = rendered.at(-1);
+  if (caching && last) last.providerOptions = CACHE_POINT;
+  return rendered;
+}
+
+function renderMessage(message: ModelRequest["messages"][number]): ModelMessage {
+  if (message.role === "user") return {role: "user", content: message.content};
+  if (message.role === "tool")
     return {
-      role: "assistant",
+      role: "tool",
       content: [
-        ...(message.content ? [{type: "text" as const, text: message.content}] : []),
-        ...(message.calls ?? []).map((call) => ({
-          type: "tool-call" as const,
-          toolCallId: call.id,
-          toolName: call.name,
-          input: call.input,
-        })),
+        {
+          type: "tool-result",
+          toolCallId: message.callId,
+          toolName: message.name,
+          output: {type: "json", value: message.result},
+        },
       ],
     };
-  });
+  return {
+    role: "assistant",
+    content: [
+      ...(message.content ? [{type: "text" as const, text: message.content}] : []),
+      ...(message.calls ?? []).map((call) => ({
+        type: "tool-call" as const,
+        toolCallId: call.id,
+        toolName: call.name,
+        input: call.input,
+      })),
+    ],
+  };
 }
 
 function toolCalls(
@@ -85,7 +110,13 @@ function toolCalls(
     return {id: call.toolCallId, name: call.toolName, input: jsonSchema.parse(call.input)};
   });
 }
-type Generation = {finishReason: string; text: string; calls: ToolCall[]; output: unknown};
+type Generation = {
+  finishReason: string;
+  text: string;
+  calls: ToolCall[];
+  output: unknown;
+  usage?: ModelUsage;
+};
 type ChunkInfo = {step: number; signal: AbortSignal};
 
 function settingsFor(
@@ -93,6 +124,7 @@ function settingsFor(
   request: ModelRequest,
   signal: AbortSignal,
 ): GenerateSettings {
+  const caching = options.caching ?? true;
   const tools: ToolSet = Object.fromEntries(
     request.tools.map((t) => {
       const strict = strictSchema(t.inputSchema);
@@ -108,8 +140,12 @@ function settingsFor(
   );
   return {
     model: options.model,
-    instructions: request.instructions,
-    messages: messages(request),
+    // The instructions follow the tools, so one cache point covers both.
+    instructions:
+      caching && request.instructions
+        ? {role: "system", content: request.instructions, providerOptions: CACHE_POINT}
+        : request.instructions,
+    messages: messages(request, caching),
     tools,
     maxOutputTokens: request.maxOutputTokens,
     maxRetries: 0,
@@ -127,7 +163,13 @@ async function generate(settings: GenerateSettings, wantsOutput: boolean): Promi
   finished(result.finishReason);
   const calls = toolCalls(result.toolCalls);
   const output = wantsOutput && !calls.length ? result.output : undefined;
-  return {finishReason: result.finishReason, text: result.text, calls, output};
+  return {
+    finishReason: result.finishReason,
+    text: result.text,
+    calls,
+    output,
+    usage: modelUsage(result.usage),
+  };
 }
 
 async function stream(
@@ -149,8 +191,19 @@ async function stream(
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls);
   const output = wantsOutput && !calls.length ? await result.output : undefined;
+  const usage = modelUsage(await result.usage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, output};
+  return {finishReason, text, calls, output, usage};
+}
+
+/** Providers that report no counts leave usage out; compaction then estimates. */
+function modelUsage(
+  usage: Awaited<ReturnType<typeof generateText>>["usage"],
+): ModelUsage | undefined {
+  const {inputTokens, outputTokens} = usage;
+  if (inputTokens === undefined || outputTokens === undefined) return undefined;
+  const cached = usage.inputTokenDetails?.cacheReadTokens;
+  return {inputTokens, outputTokens, ...(cached ? {cachedInputTokens: cached} : {})};
 }
 
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */
@@ -159,16 +212,18 @@ export function aiModel(options: ProviderOptions): Model {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
     try {
-      const {finishReason, text, calls, output} = options.onChunk
+      const {finishReason, text, calls, output, usage} = options.onChunk
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
         throw new ModelProtocolError("Model indicated tool calls but returned none");
-      if (calls.length) return {type: "tool_calls", calls, text};
+      const reported = usage ? {usage} : {};
+      if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
         type: "final",
         text,
         ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
+        ...reported,
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
@@ -184,6 +239,10 @@ export function aiModel(options: ProviderOptions): Model {
       // throttling and transient provider failures stay retryable.
       if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
         throw new TerminalError(error.message);
+      // Providers word an overflow differently and give it no code of its own,
+      // so only a 413 counts here; contextWindow avoids the rest up front.
+      if (APICallError.isInstance(error) && error.statusCode === 413)
+        throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});
       throw error;

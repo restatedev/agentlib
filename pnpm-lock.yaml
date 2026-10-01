@@ -93,6 +93,12 @@ importers:
       '@ag-ui/client':
         specifier: 1.0.0
         version: 1.0.0
+      '@ai-sdk/amazon-bedrock':
+        specifier: 5.0.20
+        version: 5.0.20(zod@4.6.5)
+      '@ai-sdk/anthropic':
+        specifier: 4.0.14
+        version: 4.0.14(zod@4.6.5)
       '@restate-agents/core':
         specifier: workspace:*
         version: link:../core
@@ -146,8 +152,26 @@ packages:
   '@ag-ui/proto@1.0.0':
     resolution: {integrity: sha512-RXEdjD3RfZ/8fUEX+ZqN5SrZAxrOZ9oQt0FlEhN4Ie/YEOKDVv0u1g83fOhGxWJTTVAmYSM/xf+ijwixsmz2RA==}
 
+  '@ai-sdk/amazon-bedrock@5.0.20':
+    resolution: {integrity: sha512-cMVPY4VYYsopd0+S3dTXHXOrIPtvqzTZYLSGi4tnmQx82buCq+f/4pc1441Jn6S8On/6YgDZWQS0jF6X/lOqVQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/anthropic@4.0.14':
+    resolution: {integrity: sha512-2YQzgABM3StIEIByaWNiEqTHnvK8eRvXPSVeHjseVrN1Zud7xX7YExjGkFpt9brse3OZrUhg9kaDO7aXPEzq0Q==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/gateway@4.0.19':
     resolution: {integrity: sha512-pQ3UPO0tyLUuW751jdgWhvHmXmjvAFpyiTeZF6eSVHMYhH/dSH4FtSKGT2nOnvvpaRpU8ygsLV4ng2Mz0lcU/A==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/openai@4.0.13':
+    resolution: {integrity: sha512-7I2sx9NyT2XJ8YrpBr0twwASv6mgpI9Gu7mNxtevmdJ0n8UxUKtcG1NHNjaOEzN5pKzNAv3XcBOVom9DwJ2CpA==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -722,6 +746,22 @@ packages:
   '@restatedev/restate-sdk@1.17.2':
     resolution: {integrity: sha512-h1mZqFrkvzWNvTYVPA4WnlqwEzL0eg03//8RV0EGrovjePEDm43ec/PbiN1S7HOP6+6eAhEN7yiLFwUJG9A/yg==}
 
+  '@smithy/core@3.35.0':
+    resolution: {integrity: sha512-zRMhfkByhT2snNdr1si24vJitU6Cr9ix2MikUfWmkAgp4jrNP0GcKSP5YvwQ+TlI8AZXER5QOGJn3JsVtSD9/A==}
+    engines: {node: '>=18.0.0'}
+
+  '@smithy/eventstream-codec@4.5.2':
+    resolution: {integrity: sha512-u4EAkaviMcQYlorFSnxFUgF/Dnbgiu2TzGmqOU4h3CL4MbvrYyNCXpFkcBwvAEU11EvspKX2zzS2uX7q+43VdQ==}
+    engines: {node: '>=18.0.0'}
+
+  '@smithy/types@4.19.0':
+    resolution: {integrity: sha512-r7jh49VJxGerfAcTQA6gXcKc+98zOp/tqRwzYjgOE+iSQsP6cEU1hq2QzbuipmP68QtYdY9wKEhiCQZIzHgZ4Q==}
+    engines: {node: '>=18.0.0'}
+
+  '@smithy/util-utf8@4.5.2':
+    resolution: {integrity: sha512-7wNWV7SugHpcMA7uzEawJNpE0GrasXM7a9E+1+Wm6NxVuDClESac/AKt+G7jMZNUz5vBLWqKlqVV7Sv7AtUr6Q==}
+    engines: {node: '>=18.0.0'}
+
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
@@ -975,6 +1015,9 @@ packages:
 
   async@3.2.6:
     resolution: {integrity: sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==}
+
+  aws4fetch@1.0.20:
+    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
 
   b4a@1.9.0:
     resolution: {integrity: sha512-dpfcF9fDNR6++cthXR67iyhgqWy9CBouAvIWhIntzBG6cvK/cnIPiZQjBwi/ZqjjBEDGfoNDtmB0kTjroOJ3pQ==}
@@ -1688,11 +1731,34 @@ snapshots:
       '@protobuf-ts/protoc': 2.11.1
       zod: 3.25.76
 
+  '@ai-sdk/amazon-bedrock@5.0.20(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/anthropic': 4.0.14(zod@4.6.5)
+      '@ai-sdk/openai': 4.0.13(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.9(zod@4.6.5)
+      '@smithy/eventstream-codec': 4.5.2
+      '@smithy/util-utf8': 4.5.2
+      aws4fetch: 1.0.20
+      zod: 4.6.5
+
+  '@ai-sdk/anthropic@4.0.14(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.9(zod@4.6.5)
+      zod: 4.6.5
+
   '@ai-sdk/gateway@4.0.19(zod@4.6.5)':
     dependencies:
       '@ai-sdk/provider': 4.0.3
       '@ai-sdk/provider-utils': 5.0.9(zod@4.6.5)
       '@vercel/oidc': 3.2.0
+      zod: 4.6.5
+
+  '@ai-sdk/openai@4.0.13(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.9(zod@4.6.5)
       zod: 4.6.5
 
   '@ai-sdk/provider-utils@5.0.9(zod@4.6.5)':
@@ -2050,6 +2116,25 @@ snapshots:
     dependencies:
       '@restatedev/restate-sdk-core': 1.17.2
 
+  '@smithy/core@3.35.0':
+    dependencies:
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@smithy/eventstream-codec@4.5.2':
+    dependencies:
+      '@smithy/core': 3.35.0
+      tslib: 2.8.1
+
+  '@smithy/types@4.19.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@smithy/util-utf8@4.5.2':
+    dependencies:
+      '@smithy/core': 3.35.0
+      tslib: 2.8.1
+
   '@standard-schema/spec@1.1.0': {}
 
   '@swc/helpers@0.5.23':
@@ -2250,6 +2335,8 @@ snapshots:
   async-lock@1.4.1: {}
 
   async@3.2.6: {}
+
+  aws4fetch@1.0.20: {}
 
   b4a@1.9.0: {}
 

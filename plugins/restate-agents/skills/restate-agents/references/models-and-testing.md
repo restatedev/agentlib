@@ -28,6 +28,14 @@ export const model = aiModel({model: anthropic("claude-sonnet-5"), retry: {maxAt
 `onChunk` for streaming text to a UI. Different agents can use different
 models: set `model` on each agent.
 
+Prompt caching is on by default. `aiModel` marks the instructions (which
+follow the tools) and the newest message as cache points for Anthropic and
+Bedrock, so each step reads the previous step's prefix from the cache; other
+providers cache prefixes on their own and ignore these options. Pass
+`caching: false` to send none, for example for a Bedrock model without
+prompt caching. Both adapters report `usage` on each response, with
+`cachedInputTokens` for cache reads.
+
 Both adapters send a tool schema in strict mode when it has an exact strict
 form, so the model's arguments always match it: every property is required
 (use `.nullable()` rather than `.optional()`) and there are no free-form maps.

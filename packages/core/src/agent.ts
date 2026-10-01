@@ -16,15 +16,39 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   const maxOutputChars = positiveInteger(options.maxOutputChars ?? 128000, "maxOutputChars");
   let compaction: RunConfiguration["compaction"];
   if (options.compaction) {
-    const maxChars = positiveInteger(options.compaction.maxChars ?? 400000, "compaction.maxChars");
-    const retainChars = positiveInteger(
-      options.compaction.retainChars ?? Math.floor(maxChars / 4),
-      "compaction.retainChars",
+    const maxTokens = positiveInteger(
+      options.compaction.maxTokens ?? 100000,
+      "compaction.maxTokens",
     );
-    if (retainChars >= maxChars)
-      throw new TypeError("compaction.retainChars must be less than compaction.maxChars");
-    compaction = {maxChars, retainChars};
+    const retainTokens = positiveInteger(
+      options.compaction.retainTokens ?? Math.floor(maxTokens / 4),
+      "compaction.retainTokens",
+    );
+    if (retainTokens >= maxTokens)
+      throw new TypeError("compaction.retainTokens must be less than compaction.maxTokens");
+    compaction = {maxTokens, retainTokens};
   }
+  let toolResults: RunConfiguration["toolResults"];
+  if (options.toolResults !== false) {
+    const maxTokens = positiveInteger(
+      options.toolResults?.maxTokens ?? 1500,
+      "toolResults.maxTokens",
+    );
+    const previewTokens = positiveInteger(
+      options.toolResults?.previewTokens ?? Math.floor(maxTokens / 2),
+      "toolResults.previewTokens",
+    );
+    if (previewTokens >= maxTokens)
+      throw new TypeError("toolResults.previewTokens must be less than toolResults.maxTokens");
+    toolResults = {maxTokens, previewTokens};
+  }
+
+  const contextWindow =
+    options.contextWindow === undefined
+      ? undefined
+      : positiveInteger(options.contextWindow, "contextWindow");
+  if (contextWindow !== undefined && contextWindow <= maxOutputTokens)
+    throw new TypeError("contextWindow must be greater than maxOutputTokens");
 
   const config = {
     maxSteps,
@@ -34,6 +58,8 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     maxOutputChars,
     outputSchema,
     compaction,
+    toolResults,
+    contextWindow,
   };
   function run(input: string, runOptions?: RunOptions<C>): Operation<RunResult<O>> {
     return runAgent(input, options, config, runOptions);

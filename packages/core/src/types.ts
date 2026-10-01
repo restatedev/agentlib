@@ -31,16 +31,20 @@ export type ModelRequest = {
   step?: number;
 };
 export type ModelChunk = {type: "text-delta" | "reasoning-delta"; text: string};
+/** Tokens a model call used, as the provider reported them. */
+export type ModelUsage = {inputTokens: number; outputTokens: number; cachedInputTokens?: number};
 export type ModelFinalResponse = {
   type: "final";
   text: string;
   output?: JsonValue;
   validationError?: string;
+  usage?: ModelUsage;
 };
 export type ModelToolCallsResponse = {
   type: "tool_calls";
   calls: ToolCall[];
   text?: string;
+  usage?: ModelUsage;
 };
 export type ModelResponse = ModelFinalResponse | ModelToolCallsResponse;
 /** A local journaled call or an RPC to a model gateway are both operations. */
@@ -77,8 +81,18 @@ export type ProgressEvent =
   | {type: "tool-end"; callId: string; name: string; result: ToolResult; info: ToolInfo}
   | {type: "steering"; message: string; data?: JsonValue}
   | {type: "handoff"; agent?: string}
-  /** The run replaced older messages of the model's view with a handoff note, or failed to. */
-  | {type: "compaction"; status: "applied" | "failed"; error?: string};
+  /** The run replaced older messages of the model's view, with a handoff note
+   * (`summary`) or a short runtime note (`truncate`), or failed to summarize.
+   * `threshold` means past `compaction.maxTokens`, `window` that the next
+   * request would not fit `contextWindow`, and `overflow` that the model had
+   * rejected the view as too long. */
+  | {
+      type: "compaction";
+      mode: "summary" | "truncate";
+      status: "applied" | "failed";
+      reason: "threshold" | "window" | "overflow";
+      error?: string;
+    };
 /** Receives each event before the run continues. Spawn work that should not block it. */
 export type ProgressHandler<Context = unknown> = (
   event: ProgressEvent,
@@ -225,10 +239,25 @@ export type AgentOptions<Context, Output = string> = {
   /** Tool-free model call that summarizes an interrupted or step-limited run. Default: model; false skips it. */
   finalize?: Model | false;
   /** Summarizes this run's older messages when the model's view outgrows
-   * `maxChars` (default 400000, counting messages only). The newest messages
-   * that fit `retainChars` (default a quarter of maxChars) stay verbatim. The
-   * saved and returned transcript is unchanged. `model` defaults to the agent's. */
-  compaction?: {model?: Model; maxChars?: number; retainChars?: number};
+   * `maxTokens` (default 100000). The size is the input tokens the model last
+   * reported plus an estimate for messages added since, or an estimate of the
+   * messages alone before any report. The newest messages that fit
+   * `retainTokens` (default a quarter of maxTokens) stay verbatim. The saved
+   * and returned transcript is unchanged. `model` defaults to the agent's. */
+  compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
+  /** The model's context window in tokens. Before each model call, a view that
+   * would not fit with `maxOutputTokens` is shrunk first: summarized when
+   * `compaction` is set, truncated otherwise, to `compaction.retainTokens` or
+   * a quarter of the window, whichever is smaller. Without it, only an
+   * overflow error the model reports as such (a `ContextOverflowError`) is
+   * recovered from; some providers give an overflow no distinct code. */
+  contextWindow?: number;
+  /** Shows the model a preview of each tool result estimated above `maxTokens`
+   * (default 1500): its head and tail, `previewTokens` in all (default 750).
+   * The model reads the rest with the `read_tool_result` tool, which appears
+   * once a preview does. The saved and returned transcript keeps every result
+   * whole. `false` shows every result in full. */
+  toolResults?: false | {maxTokens?: number; previewTokens?: number};
 };
 export type RunArguments<Context> = undefined extends Context
   ? [options?: RunOptions<Context>]

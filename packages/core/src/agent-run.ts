@@ -10,8 +10,10 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {
   AgentLimitError,
+  ContextOverflowError,
   denial,
   GuardrailError,
+  isContextOverflow,
   ModelProtocolError,
   RunInterrupted,
   ToolBudgetExceeded,
@@ -22,7 +24,14 @@ import {RunTools} from "./run-tools.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
-import {compactContext} from "./context-compaction.js";
+import {summarizeContext, truncateContext} from "./context-compaction.js";
+import {estimateTokens} from "./context-size.js";
+import {
+  hasPreview,
+  READ_TOOL,
+  readToolResultTool,
+  type PreviewSettings,
+} from "./tool-result-preview.js";
 import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
@@ -39,6 +48,7 @@ import type {
   RunResult,
   SteeringSource,
   SteeringUpdate,
+  Tool,
 } from "./types.js";
 
 export type RunConfiguration = ToolExecutionLimits &
@@ -46,7 +56,9 @@ export type RunConfiguration = ToolExecutionLimits &
     maxSteps: number;
     maxOutputTokens: number;
     outputSchema?: Record<string, unknown>;
-    compaction?: {maxChars: number; retainChars: number};
+    compaction?: {maxTokens: number; retainTokens: number};
+    toolResults?: PreviewSettings;
+    contextWindow?: number;
   }>;
 
 export function* runAgent<C, O>(
@@ -55,7 +67,7 @@ export function* runAgent<C, O>(
   config: RunConfiguration,
   options?: RunOptions<C>,
 ): Operation<RunResult<O>> {
-  const history = yield* RunHistory.load(input, options);
+  const history = yield* RunHistory.load(input, options, config.toolResults);
   return yield* new AgentRun(root, config, history, options).run();
 }
 
@@ -94,7 +106,7 @@ class AgentRun<C, O> {
   private steeringSource: SteeringSource | undefined;
   private steering: Future<string | SteeringUpdate> | undefined;
   private interrupt: Future<string> | undefined;
-  /** Set once in-run compaction failed; the run does not try again. */
+  /** Set once a summary failed; the run truncates from then on. */
   private compactionFailed = false;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
@@ -109,7 +121,7 @@ class AgentRun<C, O> {
     private readonly options?: RunOptions<C>,
   ) {
     this.active = root;
-    this.catalog = createToolCatalog(root.tools, options?.tools);
+    this.catalog = createToolCatalog(root.tools, this.runTools());
     this.context = {
       context: options?.context as C,
       invocationId: handlerRequest().id,
@@ -160,7 +172,7 @@ class AgentRun<C, O> {
     for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
       yield* this.emit({type: "step", step: this.step});
       yield* this.compactContext();
-      const response = yield* this.candidate(this.plan(this.history.snapshot()));
+      const response = yield* this.ask();
       if (!response || this.collectBackground()) continue;
       if (response.type === "tool_calls") {
         yield* this.toolPhase(response);
@@ -192,23 +204,92 @@ class AgentRun<C, O> {
     return {tag, value};
   }
 
-  /** Not raced against controls: steering and interrupts are handled once the
-   * smaller view is in place, so a stopped run still has room to finalize. */
-  private *compactContext(): Operation<void> {
-    const settings = this.config.compaction;
-    if (!settings || this.compactionFailed) return;
-    const model = this.root.compaction?.model ?? this.root.model;
-    try {
-      if (!(yield* compactContext(this.history, {...settings, model}, this.tools.pendingCalls())))
-        return;
-    } catch (error) {
-      if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
-      // The full view stays; the next model call may still fit, or fail as it would without compaction.
-      this.compactionFailed = true;
-      yield* this.emit({type: "compaction", status: "failed", error: String(error)});
-      return;
+  /** Asks the model for the next step; undefined when steering discarded it.
+   * A view the model rejects as too long is shrunk once, then asked again. */
+  private *ask(): Operation<ModelResponse | undefined> {
+    for (let recovered = false; ; recovered = true) {
+      const mark = this.history.mark();
+      // Caught inside the candidate: a failed task would fail the whole run.
+      const outcome = yield* this.candidate(this.overflowing(this.plan(this.history.snapshot())));
+      if (outcome && "overflow" in outcome) {
+        if (recovered || !(yield* this.compactContext(true))) throw outcome.overflow;
+        continue;
+      }
+      if (outcome?.usage) this.history.measure(mark, outcome.usage.inputTokens);
+      return outcome;
     }
-    yield* this.emit({type: "compaction", status: "applied"});
+  }
+
+  private *overflowing(
+    request: Operation<ModelResponse>,
+  ): Operation<ModelResponse | {overflow: ContextOverflowError}> {
+    try {
+      return yield* request;
+    } catch (error) {
+      if (!isContextOverflow(error)) throw error;
+      // Replay restores a journaled overflow as a plain TerminalError.
+      return {overflow: new ContextOverflowError((error as Error).message)};
+    }
+  }
+
+  /** Shrinks the model's view: past `compaction.maxTokens`, when the next
+   * request would not fit `contextWindow`, or always after an overflow, which
+   * keeps at most half of the view. A summary comes first when compaction is
+   * set; truncation needs no model, so it is the fallback.
+   * Not raced against controls: steering and interrupts are handled once the
+   * smaller view is in place, so a stopped run still has room to finalize. */
+  private *compactContext(overflow = false): Operation<boolean> {
+    const {compaction: settings, contextWindow, maxOutputTokens} = this.config;
+    const retain = (limit: number) => Math.min(settings?.retainTokens ?? limit, limit);
+    let reason: "threshold" | "window" | "overflow";
+    let retainTokens: number;
+    if (overflow) {
+      reason = "overflow";
+      retainTokens = retain(Math.floor(estimateTokens(this.history.snapshot()) / 2));
+    } else {
+      const tokens = this.history.viewTokens();
+      if (settings && tokens > settings.maxTokens) {
+        reason = "threshold";
+        retainTokens = settings.retainTokens;
+      } else if (contextWindow && tokens + maxOutputTokens > contextWindow) {
+        reason = "window";
+        retainTokens = retain(Math.floor(contextWindow / 4));
+      } else return false;
+    }
+    const pending = this.tools.pendingCalls();
+    if (settings && !this.compactionFailed) {
+      const model = this.root.compaction?.model ?? this.root.model;
+      try {
+        if (yield* summarizeContext(this.history, {model, retainTokens}, pending)) {
+          yield* this.emit({type: "compaction", mode: "summary", status: "applied", reason});
+          return true;
+        }
+      } catch (error) {
+        if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
+        // Summaries stop for this run; truncation keeps it within bounds.
+        this.compactionFailed = true;
+        yield* this.emit({
+          type: "compaction",
+          mode: "summary",
+          status: "failed",
+          reason,
+          error: String(error),
+        });
+      }
+    }
+    if (!truncateContext(this.history, retainTokens, pending)) return false;
+    yield* this.emit({type: "compaction", mode: "truncate", status: "applied", reason});
+    return true;
+  }
+
+  /** Tools that belong to the run rather than an agent, so they survive a handoff. */
+  private runTools(): Record<string, Tool<C>> {
+    const tools = {...this.options?.tools};
+    const settings = this.config.toolResults;
+    if (!settings) return tools;
+    if (READ_TOOL in tools) throw new TypeError(`Duplicate tool name: ${READ_TOOL}`);
+    tools[READ_TOOL] = readToolResultTool<C>(() => this.history.events(), settings);
+    return tools;
   }
 
   private *emit(event: ProgressEvent): Operation<void> {
@@ -247,7 +328,10 @@ class AgentRun<C, O> {
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
       messages,
-      tools: this.catalog.visibleManifests(),
+      // The reader appears with the first preview, so runs without one see no extra tool.
+      tools: this.catalog
+        .visibleManifests()
+        .filter((manifest) => manifest.name !== READ_TOOL || hasPreview(messages)),
     };
     // The root's policy applies to every step; a handoff target adds its own.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
@@ -280,7 +364,7 @@ class AgentRun<C, O> {
       this.active = transfer();
       yield* this.emit({type: "handoff", agent: this.active.name});
       // Run-level tools belong to the run, not the agent, so they survive a handoff.
-      this.catalog = createToolCatalog(this.active.tools, this.options?.tools);
+      this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
   }
 

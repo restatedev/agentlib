@@ -28,8 +28,8 @@ const reads = (id: string) => ({
   type: "tool_calls" as const,
   calls: [{id, name: "read", input: {}}],
 });
-// About three reads outgrow maxChars; the newest read fits retainChars.
-const compaction = {maxChars: 1500, retainChars: 600};
+// About three reads outgrow maxTokens; the newest read fits retainTokens.
+const compaction = {maxTokens: 650, retainTokens: 300};
 
 function note(messages: readonly Message[]): Record<string, unknown> | undefined {
   const first = messages[0];
@@ -84,7 +84,12 @@ void test("a long run compacts its view but saves every message", async () => {
   }
   assert.deepEqual(
     events.filter((event) => event.type === "compaction"),
-    compactorInputs.map(() => ({type: "compaction", status: "applied"})),
+    compactorInputs.map(() => ({
+      type: "compaction",
+      mode: "summary",
+      status: "applied",
+      reason: "threshold",
+    })),
   );
   assert.equal(compactorInputs[0]!.previousNote, null);
   // A later compaction folds the earlier note into the new one.
@@ -106,7 +111,7 @@ void test("the cut keeps a batch's results with its call", async () => {
         };
       return {type: "final", text: "Done"};
     },
-    // The three-call batch alone is larger than retainChars.
+    // The three-call batch alone is larger than retainTokens.
     compaction: {
       ...compaction,
       *model() {
@@ -123,16 +128,18 @@ void test("the cut keeps a batch's results with its call", async () => {
   assert.equal(last.length, 1);
 });
 
-void test("a failed compaction keeps the full view and is not retried", async () => {
+void test("a failed summary falls back to truncation and is not retried", async () => {
   let attempts = 0;
   const events: ProgressEvent[] = [];
+  const views: Message[][] = [];
   const a = agent({
     tools: {read},
     model: (() => {
       let step = 0;
       return function* (request: ModelRequest) {
-        assert.equal(note(request.messages), undefined);
-        return ++step <= 5 ? reads(`r${step}`) : {type: "final", text: "Done"};
+        views.push(structuredClone(request.messages));
+        history(request.messages);
+        return ++step <= 7 ? reads(`r${step}`) : {type: "final", text: "Done"};
       };
     })(),
     compaction: {
@@ -154,9 +161,22 @@ void test("a failed compaction keeps the full view and is not retried", async ()
   assert.equal(result.status, "completed");
   assert.equal(attempts, 1);
   const [failed, ...rest] = events.filter((event) => event.type === "compaction");
-  assert.equal(rest.length, 0);
   assert.equal(failed?.type === "compaction" && failed.status, "failed");
   assert.match(String(failed?.type === "compaction" && failed.error), /compactor down/);
+  // Every later compaction truncates without asking the compactor.
+  assert.ok(rest.length >= 2);
+  for (const event of rest)
+    assert.deepEqual(event, {
+      type: "compaction",
+      mode: "truncate",
+      status: "applied",
+      reason: "threshold",
+    });
+  const truncated = JSON.parse((views.at(-1)![0] as {content: string}).content);
+  assert.equal(truncated.type, "context-truncated");
+  assert.equal(truncated.request, "Go");
+  assert.equal(truncated.handoff, undefined);
+  assert.equal(result.messages.filter((m) => m.role === "tool").length, 7);
 });
 
 void test("a stopped run finalizes from the compacted view", async () => {
@@ -263,15 +283,15 @@ void test("compaction replays from the journal without calling the compactor aga
   assert.equal(compactions, calls);
 });
 
-void test("retainChars must be below maxChars", () => {
+void test("retainTokens must be below maxTokens", () => {
   assert.throws(
     () =>
       agent({
         model: function* () {
           return {type: "final", text: ""};
         },
-        compaction: {maxChars: 100, retainChars: 100},
+        compaction: {maxTokens: 100, retainTokens: 100},
       }),
-    /retainChars must be less than/,
+    /retainTokens must be less than/,
   );
 });

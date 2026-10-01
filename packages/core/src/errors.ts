@@ -38,6 +38,19 @@ export class ModelProtocolError extends TerminalError {
     this.name = "ModelProtocolError";
   }
 }
+const CONTEXT_OVERFLOW_CODE = 413;
+/** The model rejected a request as longer than its context window. It is
+ * terminal, so the journal records it; its code identifies it on replay,
+ * where the journaled failure comes back as a plain TerminalError. */
+export class ContextOverflowError extends TerminalError {
+  constructor(message: string) {
+    super(message, {errorCode: CONTEXT_OVERFLOW_CODE});
+    this.name = "ContextOverflowError";
+  }
+}
+export function isContextOverflow(error: unknown): boolean {
+  return error instanceof TerminalError && error.code === CONTEXT_OVERFLOW_CODE;
+}
 export function denial(result: GuardrailResult): string | undefined {
   if (typeof result === "string") return result;
   if (result === false) return "Rejected by guardrail";

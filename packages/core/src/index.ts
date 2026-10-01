@@ -11,6 +11,8 @@ export {
   AgentLimitError,
   RunFailedError,
   RunInputError,
+  ContextOverflowError,
+  isContextOverflow,
 } from "./errors.js";
 export type {
   Agent,
@@ -23,6 +25,7 @@ export type {
   ModelResponse,
   ModelFinalResponse,
   ModelToolCallsResponse,
+  ModelUsage,
   OutputCandidate,
   OutputDecision,
   RunOptions,

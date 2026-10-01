@@ -32,6 +32,11 @@ const messageSchema = z.discriminatedUnion("role", [
     result: toolResultSchema,
   }),
 ]);
+const usageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+});
 const responseSchema = z.discriminatedUnion("type", [
   z
     .object({
@@ -39,6 +44,7 @@ const responseSchema = z.discriminatedUnion("type", [
       text: z.string(),
       output: jsonSchema.optional(),
       validationError: z.string().optional(),
+      usage: usageSchema.optional(),
     })
     .refine(
       (value) =>
@@ -48,6 +54,7 @@ const responseSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_calls"),
     calls: z.array(callSchema).min(1),
     text: z.string().optional(),
+    usage: usageSchema.optional(),
   }),
 ]);
 

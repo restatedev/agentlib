@@ -7,9 +7,9 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import type {RetryOptions} from "@restatedev/restate-sdk-gen";
-import {ModelProtocolError} from "./errors.js";
+import {ContextOverflowError, ModelProtocolError} from "./errors.js";
 import {journaledModel} from "./model.js";
-import type {Model, ModelRequest, ModelResponse, ToolCall} from "./types.js";
+import type {Model, ModelRequest, ModelResponse, ModelUsage, ToolCall} from "./types.js";
 import {strictSchema} from "./strict-schema.js";
 
 export type OpenAIModelOptions = {
@@ -72,8 +72,14 @@ function payload(
 }
 
 /** Restate owns retries, but invalid requests/credentials do not improve on
- * retry. Connection failures, rate limits and server errors stay retryable. */
+ * retry. Connection failures, rate limits and server errors stay retryable.
+ * A request too long for the window is an overflow, which the run recovers from. */
 function classifyError(error: unknown): never {
+  if (
+    error instanceof OpenAI.APIError &&
+    (error.code === "context_length_exceeded" || error.status === 413)
+  )
+    throw new ContextOverflowError(error.message);
   if (
     error instanceof OpenAI.APIError &&
     error.status !== undefined &&
@@ -108,9 +114,25 @@ function parseCompletion(completion: ChatCompletion): ModelResponse {
   });
   if (choice.finish_reason === "tool_calls" && calls.length === 0)
     throw new ModelProtocolError("Model indicated tool calls but returned none");
+  const usage = completionUsage(completion);
   if (calls.length > 0)
-    return {type: "tool_calls", calls, ...(message.content ? {text: message.content} : {})};
-  return {type: "final", text: message.content ?? ""};
+    return {
+      type: "tool_calls",
+      calls,
+      ...(message.content ? {text: message.content} : {}),
+      ...(usage ? {usage} : {}),
+    };
+  return {type: "final", text: message.content ?? "", ...(usage ? {usage} : {})};
+}
+
+function completionUsage({usage}: ChatCompletion): ModelUsage | undefined {
+  if (!usage) return undefined;
+  const cached = usage.prompt_tokens_details?.cached_tokens;
+  return {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    ...(cached ? {cachedInputTokens: cached} : {}),
+  };
 }
 
 function render(request: ModelRequest): ChatCompletionMessageParam[] {
