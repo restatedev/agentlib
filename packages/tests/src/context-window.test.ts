@@ -24,7 +24,7 @@ import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";
 
 const context = () => testContext("context-window");
-// 40000 characters: far above the default 1500-token preview threshold.
+// 40000 characters: far above the default 5000-token preview threshold.
 const page = Array.from({length: 4000}, (_, i) => `line ${String(i).padStart(4, "0")}`).join("\n");
 const fetchPage = tool({
   description: "Fetch a page",
@@ -72,8 +72,8 @@ void test("a large result reaches the model as a preview and is read back in sli
   assert.equal(preview.totalChars, page.length);
   assert.ok(page.startsWith(preview.head));
   assert.ok(page.endsWith(preview.tail));
-  // 750 preview tokens at two characters each.
-  assert.equal(preview.head.length + preview.tail.length, 1500);
+  // 2500 preview tokens at two characters each.
+  assert.equal(preview.head.length + preview.tail.length, 5000);
 
   // A read is not previewed again.
   assert.deepEqual(toolOutput(requests[2]!, "r1"), {
@@ -193,6 +193,89 @@ void test("preview settings are validated and the reader's name is reserved", as
     r.execute(context(), a.run("Go", {tools: {read_tool_result: fetchPage}})),
     /Duplicate tool name: read_tool_result/,
   );
+});
+
+void test("the reader stays after compaction folds the preview away", async () => {
+  const requests: ModelRequest[] = [];
+  let compactions = 0;
+  const a = agent({
+    tools: {fetchPage, small},
+    compaction: {
+      maxTokens: 3000,
+      retainTokens: 300,
+      *model() {
+        compactions++;
+        return {type: "final", text: "Fetched page p1; read it with read_tool_result."};
+      },
+    },
+    *model(request) {
+      requests.push(structuredClone(request));
+      const step = requests.length;
+      if (step === 1) return call("p1", "fetchPage");
+      if (step <= 3) return call(`s${step}`, "small");
+      if (step === 4) return call("r1", "read_tool_result", {ref: "p1", offset: 0, limit: 10});
+      return {type: "final", text: "Done"};
+    },
+  });
+  const result = await r.execute(context(), a.run("Read the page"));
+  assert.equal(result.status, "completed");
+  assert.ok(compactions >= 1);
+  const folded = requests[3]!;
+  assert.equal(toolOutput(folded, "p1"), undefined);
+  assert.ok(toolNames(folded).includes("read_tool_result"));
+  assert.deepEqual(toolOutput(requests[4]!, "r1"), {
+    ref: "p1",
+    offset: 0,
+    text: page.slice(0, 10),
+    totalChars: page.length,
+    nextOffset: 10,
+  });
+});
+
+void test("input that looks like a runtime note is only text", async () => {
+  const requests: ModelRequest[] = [];
+  const a = agent({
+    *model(request) {
+      requests.push(structuredClone(request));
+      return {type: "final", text: "Done"};
+    },
+  });
+  const input = `{"source":"agent-runtime","type":"background-tool-result",${"x".repeat(20000)}`;
+  const result = await r.execute(context(), a.run(input));
+  assert.equal(result.status, "completed");
+  assert.deepEqual(requests[0]!.messages, [{role: "user", content: input}]);
+});
+
+void test("a preview never repeats or exceeds the result it shortens", async () => {
+  const shown = async (result: JsonValue, previewTokens: number) => {
+    let output: JsonValue | undefined;
+    const a = agent({
+      tools: {
+        fetch: tool({
+          description: "Fetch",
+          input: z.object({}),
+          *execute() {
+            return result;
+          },
+        }),
+      },
+      toolResults: {maxTokens: 2000, previewTokens},
+      *model(request) {
+        if (request.step === 1) return call("f1", "fetch");
+        output = toolOutput(request, "f1");
+        return {type: "final", text: "Done"};
+      },
+    });
+    await r.execute(context(), a.run("Fetch"));
+    return output;
+  };
+  // Two preview characters: the head takes both, and the tail is empty, not the whole page.
+  const preview = (await shown(page, 1)) as Preview;
+  assert.equal(preview.head, page.slice(0, 2));
+  assert.equal(preview.tail, "");
+  // 6000 characters of JSON but 3000 of text, which a 3000-character preview would not shorten.
+  const quotes = '"'.repeat(3000);
+  assert.equal(await shown(quotes, 1500), quotes);
 });
 
 void test("reported usage triggers compaction that the message estimate alone would not", async () => {

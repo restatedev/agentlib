@@ -31,7 +31,7 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   let toolResults: RunConfiguration["toolResults"];
   if (options.toolResults !== false) {
     const maxTokens = positiveInteger(
-      options.toolResults?.maxTokens ?? 1500,
+      options.toolResults?.maxTokens ?? 5000,
       "toolResults.maxTokens",
     );
     const previewTokens = positiveInteger(

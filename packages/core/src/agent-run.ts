@@ -26,12 +26,7 @@ import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens} from "./context-size.js";
-import {
-  hasPreview,
-  READ_TOOL,
-  readToolResultTool,
-  type PreviewSettings,
-} from "./tool-result-preview.js";
+import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
 import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
@@ -328,10 +323,11 @@ class AgentRun<C, O> {
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
       messages,
-      // The reader appears with the first preview, so runs without one see no extra tool.
+      // The reader appears with the first preview and stays for the rest of the
+      // run, so runs without one see no extra tool.
       tools: this.catalog
         .visibleManifests()
-        .filter((manifest) => manifest.name !== READ_TOOL || hasPreview(messages)),
+        .filter((manifest) => manifest.name !== READ_TOOL || this.history.hasPreviews()),
     };
     // The root's policy applies to every step; a handoff target adds its own.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {

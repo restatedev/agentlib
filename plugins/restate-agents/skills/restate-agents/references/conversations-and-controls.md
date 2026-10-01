@@ -61,10 +61,13 @@ appears in the request once a preview does:
 const researcher = agent({
   model,
   tools: {search, fetchPage},
-  toolResults: {maxTokens: 1500, previewTokens: 750}, // the defaults; false shows results in full
+  toolResults: {maxTokens: 5000, previewTokens: 2500}, // the defaults; false shows results in full
 });
 ```
 
+- Once a preview appears, `read_tool_result` stays for the rest of the run,
+  even after compaction folds the preview away. Each read returns up to four
+  times `maxTokens` worth of characters.
 - Background results are previewed the same way; their ref is the operation ID.
 - Reads come from the journaled history, so they work after a restart and on
   replay, and for earlier turns of a saved conversation.
