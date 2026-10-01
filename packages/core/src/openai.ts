@@ -9,7 +9,7 @@ import type {
 import type {RetryOptions} from "@restatedev/restate-sdk-gen";
 import {ModelProtocolError} from "./errors.js";
 import {journaledModel} from "./model.js";
-import type {Model, ModelRequest, ModelResponse, ToolCall} from "./types.js";
+import type {Model, ModelRequest, ModelResponse, ModelUsage, ToolCall} from "./types.js";
 import {strictSchema} from "./strict-schema.js";
 
 export type OpenAIModelOptions = {
@@ -108,9 +108,25 @@ function parseCompletion(completion: ChatCompletion): ModelResponse {
   });
   if (choice.finish_reason === "tool_calls" && calls.length === 0)
     throw new ModelProtocolError("Model indicated tool calls but returned none");
+  const usage = completionUsage(completion);
   if (calls.length > 0)
-    return {type: "tool_calls", calls, ...(message.content ? {text: message.content} : {})};
-  return {type: "final", text: message.content ?? ""};
+    return {
+      type: "tool_calls",
+      calls,
+      ...(message.content ? {text: message.content} : {}),
+      ...(usage ? {usage} : {}),
+    };
+  return {type: "final", text: message.content ?? "", ...(usage ? {usage} : {})};
+}
+
+function completionUsage({usage}: ChatCompletion): ModelUsage | undefined {
+  if (!usage) return undefined;
+  const cached = usage.prompt_tokens_details?.cached_tokens;
+  return {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    ...(cached ? {cachedInputTokens: cached} : {}),
+  };
 }
 
 function render(request: ModelRequest): ChatCompletionMessageParam[] {

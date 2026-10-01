@@ -23,6 +23,7 @@ export type {
   ModelResponse,
   ModelFinalResponse,
   ModelToolCallsResponse,
+  ModelUsage,
   OutputCandidate,
   OutputDecision,
   RunOptions,

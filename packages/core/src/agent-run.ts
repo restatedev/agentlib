@@ -23,6 +23,12 @@ import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {compactContext} from "./context-compaction.js";
+import {
+  hasPreview,
+  READ_TOOL,
+  readToolResultTool,
+  type PreviewSettings,
+} from "./tool-result-preview.js";
 import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
@@ -39,6 +45,7 @@ import type {
   RunResult,
   SteeringSource,
   SteeringUpdate,
+  Tool,
 } from "./types.js";
 
 export type RunConfiguration = ToolExecutionLimits &
@@ -46,7 +53,8 @@ export type RunConfiguration = ToolExecutionLimits &
     maxSteps: number;
     maxOutputTokens: number;
     outputSchema?: Record<string, unknown>;
-    compaction?: {maxChars: number; retainChars: number};
+    compaction?: {maxTokens: number; retainTokens: number};
+    toolResults?: PreviewSettings;
   }>;
 
 export function* runAgent<C, O>(
@@ -55,7 +63,7 @@ export function* runAgent<C, O>(
   config: RunConfiguration,
   options?: RunOptions<C>,
 ): Operation<RunResult<O>> {
-  const history = yield* RunHistory.load(input, options);
+  const history = yield* RunHistory.load(input, options, config.toolResults);
   return yield* new AgentRun(root, config, history, options).run();
 }
 
@@ -109,7 +117,7 @@ class AgentRun<C, O> {
     private readonly options?: RunOptions<C>,
   ) {
     this.active = root;
-    this.catalog = createToolCatalog(root.tools, options?.tools);
+    this.catalog = createToolCatalog(root.tools, this.runTools());
     this.context = {
       context: options?.context as C,
       invocationId: handlerRequest().id,
@@ -160,7 +168,9 @@ class AgentRun<C, O> {
     for (this.step = 1; this.step <= this.config.maxSteps; this.step++) {
       yield* this.emit({type: "step", step: this.step});
       yield* this.compactContext();
+      const mark = this.history.mark();
       const response = yield* this.candidate(this.plan(this.history.snapshot()));
+      if (response?.usage) this.history.measure(mark, response.usage.inputTokens);
       if (!response || this.collectBackground()) continue;
       if (response.type === "tool_calls") {
         yield* this.toolPhase(response);
@@ -211,6 +221,16 @@ class AgentRun<C, O> {
     yield* this.emit({type: "compaction", status: "applied"});
   }
 
+  /** Tools that belong to the run rather than an agent, so they survive a handoff. */
+  private runTools(): Record<string, Tool<C>> {
+    const tools = {...this.options?.tools};
+    const settings = this.config.toolResults;
+    if (!settings) return tools;
+    if (READ_TOOL in tools) throw new TypeError(`Duplicate tool name: ${READ_TOOL}`);
+    tools[READ_TOOL] = readToolResultTool<C>(() => this.history.events(), settings);
+    return tools;
+  }
+
   private *emit(event: ProgressEvent): Operation<void> {
     // Called as a method, so a handler can use `this`, like onApproval.
     if (this.options?.onProgress)
@@ -247,7 +267,10 @@ class AgentRun<C, O> {
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
       messages,
-      tools: this.catalog.visibleManifests(),
+      // The reader appears with the first preview, so runs without one see no extra tool.
+      tools: this.catalog
+        .visibleManifests()
+        .filter((manifest) => manifest.name !== READ_TOOL || hasPreview(messages)),
     };
     // The root's policy applies to every step; a handoff target adds its own.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
@@ -280,7 +303,7 @@ class AgentRun<C, O> {
       this.active = transfer();
       yield* this.emit({type: "handoff", agent: this.active.name});
       // Run-level tools belong to the run, not the agent, so they survive a handoff.
-      this.catalog = createToolCatalog(this.active.tools, this.options?.tools);
+      this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
   }
 

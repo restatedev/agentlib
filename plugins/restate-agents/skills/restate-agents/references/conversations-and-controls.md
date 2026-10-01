@@ -45,33 +45,56 @@ const result = yield* support.run(message, {conversation});
 
 Read it from a shared handler with `yield* new LazyStateConversation().page()`.
 
-## Long runs: compaction
+## Long runs: large results and compaction
 
 Conversation compaction runs before a run starts. A single run can still
-outgrow the model's window as its tool results pile up. Set `compaction` on
-the agent to summarize the run's older messages before a model call once the
-messages it would send pass `maxChars`:
+outgrow the model's window as its tool results pile up. Two settings keep it
+in bounds, and neither changes the transcript: `result.messages` and the
+saved conversation keep every message whole.
+
+**Tool-result previews are on by default.** A result estimated above
+`toolResults.maxTokens` reaches the model as its head and tail, with a ref.
+The model reads the rest with the built-in `read_tool_result` tool, which
+appears in the request once a preview does:
+
+```ts
+const researcher = agent({
+  model,
+  tools: {search, fetchPage},
+  toolResults: {maxTokens: 1500, previewTokens: 750}, // the defaults; false shows results in full
+});
+```
+
+- Background results are previewed the same way; their ref is the operation ID.
+- Reads come from the journaled history, so they work after a restart and on
+  replay, and for earlier turns of a saved conversation.
+- `read_tool_result` is a reserved name while previews are on.
+
+**Compaction is opt-in**, because it costs a model call. Set `compaction` to
+summarize the run's older messages before a model call once the view passes
+`maxTokens`:
 
 ```ts
 const researcher = agent({
   model,
   tools: {search, fetchPage},
   maxSteps: 40,
-  compaction: {maxChars: 400000, retainChars: 100000}, // the defaults; `model` defaults to the agent's
+  compaction: {maxTokens: 100000, retainTokens: 25000}, // the defaults; `model` defaults to the agent's
 });
 ```
 
-- The newest messages that fit `retainChars` stay verbatim; a tool call is
+- The size is the input tokens the model reported for its last request plus
+  an estimate for messages added since. Before any report, or after a
+  compaction, it is an estimate of the messages alone (about four characters
+  per token for text, two for JSON), not instructions or tool schemas; leave
+  room for them. Both adapters report usage.
+- The newest messages that fit `retainTokens` stay verbatim; a tool call is
   never separated from its results. The rest become one handoff note, which
   restates the run's input once it is summarized and lists background calls
-  still running.
-- Only the model's view changes: `result.messages` and the saved conversation
-  keep every message.
+  still running. A previewed result keeps its ref, so it can still be read.
 - The tool-free finalization of a stopped run also sees the compacted view.
 - Steering and interrupts wait until compaction finishes. A failed compaction
   keeps the full view and is not retried in that run.
-- `maxChars` counts messages only, not instructions or tool schemas; leave
-  room for them.
 
 ## Steer and interrupt a running turn
 

@@ -2,9 +2,13 @@ import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {Conversation} from "./conversation.js";
 import type {Message} from "./types.js";
 import {RunInputError} from "./errors.js";
+import {estimateTokens} from "./context-size.js";
+import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
 import {history} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
+/** Where the model's view stood when a request was built from it. */
+export type ViewMark = {events: number; from: number};
 type ToolMessage = Extract<Message, {role: "tool"}>;
 export type NoteMessage = Extract<Message, {role: "user"}>;
 
@@ -43,6 +47,9 @@ export class RunHistory {
   private view: {from: number; note: NoteMessage} | undefined;
   /** Index of this run's input message among the events. */
   private inputAt: number;
+  /** The input tokens the model reported for a request built at `mark`. */
+  private measured: {mark: ViewMark; inputTokens: number} | undefined;
+  private previews: PreviewSettings | undefined;
 
   private constructor(
     readonly input: string,
@@ -54,7 +61,11 @@ export class RunHistory {
     this.inputAt = messages.length;
   }
 
-  static *load(input: string, source: HistorySource = {}): Operation<RunHistory> {
+  static *load(
+    input: string,
+    source: HistorySource = {},
+    previews?: PreviewSettings,
+  ): Operation<RunHistory> {
     if (typeof input !== "string" || !input.trim())
       throw new RunInputError("Agent input must be a nonempty string");
     const {conversation} = source;
@@ -69,21 +80,56 @@ export class RunHistory {
       messages.length,
       conversation,
     );
+    run.previews = previews;
     run.append({role: "user", content: input});
     return run;
   }
 
   /** What the model sees during this run, including provisional feedback. */
   snapshot(): Message[] {
-    if (!this.view) return modelTranscript(this.messages);
-    return [this.view.note, ...modelTranscript(this.messages.slice(this.view.from))];
+    const events = this.shown(this.messages.slice(this.view?.from ?? 0));
+    return [...(this.view ? [this.view.note] : []), ...modelTranscript(events)];
   }
 
   /** What a tool-free finalization sees: the model's view without provisional feedback. */
   finalContext(): Message[] {
     const from = this.view?.from ?? 0;
     const events = this.messages.slice(from).filter((message) => !this.provisional.has(message));
-    return [...(this.view ? [this.view.note] : []), ...modelTranscript(events)];
+    return [...(this.view ? [this.view.note] : []), ...modelTranscript(this.shown(events))];
+  }
+
+  /** Every event so far, whole, for reading a previewed result back. */
+  events(): readonly Message[] {
+    return this.messages;
+  }
+
+  /** Events as the model sees them, with large results previewed. */
+  shown(events: readonly Message[]): Message[] {
+    const {previews} = this;
+    if (!previews) return [...events];
+    return events.map((message) => previewMessage(message, previews));
+  }
+
+  /** Marks the view a request is built from, for `measure`. */
+  mark(): ViewMark {
+    return {events: this.messages.length, from: this.view?.from ?? 0};
+  }
+
+  /** Records the input tokens the model reported for the request built at `mark`. */
+  measure(mark: ViewMark, inputTokens: number): void {
+    this.measured = {mark, inputTokens};
+  }
+
+  /** The tokens the model's view takes: the last reported input plus an
+   * estimate for the events added since, or an estimate of the whole view when
+   * no report applies, because there was none or compaction replaced the view. */
+  viewTokens(): number {
+    const {measured} = this;
+    if (!measured || measured.mark.from !== (this.view?.from ?? 0))
+      return estimateTokens(this.snapshot());
+    return (
+      measured.inputTokens + estimateTokens(this.shown(this.messages.slice(measured.mark.events)))
+    );
   }
 
   /** The events the model still sees verbatim, in execution order. */

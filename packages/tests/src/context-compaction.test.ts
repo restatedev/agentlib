@@ -28,8 +28,8 @@ const reads = (id: string) => ({
   type: "tool_calls" as const,
   calls: [{id, name: "read", input: {}}],
 });
-// About three reads outgrow maxChars; the newest read fits retainChars.
-const compaction = {maxChars: 1500, retainChars: 600};
+// About three reads outgrow maxTokens; the newest read fits retainTokens.
+const compaction = {maxTokens: 650, retainTokens: 300};
 
 function note(messages: readonly Message[]): Record<string, unknown> | undefined {
   const first = messages[0];
@@ -106,7 +106,7 @@ void test("the cut keeps a batch's results with its call", async () => {
         };
       return {type: "final", text: "Done"};
     },
-    // The three-call batch alone is larger than retainChars.
+    // The three-call batch alone is larger than retainTokens.
     compaction: {
       ...compaction,
       *model() {
@@ -263,15 +263,15 @@ void test("compaction replays from the journal without calling the compactor aga
   assert.equal(compactions, calls);
 });
 
-void test("retainChars must be below maxChars", () => {
+void test("retainTokens must be below maxTokens", () => {
   assert.throws(
     () =>
       agent({
         model: function* () {
           return {type: "final", text: ""};
         },
-        compaction: {maxChars: 100, retainChars: 100},
+        compaction: {maxTokens: 100, retainTokens: 100},
       }),
-    /retainChars must be less than/,
+    /retainTokens must be less than/,
   );
 });

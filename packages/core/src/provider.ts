@@ -19,7 +19,14 @@ import {journaledModel} from "./model.js";
 import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
 import {jsonSchema} from "./validation.js";
-import type {Model, ModelChunk, ModelRequest, ModelResponse, ToolCall} from "./types.js";
+import type {
+  Model,
+  ModelChunk,
+  ModelRequest,
+  ModelResponse,
+  ModelUsage,
+  ToolCall,
+} from "./types.js";
 import {strictSchema} from "./strict-schema.js";
 
 type GenerateSettings = Parameters<typeof generateText>[0];
@@ -85,7 +92,13 @@ function toolCalls(
     return {id: call.toolCallId, name: call.toolName, input: jsonSchema.parse(call.input)};
   });
 }
-type Generation = {finishReason: string; text: string; calls: ToolCall[]; output: unknown};
+type Generation = {
+  finishReason: string;
+  text: string;
+  calls: ToolCall[];
+  output: unknown;
+  usage?: ModelUsage;
+};
 type ChunkInfo = {step: number; signal: AbortSignal};
 
 function settingsFor(
@@ -127,7 +140,13 @@ async function generate(settings: GenerateSettings, wantsOutput: boolean): Promi
   finished(result.finishReason);
   const calls = toolCalls(result.toolCalls);
   const output = wantsOutput && !calls.length ? result.output : undefined;
-  return {finishReason: result.finishReason, text: result.text, calls, output};
+  return {
+    finishReason: result.finishReason,
+    text: result.text,
+    calls,
+    output,
+    usage: modelUsage(result.usage),
+  };
 }
 
 async function stream(
@@ -149,8 +168,19 @@ async function stream(
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls);
   const output = wantsOutput && !calls.length ? await result.output : undefined;
+  const usage = modelUsage(await result.usage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, output};
+  return {finishReason, text, calls, output, usage};
+}
+
+/** Providers that report no counts leave usage out; compaction then estimates. */
+function modelUsage(
+  usage: Awaited<ReturnType<typeof generateText>>["usage"],
+): ModelUsage | undefined {
+  const {inputTokens, outputTokens} = usage;
+  if (inputTokens === undefined || outputTokens === undefined) return undefined;
+  const cached = usage.inputTokenDetails?.cacheReadTokens;
+  return {inputTokens, outputTokens, ...(cached ? {cachedInputTokens: cached} : {})};
 }
 
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */
@@ -159,16 +189,18 @@ export function aiModel(options: ProviderOptions): Model {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
     try {
-      const {finishReason, text, calls, output} = options.onChunk
+      const {finishReason, text, calls, output, usage} = options.onChunk
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
         throw new ModelProtocolError("Model indicated tool calls but returned none");
-      if (calls.length) return {type: "tool_calls", calls, text};
+      const reported = usage ? {usage} : {};
+      if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
         type: "final",
         text,
         ...(output === undefined ? {} : {output: jsonSchema.parse(output)}),
+        ...reported,
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {

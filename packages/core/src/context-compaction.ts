@@ -1,23 +1,26 @@
 // Compacting a run's working context. Conversation compaction summarizes
 // earlier turns before a run starts; it cannot help a run that grows by itself
 // as its tool results pile up. So before each model call, a run with
-// `compaction` set measures the messages the model would see. Past `maxChars`
-// it keeps the newest messages that fit `retainChars` verbatim and replaces
-// the older ones with a handoff note written by the compactor model:
+// `compaction` set measures the tokens the model's view takes. Past
+// `maxTokens` it keeps the newest messages that fit `retainTokens` verbatim
+// and replaces the older ones with a handoff note written by the compactor
+// model:
 //
 //   [older messages ................] [recent messages]
 //   [handoff note: request, pending ] [recent messages]
 //
 // Only the model's view changes; the saved and returned transcript keeps
-// every message. Every decision is a function of journaled data (messages
-// and the compactor's journaled response), so a replay rebuilds the same view.
+// every message. Every decision is a function of journaled data (messages,
+// reported usage and the compactor's journaled response), so a replay
+// rebuilds the same view.
 import {TerminalError} from "@restatedev/restate-sdk";
 import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {NoteMessage, RunHistory} from "./run-history.js";
+import {estimateTokens} from "./context-size.js";
 import type {Message, Model} from "./types.js";
 import {modelResponse} from "./validation.js";
 
-export type ContextCompactionSettings = {model: Model; maxChars: number; retainChars: number};
+export type ContextCompactionSettings = {model: Model; maxTokens: number; retainTokens: number};
 export type PendingCall = {operationId: string; name: string};
 
 const INSTRUCTIONS = [
@@ -32,7 +35,7 @@ const INSTRUCTIONS = [
 // bounded; a long payload's detail rarely survives a summary anyway.
 const MAX_MESSAGE_CHARS = 16_000;
 
-/** Replaces the older part of the model's view when it has outgrown `maxChars`.
+/** Replaces the older part of the model's view when it has outgrown `maxTokens`.
  * Returns false when the view fits or nothing can be summarized; throws when
  * the compactor fails, leaving the view unchanged. */
 export function* compactContext(
@@ -40,10 +43,13 @@ export function* compactContext(
   settings: ContextCompactionSettings,
   pending: PendingCall[],
 ): Operation<boolean> {
-  if (JSON.stringify(history.snapshot()).length <= settings.maxChars) return false;
+  if (history.viewTokens() <= settings.maxTokens) return false;
   const {from, events, note} = history.contextEvents();
-  const cut = retainedStart(events, settings.retainChars);
-  // Every message still in view fits retainChars; there is nothing older to fold in.
+  // The compactor reads what the model saw: a previewed result keeps its ref,
+  // which the agent can still read after the cut.
+  const shown = history.shown(events);
+  const cut = retainedStart(events, shown, settings.retainTokens);
+  // Every message still in view fits retainTokens; there is nothing older to fold in.
   if (cut === 0) return false;
   const through = from + cut;
   const request = history.inputBefore(through) ? history.input : undefined;
@@ -56,7 +62,7 @@ export function* compactContext(
           content: JSON.stringify({
             request: request ?? null,
             previousNote: note ? note.content : null,
-            messages: events.slice(0, cut).map(clip),
+            messages: shown.slice(0, cut).map(clip),
           }),
         },
       ],
@@ -69,17 +75,17 @@ export function* compactContext(
   return true;
 }
 
-/** Index of the first retained event: the earliest boundary whose suffix fits
- * `budget` characters and holds every tool result's call, so the model never
- * sees a result without the call that asked for it. */
-function retainedStart(events: readonly Message[], budget: number): number {
+/** Index of the first retained event: the earliest boundary whose suffix, as
+ * the model sees it, fits `budget` tokens and holds every tool result's call,
+ * so the model never sees a result without the call that asked for it. */
+function retainedStart(events: readonly Message[], shown: Message[], budget: number): number {
   let start = events.length;
-  let chars = 0;
+  let tokens = 0;
   const unanswered = new Set<string>();
   for (let i = events.length - 1; i >= 0; i--) {
-    const message = events[i];
-    chars += JSON.stringify(message).length;
-    if (chars > budget) break;
+    const message = events[i]!;
+    tokens += estimateTokens([shown[i]!]);
+    if (tokens > budget) break;
     if (message.role === "tool") unanswered.add(message.callId);
     if (message.role === "assistant")
       for (const call of message.calls ?? []) unanswered.delete(call.id);
