@@ -50,6 +50,8 @@ export class RunHistory {
   /** The input tokens the model reported for a request built at `mark`. */
   private measured: {mark: ViewMark; inputTokens: number} | undefined;
   private previews: PreviewSettings | undefined;
+  /** Each event as the model sees it, so a step does not preview every result again. */
+  private readonly previewed = new WeakMap<Message, Message>();
 
   private constructor(
     readonly input: string,
@@ -105,9 +107,24 @@ export class RunHistory {
 
   /** Events as the model sees them, with large results previewed. */
   shown(events: readonly Message[]): Message[] {
+    return events.map((message) => this.show(message));
+  }
+
+  /** Whether any event of the run was previewed, even one compaction has since
+   * folded into a note: the note, or the model's memory of it, can carry its ref. */
+  hasPreviews(): boolean {
+    return this.messages.some((message) => this.show(message) !== message);
+  }
+
+  private show(message: Message): Message {
     const {previews} = this;
-    if (!previews) return [...events];
-    return events.map((message) => previewMessage(message, previews));
+    if (!previews) return message;
+    let shown = this.previewed.get(message);
+    if (!shown) {
+      shown = previewMessage(message, previews);
+      this.previewed.set(message, shown);
+    }
+    return shown;
   }
 
   /** Marks the view a request is built from, for `measure`. */

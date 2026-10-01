@@ -253,9 +253,9 @@ export type AgentOptions<Context, Output = string> = {
    * recovered from; some providers give an overflow no distinct code. */
   contextWindow?: number;
   /** Shows the model a preview of each tool result estimated above `maxTokens`
-   * (default 1500): its head and tail, `previewTokens` in all (default 750).
+   * (default 5000): its head and tail, `previewTokens` in all (default 2500).
    * The model reads the rest with the `read_tool_result` tool, which appears
-   * once a preview does. The saved and returned transcript keeps every result
+   * once a preview does and stays for the rest of the run. The saved and returned transcript keeps every result
    * whole. `false` shows every result in full. */
   toolResults?: false | {maxTokens?: number; previewTokens?: number};
 };
