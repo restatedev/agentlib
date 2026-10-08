@@ -34,8 +34,10 @@ import type {
   GuardrailResult,
   Message,
   ModelFinalResponse,
+  ModelRequest,
   ModelResponse,
   ModelToolCallsResponse,
+  ToolManifest,
   ProgressEvent,
   RunContext,
   RunControls,
@@ -103,8 +105,9 @@ class AgentRun<C, O> {
   private interrupt: Future<string> | undefined;
   /** Set once a summary failed; the run truncates from then on. */
   private compactionFailed = false;
-  /** The instructions of the last request, which a function may compute. */
-  private instructions: string | undefined;
+  /** The last request without its messages: the prefix a provider cached.
+   * Its instructions may come from a function. */
+  private lastRequest: Pick<ModelRequest, "instructions" | "tools"> | undefined;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
   private readonly context: RunContext<C>;
@@ -263,8 +266,14 @@ class AgentRun<C, O> {
     const pending = this.tools.pendingCalls();
     if (settings && !this.compactionFailed) {
       const model = this.root.compaction?.model ?? this.root.model;
+      // The note can reuse the cached prefix of the last request when the same
+      // model writes it; a window or overflow cut means that prefix no longer fits.
+      const prefix =
+        reason === "threshold" && model === this.active.model && this.lastRequest
+          ? {...this.lastRequest, maxOutputTokens}
+          : undefined;
       try {
-        if (yield* summarizeContext(this.history, {model, retainTokens}, pending)) {
+        if (yield* summarizeContext(this.history, {model, retainTokens, prefix}, pending)) {
           yield* this.emit({type: "compaction", mode: "summary", status: "applied", reason});
           return true;
         }
@@ -290,8 +299,19 @@ class AgentRun<C, O> {
    * Instructions a function computes count once a request has used them. */
   private requestOverhead(): number {
     const {instructions} = this.active;
-    const text = typeof instructions === "string" ? instructions : (this.instructions ?? "");
-    return textTokens(text) + jsonTokens(JSON.stringify(this.catalog.visibleManifests()));
+    const text =
+      typeof instructions === "string" ? instructions : (this.lastRequest?.instructions ?? "");
+    return textTokens(text) + jsonTokens(JSON.stringify(this.visibleTools()));
+  }
+
+  /** The reader is listed from the first step, before any preview: a tool that
+   * appeared mid-run would change the cached prefix. An agent with no other
+   * tools gets no new results, so it lists the reader only for previews in
+   * the history it loaded. */
+  private visibleTools(): ToolManifest[] {
+    const tools = this.catalog.visibleManifests();
+    const readerOnly = tools.length === 1 && tools[0]!.name === READ_TOOL;
+    return readerOnly && !this.history.hasPreviews() ? [] : tools;
   }
 
   /** Tools that belong to the run rather than an agent, so they survive a handoff. */
@@ -340,13 +360,9 @@ class AgentRun<C, O> {
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
       messages,
-      // The reader appears with the first preview and stays for the rest of the
-      // run, so runs without one see no extra tool.
-      tools: this.catalog
-        .visibleManifests()
-        .filter((manifest) => manifest.name !== READ_TOOL || this.history.hasPreviews()),
+      tools: this.visibleTools(),
     };
-    this.instructions = request.instructions;
+    this.lastRequest = {instructions: request.instructions, tools: request.tools};
     // The root's policy applies to every step; a handoff target adds its own.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
       if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));

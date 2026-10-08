@@ -97,6 +97,64 @@ void test("a long run compacts its view but saves every message", async () => {
   assert.match(String(compactorInputs[1]!.previousNote), /read 1 batch/);
 });
 
+const asksForNote = (request: ModelRequest) => {
+  const last = request.messages.at(-1);
+  return last?.role === "user" && last.content.includes('"type":"handoff-note-request"');
+};
+
+void test("the run's own model writes the note from the cached prefix of its last request", async () => {
+  const requests: ModelRequest[] = [];
+  const a = agent({
+    instructions: "Read pages.",
+    tools: {read},
+    compaction,
+    *model(request) {
+      requests.push(structuredClone(request));
+      if (asksForNote(request)) return {type: "final", text: "read some pages"};
+      const steps = requests.filter((r) => !asksForNote(r)).length;
+      return steps <= 5 ? reads(`r${steps}`) : {type: "final", text: "Done"};
+    },
+  });
+  const result = await r.execute(context(), a.run("Go"));
+  assert.equal(result.status, "completed");
+
+  const index = requests.findIndex(asksForNote);
+  assert.ok(index > 0);
+  const [previous, compactor] = [requests[index - 1]!, requests[index]!];
+  // Same instructions and tools, and the previous request's messages as its
+  // prefix: a provider serves all of it from the cache.
+  assert.equal(compactor.instructions, previous.instructions);
+  assert.deepEqual(compactor.tools, previous.tools);
+  assert.deepEqual(compactor.messages.slice(0, previous.messages.length), previous.messages);
+  assert.equal(note(requests[index + 1]!.messages)!.handoff, "read some pages");
+});
+
+void test("a note request answered with a tool call falls back to a separate summary", async () => {
+  const separate: ModelRequest[] = [];
+  let noteRequests = 0;
+  let steps = 0;
+  const a = agent({
+    tools: {read},
+    compaction,
+    *model(request) {
+      if (request.tools.length === 0) {
+        separate.push(request);
+        return {type: "final", text: "summarized separately"};
+      }
+      // The model ignores the request and keeps working.
+      if (asksForNote(request)) noteRequests++;
+      else steps++;
+      return steps <= 5 ? reads(`r${steps}-${noteRequests}`) : {type: "final", text: "Done"};
+    },
+  });
+  const result = await r.execute(context(), a.run("Go"));
+  assert.equal(result.status, "completed");
+  assert.ok(noteRequests > 0);
+  assert.equal(separate.length, noteRequests);
+  // The tool call it returned instead of the note never ran.
+  assert.equal(result.messages.filter((m) => m.role === "tool").length, 5);
+});
+
 void test("the cut keeps a batch's results with its call", async () => {
   const requests: ModelRequest[] = [];
   const a = agent({

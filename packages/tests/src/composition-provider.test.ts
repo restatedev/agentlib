@@ -116,7 +116,7 @@ void test("run-level tools remain available after a handoff", async () => {
     *model(req) {
       assert.deepEqual(
         req.tools.map((t) => t.name),
-        ["lookup"],
+        ["lookup", "read_tool_result"],
       );
       return done;
     },

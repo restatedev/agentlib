@@ -36,6 +36,7 @@ const usageSchema = z.object({
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative().optional(),
+  cacheWriteInputTokens: z.number().int().nonnegative().optional(),
 });
 const responseSchema = z.discriminatedUnion("type", [
   z

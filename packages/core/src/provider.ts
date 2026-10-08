@@ -37,10 +37,11 @@ export type ProviderOptions = {
   providerOptions?: GenerateSettings["providerOptions"];
   telemetry?: GenerateSettings["experimental_telemetry"];
   tracer?: Tracer;
-  /** Marks the instructions and the newest message as cache points, for
-   * providers that cache only where told: Anthropic and Bedrock. A request
-   * then reads its prefix from the previous step's cache. Others cache
-   * prefixes on their own and ignore these options. Default: true. */
+  /** Marks the instructions, the newest message and the end of the previous
+   * request as cache points, for providers that cache only where told:
+   * Anthropic and Bedrock. A request then reads its prefix from the previous
+   * step's cache. Others cache prefixes on their own and ignore these
+   * options. Default: true. */
   caching?: boolean;
   /** Best-effort I/O inside one journal attempt. A new start replaces that step's
    * previous attempt; raw text/reasoning precedes output guardrails. */
@@ -61,10 +62,17 @@ const CACHE_POINT = {
 
 function messages(request: ModelRequest, caching: boolean): ModelMessage[] {
   const rendered = request.messages.map(renderMessage);
-  // The newest message moves the cache point forward each step; the
-  // provider finds the previous step's prefix behind it.
-  const last = rendered.at(-1);
-  if (caching && last) last.providerOptions = CACHE_POINT;
+  if (!caching) return rendered;
+  // The newest message moves the cache point forward each step. Anthropic
+  // looks back only about 20 content blocks from a cache point for an earlier
+  // prefix, and a step with ten parallel calls adds more than that, so a
+  // second point marks where the previous request ended: just before the
+  // newest model reply.
+  const reply = request.messages.findLastIndex((message) => message.role === "assistant");
+  for (const index of new Set([reply - 1, rendered.length - 1])) {
+    const message = rendered[index];
+    if (message) message.providerOptions = CACHE_POINT;
+  }
   return rendered;
 }
 
@@ -203,7 +211,13 @@ function modelUsage(
   const {inputTokens, outputTokens} = usage;
   if (inputTokens === undefined || outputTokens === undefined) return undefined;
   const cached = usage.inputTokenDetails?.cacheReadTokens;
-  return {inputTokens, outputTokens, ...(cached ? {cachedInputTokens: cached} : {})};
+  const written = usage.inputTokenDetails?.cacheWriteTokens;
+  return {
+    inputTokens,
+    outputTokens,
+    ...(cached ? {cachedInputTokens: cached} : {}),
+    ...(written ? {cacheWriteInputTokens: written} : {}),
+  };
 }
 
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */

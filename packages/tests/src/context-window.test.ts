@@ -63,9 +63,10 @@ void test("a large result reaches the model as a preview and is read back in sli
   const result = await r.execute(context(), a.run("Read the page"));
   assert.equal(result.status, "completed");
 
-  // The reader appears with the first preview.
-  assert.equal(toolNames(requests[0]!).includes("read_tool_result"), false);
-  assert.ok(toolNames(requests[1]!).includes("read_tool_result"));
+  // The reader is listed before any preview, so the tool list never changes
+  // mid-run and the cached prefix stays valid.
+  assert.deepEqual(toolNames(requests[0]!), toolNames(requests[1]!));
+  assert.ok(toolNames(requests[0]!).includes("read_tool_result"));
 
   const preview = toolOutput(requests[1]!, "p1") as Preview;
   assert.equal(preview.type, "tool-result-preview");

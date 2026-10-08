@@ -36,7 +36,7 @@ void test("tool search loads permitted schemas, resets between runs, and journal
       if (!req.messages.some((m) => m.role === "tool")) {
         assert.deepEqual(
           req.tools.map((t) => t.name),
-          ["find"],
+          ["find", "read_tool_result"],
         );
         return {
           type: "tool_calls",
@@ -45,7 +45,7 @@ void test("tool search loads permitted schemas, resets between runs, and journal
       }
       assert.deepEqual(
         req.tools.map((t) => t.name),
-        ["find", "github_notifications"],
+        ["find", "github_notifications", "read_tool_result"],
       );
       return done;
     },
