@@ -10,6 +10,7 @@ import {
   searchToolsTool,
   tool,
   type ModelResponse,
+  ToolError,
   type ToolResult,
 } from "@restate-agents/core";
 import {programTool} from "@restate-agents/core/program";
@@ -133,6 +134,82 @@ void test("PTC shares approval and output policies while keeping intermediate re
   await r.execute(context(), a.run("go"));
   assert.equal(calls, 2);
   assert.equal(approvals, 2);
+});
+
+void test("a failed program tells the model which tool calls already ran", async () => {
+  let failure: ToolResult | undefined;
+  const a = agent({
+    tools: {
+      program: programTool(),
+      write: tool({
+        description: "write",
+        input: z.object({}),
+        *execute() {
+          return "written";
+        },
+      }),
+      check: tool({
+        description: "check",
+        input: z.object({}),
+        *execute() {
+          throw new ToolError("not ready");
+        },
+      }),
+      wait: tool({
+        description: "wait",
+        input: z.object({}),
+        *execute() {
+          yield* r.channel().receive;
+          return null;
+        },
+      }),
+    },
+    *model(req) {
+      const result = req.messages.find((m) => m.role === "tool");
+      if (result?.role === "tool") {
+        failure = result.result;
+        return done;
+      }
+      const source = [
+        "tools.wait({});",
+        "await tools.write({}); await tools.write({});",
+        "try { await tools.check({}); } catch {}",
+        "throw new Error('gave up');",
+      ].join("\n");
+      return {type: "tool_calls", calls: [{id: "p", name: "program", input: {source}}]};
+    },
+  });
+  await r.execute(context(), a.run("go"));
+  assert.deepEqual(failure, {
+    status: "error",
+    code: "program_error",
+    message: [
+      "Error: gave up",
+      "    at <anonymous> (program.js:4:16)",
+      "",
+      "Tool calls made before the failure, which are not undone: wait (1 cancelled), write (2 ok), check (1 error).",
+    ].join("\n"),
+  });
+});
+
+void test("a program that fails before calling a tool says so", async () => {
+  let message: string | undefined;
+  const a = agent({
+    tools: {program: programTool()},
+    *model(req) {
+      const result = req.messages.find((m) => m.role === "tool");
+      if (result?.role === "tool") {
+        if (result.result.status === "error") message = result.result.message;
+        return done;
+      }
+      return {
+        type: "tool_calls",
+        calls: [{id: "p", name: "program", input: {source: "return 1 +;"}}],
+      };
+    },
+  });
+  await r.execute(context(), a.run("go"));
+  assert.match(message ?? "", /SyntaxError[^]*\n\nNo tool calls were made\.$/);
 });
 
 void test("PTC failure and child cleanup remain native through the full agent dispatcher", async () => {

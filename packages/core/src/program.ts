@@ -9,6 +9,26 @@ function isObject(value: Json): value is {[key: string]: Json} {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type CallStatus = "ok" | "error" | "cancelled";
+
+/** Effects a failed program leaves behind: its calls by tool, in call order. */
+function callSummary(calls: {name: string; status: CallStatus}[]): string {
+  if (calls.length === 0) return "No tool calls were made.";
+  const byTool = new Map<string, Record<CallStatus, number>>();
+  for (const {name, status} of calls) {
+    const counts = byTool.get(name) ?? {ok: 0, error: 0, cancelled: 0};
+    counts[status]++;
+    byTool.set(name, counts);
+  }
+  const tools = [...byTool].map(([name, counts]) => {
+    const parts = (["ok", "error", "cancelled"] as const)
+      .filter((status) => counts[status] > 0)
+      .map((status) => `${counts[status]} ${status}`);
+    return `${name} (${parts.join(", ")})`;
+  });
+  return `Tool calls made before the failure, which are not undone: ${tools.join(", ")}.`;
+}
+
 /** QuickJS orchestrates the same permitted, policy-checked tools as direct calls. */
 export function programTool(
   options: {tools?: string[]; limits?: GuestLimits} & BuiltinToolOptions<{source: string}> = {},
@@ -31,14 +51,22 @@ export function programTool(
     *execute({source}, context) {
       const allowed = context.availableTools().filter((name) => name !== context.toolName);
       const names = options.tools?.filter((name) => allowed.includes(name)) ?? allowed;
+      // A call still running when the program stops was cancelled.
+      const calls: {name: string; status: CallStatus}[] = [];
       try {
         return yield* executeProgram(
           source,
           {
             names,
             *execute(request) {
+              const call: {name: string; status: CallStatus} = {
+                name: request.name,
+                status: "cancelled",
+              };
+              calls.push(call);
               const [input] = request.args;
-              if (request.args.length !== 1 || !isObject(input))
+              if (request.args.length !== 1 || !isObject(input)) {
+                call.status = "error";
                 return {
                   ok: false,
                   error: {
@@ -46,19 +74,23 @@ export function programTool(
                     message: "Provide exactly one input object matching the tool schema",
                   },
                 };
+              }
               try {
-                return {ok: true, value: yield* context.callTool(request.name, input)};
+                const value = yield* context.callTool(request.name, input);
+                call.status = "ok";
+                return {ok: true, value};
               } catch (error) {
-                if (error instanceof ToolError)
-                  return {ok: false, error: {name: "ToolError", message: error.message}};
-                throw error;
+                if (!(error instanceof ToolError)) throw error;
+                call.status = "error";
+                return {ok: false, error: {name: "ToolError", message: error.message}};
               }
             },
           },
           limits,
         );
       } catch (error) {
-        if (error instanceof ProgramError) throw new ToolError(error.message, "program_error");
+        if (error instanceof ProgramError)
+          throw new ToolError(`${error.message}\n\n${callSummary(calls)}`, "program_error");
         throw error;
       }
     },
