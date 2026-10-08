@@ -46,6 +46,48 @@ export class ProgramError extends Error {}
 const PROGRAM_FILE = "program.js";
 const PROGRAM_PREFIX = "(async (tools) => {";
 
+const comparable = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+const reference = (name: string) =>
+  /^[A-Za-z_$][\w$]*$/.test(name) ? `tools.${name}` : `tools[${JSON.stringify(name)}]`;
+
+/** Edit distance, or `limit + 1` once it is certain to exceed `limit`. */
+function distance(a: string, b: string, limit: number): number {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let previous = Array.from({length: b.length + 1}, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    if (Math.min(...current) > limit) return limit + 1;
+    previous = current;
+  }
+  return previous[b.length]!;
+}
+
+/** The error for a tool name the program does not have, naming close matches. */
+export function unknownTool(name: string, names: string[]): string {
+  const wanted = comparable(name);
+  // One edit per three characters; swapping two letters counts as two.
+  const limit = Math.max(1, Math.floor(wanted.length / 3));
+  const close = names.filter((candidate) => {
+    const key = comparable(candidate);
+    if (key === wanted) return true;
+    if (Math.min(key.length, wanted.length) >= 3 && (key.includes(wanted) || wanted.includes(key)))
+      return true;
+    return distance(key, wanted, limit) <= limit;
+  });
+  let message = `${reference(name.slice(0, 100))} is not a tool.`;
+  if (close.length > 0) message += ` Did you mean ${close.slice(0, 5).map(reference).join(", ")}?`;
+  else if (names.length === 0) message += " This program can call no tools.";
+  else if (names.length <= 20) message += ` Tools: ${names.map(reference).join(", ")}.`;
+  return message;
+}
+
 /** `Name: message` and the frames inside the program, at the model's line and column. */
 export function describeFailure({name, message, stack = ""}: Failure): string {
   const frames = stack
@@ -120,9 +162,16 @@ export class Guest {
       });
       this.vm.setProp(this.vm.global, "__request", request);
       request.dispose();
+      const missing = this.vm.newFunction("missing", (name) =>
+        this.vm.newString(unknownTool(this.vm.getString(name), toolNames)),
+      );
+      this.vm.setProp(this.vm.global, "__missing", missing);
+      missing.dispose();
       const setup = this.evaluate(`(() => {
         const request = globalThis.__request;
         delete globalThis.__request;
+        const missing = globalThis.__missing;
+        delete globalThis.__missing;
         globalThis.Date = undefined;
         Math.random = () => { throw new Error("Use a tool for randomness"); };
         Object.freeze(Math);
@@ -143,9 +192,20 @@ export class Guest {
             request(id, name, encoded);
           })])
         )));
+        // Reading a tool that does not exist names the close matches, instead of a
+        // later "not a function". Promise and JSON probes still see undefined.
+        const has = Reflect.has, read = Reflect.get, ObjectPrototype = Object.prototype;
+        const GuestTypeError = TypeError;
+        const guarded = new Proxy(tools, {
+          get(target, key, receiver) {
+            if (typeof key !== "string" || has(target, key) || key === "then" || key === "toJSON" || has(ObjectPrototype, key))
+              return read(target, key, receiver);
+            throw new GuestTypeError(missing(key));
+          }
+        });
         return {
           start(program) {
-            return then(then(resolve(), () => program(tools)), value => {
+            return then(then(resolve(), () => program(guarded)), value => {
               // toJSON may throw or emit tools. Serialize once, during the drain.
               const encoded = stringify(value);
               if (encoded === undefined) throw new GuestError("Program must return JSON; end it with a return statement");

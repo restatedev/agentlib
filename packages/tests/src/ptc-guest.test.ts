@@ -2,7 +2,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {type Context} from "@restatedev/restate-sdk";
-import {Guest, ProgramError, type Outcome, type Request} from "../../core/src/ptc/guest.js";
+import {
+  Guest,
+  ProgramError,
+  unknownTool,
+  type Outcome,
+  type Request,
+} from "../../core/src/ptc/guest.js";
 import {executeWithTools as executeProgram} from "./ptc-adapter.js";
 
 void test("invalid guest budgets fail before allocating a VM", () => {
@@ -240,6 +246,40 @@ void test("a failed program reports its error at the line and column of the sour
       (error) => error instanceof ProgramError && error.message.endsWith(expected),
     );
   }
+});
+
+void test("reading a tool that does not exist names the close matches", async () => {
+  const tools = {lookup: async () => null, get_user: async () => null};
+  const cases: [string, string][] = [
+    ["return tools.lookpu({});", "tools.lookpu is not a tool. Did you mean tools.lookup?"],
+    ["return tools.getUser({});", "tools.getUser is not a tool. Did you mean tools.get_user?"],
+    [
+      "return tools['the weather']({});",
+      'tools["the weather"] is not a tool. Tools: tools.lookup, tools.get_user.',
+    ],
+  ];
+  for (const [source, expected] of cases) {
+    await assert.rejects(
+      executeProgram(contextWithRun(), source, tools),
+      (error) =>
+        error instanceof ProgramError &&
+        error.message.startsWith(`TypeError: ${expected}\n    at <anonymous> (program.js:1:`),
+    );
+  }
+  const many = Array.from({length: 21}, (_, i) => `tool_${i}`);
+  assert.equal(unknownTool("weather", many), "tools.weather is not a tool.");
+  assert.equal(unknownTool("x", []), "tools.x is not a tool. This program can call no tools.");
+});
+
+void test("promise, JSON and membership checks on tools still work", async () => {
+  assert.deepEqual(
+    await executeProgram(
+      contextWithRun(),
+      "return {awaited: Object.keys(await tools), json: JSON.stringify(tools), has: 'x' in tools, text: typeof tools.toString};",
+      {lookup: async () => null},
+    ),
+    {awaited: ["lookup"], json: "{}", has: false, text: "undefined"},
+  );
 });
 
 void test("a failed tool call keeps its error name inside the program", () => {
