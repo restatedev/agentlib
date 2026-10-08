@@ -247,6 +247,38 @@ void test("input that looks like a runtime note is only text", async () => {
   assert.deepEqual(requests[0]!.messages, [{role: "user", content: input}]);
 });
 
+void test("previews and reads never split a character in two", async () => {
+  // An odd prefix puts the head's cut between the two halves of an emoji.
+  const text = "x".repeat(1001) + "😀".repeat(9000);
+  const requests: ModelRequest[] = [];
+  const a = agent({
+    tools: {
+      fetch: tool({
+        description: "Fetch",
+        input: z.object({}),
+        *execute() {
+          return text;
+        },
+      }),
+    },
+    toolResults: {maxTokens: 2000, previewTokens: 1000},
+    *model(request) {
+      requests.push(structuredClone(request));
+      if (request.step === 1) return call("f1", "fetch");
+      if (request.step === 2)
+        return call("r1", "read_tool_result", {ref: "f1", offset: 1002, limit: 1});
+      return {type: "final", text: "Done"};
+    },
+  });
+  await r.execute(context(), a.run("Fetch"));
+  const preview = toolOutput(requests[1]!, "f1") as Preview;
+  assert.equal(preview.type, "tool-result-preview");
+  assert.ok(preview.head.isWellFormed() && preview.tail.isWellFormed());
+  const read = toolOutput(requests[2]!, "r1") as {text: string; nextOffset: number};
+  assert.equal(read.text, "😀");
+  assert.equal(read.nextOffset, 1003);
+});
+
 void test("a preview never repeats or exceeds the result it shortens", async () => {
   const shown = async (result: JsonValue, previewTokens: number) => {
     let output: JsonValue | undefined;
