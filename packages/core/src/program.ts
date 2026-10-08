@@ -15,23 +15,18 @@ export function programTool(
 ) {
   const limits = guestLimits(options.limits);
   const program = tool({
-    // Models write a program body unless the contract ends with a complete example.
     description:
       options.description ??
       [
         "Coordinate tools with a JavaScript program. Use it for parallel lookups, dependent calls, filtering, or aggregation when only a compact result should reach you; call simple tools directly.",
-        "The source must evaluate to an async function taking tools, not a program body. Each other tool is a function on tools, called with exactly one input object matching its schema: await tools.lookup({id: 'a'}). Use tools['exact-name'] for names that are not identifiers.",
+        "The source is the body of an async function: top-level await and return work. Each other tool is a function on tools, called with exactly one input object matching its schema: await tools.lookup({id: 'a'}). Use tools['exact-name'] for names that are not identifiers.",
         "A tool promise resolves to that tool's JSON result, which may be a string rather than an object; failed calls reject. Use Promise.all, any, race, allSettled, and try/catch. Returning ends the program and cancels calls still running.",
         "There is no network, filesystem, process, timer, Date, or Math.random. Search for unfamiliar tools before writing the program.",
-        "Return compact JSON. Example, for a tool named lookup: async tools => { const ids = ['a', 'b']; const found = await Promise.all(ids.map((id) => tools.lookup({id}))); return {found}; }",
+        "Return compact JSON. Example, for a tool named lookup: const ids = ['a', 'b']; const found = await Promise.all(ids.map((id) => tools.lookup({id}))); return {found};",
       ].join("\n"),
     describe: options.describe,
     input: z.object({
-      source: z
-        .string()
-        .min(1)
-        .max(64000)
-        .describe("JavaScript evaluating to async tools => { ...; return result; }"),
+      source: z.string().min(1).max(64000).describe("Body of an async function; return the result"),
     }),
     *execute({source}, context) {
       const allowed = context.availableTools().filter((name) => name !== context.toolName);

@@ -118,7 +118,7 @@ void test("PTC shares approval and output policies while keeping intermediate re
               name: "program",
               input: {
                 source:
-                  "async tools => (await Promise.all([tools.read({n:2}),tools.read({n:4})])).reduce((a,b)=>a+b,0)",
+                  "return (await Promise.all([tools.read({n:2}),tools.read({n:4})])).reduce((a,b)=>a+b,0);",
               },
             },
           ],
@@ -169,7 +169,7 @@ void test("PTC failure and child cleanup remain native through the full agent di
             {
               id: "p",
               name: "program",
-              input: {source: "async tools => await Promise.race([tools.wait({}),tools.fast({})])"},
+              input: {source: "return await Promise.race([tools.wait({}),tools.fast({})]);"},
             },
           ],
         };
@@ -209,7 +209,7 @@ void test("PTC runs and nested durable effects replay without invoking the host 
             id: "p",
             name: "program",
             input: {
-              source: "async tools => await Promise.all([tools.read({n:2}),tools.read({n:4})])",
+              source: "return await Promise.all([tools.read({n:2}),tools.read({n:4})]);",
             },
           },
         ],
@@ -264,7 +264,7 @@ void test("steering hands a still-running program to the background instead of w
             return {
               type: "tool_calls",
               calls: [
-                {id: "p", name: "program", input: {source: "async tools => await tools.wait({})"}},
+                {id: "p", name: "program", input: {source: "return await tools.wait({});"}},
                 {id: "l", name: "lookup", input: {}},
               ],
             };

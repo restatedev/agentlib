@@ -389,8 +389,7 @@ const runner = r.service({
                     id: name,
                     name,
                     input: {
-                      source:
-                        "async tools => await Promise.all([tools.lookup({}),tools.write({})])",
+                      source: "return await Promise.all([tools.lookup({}),tools.write({})]);",
                     },
                   };
                 }

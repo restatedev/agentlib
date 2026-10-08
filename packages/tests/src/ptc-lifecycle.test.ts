@@ -24,10 +24,10 @@ void test("interrupting a program joins every child and is never caught by guest
       const never = channel<void>();
       const task = spawn(
         executeProgram(
-          `async tools => {
+          `
       try { return await Promise.all([tools.wait({}), tools.wait({})]); }
       catch { return 'swallowed'; }
-    }`,
+    `,
           {
             names: ["wait"],
             *execute(request) {
@@ -62,10 +62,10 @@ void test("root completion stops and joins a racing loser", async () => {
     gen(function* () {
       const never = channel<void>();
       return yield* executeProgram(
-        `async tools => {
+        `
       const winner = await Promise.race([tools.wait({}), tools.fast({})]);
       return winner;
-    }`,
+    `,
         {
           names: ["wait", "fast"],
           *execute(request) {
@@ -91,7 +91,7 @@ void test("a child infrastructure failure remains retryable even after root comp
     execute(
       context(),
       gen(function* () {
-        return yield* executeProgram("async tools => { tools.broken({}); return 42; }", {
+        return yield* executeProgram("tools.broken({}); return 42;", {
           names: ["broken"],
           *execute() {
             throw failure;
@@ -105,12 +105,12 @@ void test("a child infrastructure failure remains retryable even after root comp
 
 void test("guest bridge is private, arguments are copied, and only discovered tools are exposed", () => {
   const guest = new Guest(
-    `async tools => {
+    `
     const input = {n: 1}; const done = tools.lookup(input); input.n = 2;
     return {value: await done, keys: Object.keys(tools),
       globals: [typeof __deliver, typeof __snapshot, typeof __request, typeof process, typeof fetch, typeof Date],
       lexical: [typeof request, typeof pending, typeof snapshot]};
-  }`,
+  `,
     ["lookup"],
   );
   try {
@@ -138,7 +138,7 @@ void test("source, output, and tool-call limits bound a generated program", asyn
     execute(
       context(),
       gen(function* () {
-        return yield* executeProgram("async tools => 'x'.repeat(64001)", {
+        return yield* executeProgram("return 'x'.repeat(64001);", {
           names: [],
           *execute() {
             throw new Error("unused");
@@ -148,7 +148,7 @@ void test("source, output, and tool-call limits bound a generated program", asyn
     ),
     /result exceeds/,
   );
-  const guest = new Guest("async tools => { await tools.a({}); return tools.a({}); }", ["a"], {
+  const guest = new Guest("await tools.a({}); return tools.a({});", ["a"], {
     maxToolCalls: 1,
   });
   try {

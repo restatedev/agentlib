@@ -8,12 +8,12 @@ import {executeWithTools as executeProgram} from "./ptc-adapter.js";
 void test("invalid guest budgets fail before allocating a VM", () => {
   for (const key of ["maxInterruptChecks", "maxJobsPerDrain", "maxToolCalls"] as const) {
     for (const value of [NaN, Infinity, 0, -1, 1.5]) {
-      assert.throws(() => new Guest("async () => null", [], {[key]: value}), TypeError);
+      assert.throws(() => new Guest("return null;", [], {[key]: value}), TypeError);
     }
   }
 });
 
-const demoProgram = `async tools => {
+const demoProgram = `
   const completionOrder = [];
   const branches = ["a", "b"].map(async key => {
     const item = await tools.lookup(key);
@@ -25,7 +25,7 @@ const demoProgram = `async tools => {
   const results = await Promise.all(branches);
   await tools.checkpoint(winner);
   return { winner, results, completionOrder };
-}`;
+`;
 
 type Completion = {id: string; outcome: Outcome};
 
@@ -96,13 +96,13 @@ void test("multistep race reproduces calls, arguments, winner, and output from a
 });
 
 void test("native Promise.any/allSettled handle a guest rejection and a fulfillment", () => {
-  const source = `async tools => {
+  const source = `
     const a = tools.lookup("a");
     const b = tools.lookup("b");
     const winner = await Promise.any([a, b]);
     const settled = await Promise.allSettled([a, b]);
     return { winner, statuses: settled.map(x => x.status) };
-  }`;
+  `;
   const events: Completion[] = [
     {
       id: "call-0",
@@ -138,22 +138,19 @@ function contextWithRun(run?: (...args: unknown[]) => unknown): Context {
 
 void test("deterministic program failures terminate instead of retrying the same source", async (t) => {
   const cases: [string, string, RegExp][] = [
-    ["syntax", "async tools => { this is invalid JS }", /Guest evaluation failed/],
-    ["ordinary throw", 'async tools => { throw new Error("bad program"); }', /bad program/],
-    ["BigInt output", "async tools => 1n", /BigInt|bigint/],
-    ["cyclic output", "async tools => { const x = {}; x.self = x; return x; }", /circular/i],
-    ["undefined output", "async tools => undefined", /must return JSON/],
-    ["function output", "async tools => (() => 1)", /must return JSON/],
-    [
-      "throwing toJSON",
-      'async tools => ({ toJSON() { throw new Error("bad JSON"); } })',
-      /bad JSON/,
-    ],
+    ["syntax", "this is invalid JS", /Guest evaluation failed/],
+    ["ordinary throw", 'throw new Error("bad program");', /bad program/],
+    ["BigInt output", "return 1n;", /BigInt|bigint/],
+    ["cyclic output", "const x = {}; x.self = x; return x;", /circular/i],
+    ["undefined output", "return undefined;", /must return JSON/],
+    ["missing return", "const x = 1;", /end it with a return statement/],
+    ["function output", "return () => 1;", /must return JSON/],
+    ["throwing toJSON", 'return { toJSON() { throw new Error("bad JSON"); } };', /bad JSON/],
     [
       "unprintable error",
-      `async tools => { throw {
+      `throw {
       get name() { throw null; }, get message() { throw null; }
-    }; }`,
+    };`,
       /Unprintable guest error/,
     ],
   ];
@@ -174,9 +171,7 @@ void test("instruction and microtask budgets are terminal even with guest catch 
   await assert.rejects(
     executeProgram(
       contextWithRun(),
-      `async tools => {
-    try { while (true) {} } catch { return "caught"; }
-  }`,
+      `try { while (true) {} } catch { return "caught"; }`,
       {},
       {maxInterruptChecks: 10},
     ),
@@ -185,13 +180,13 @@ void test("instruction and microtask budgets are terminal even with guest catch 
   await assert.rejects(
     executeProgram(
       contextWithRun(),
-      `async tools => {
+      `
     await new Promise(() => {
       const spin = () => Promise.resolve().then(spin);
       spin();
     });
     return null;
-  }`,
+  `,
       {},
       {maxJobsPerDrain: 20},
     ),
@@ -201,16 +196,16 @@ void test("instruction and microtask budgets are terminal even with guest catch 
 
 void test("a QuickJS abort while disposing the guest keeps the program's result", async () => {
   // This program leaves objects behind in QuickJS, so freeing its runtime aborts.
-  const source = `async tools => {
+  const source = `
     const values = [];
     for (let i = 0; i < 300000; i++) values.push(i);
     values.sort();
     return values.length;
-  }`;
+  `;
   for (let attempt = 0; attempt < 2; attempt++) {
     assert.equal(await executeProgram(contextWithRun(), source, {}), 300000);
   }
-  assert.equal(await executeProgram(contextWithRun(), "async tools => 1", {}), 1);
+  assert.equal(await executeProgram(contextWithRun(), "return 1;", {}), 1);
 });
 
 void test("catastrophic regex backtracking is stopped by the execution budget", async () => {
@@ -218,7 +213,7 @@ void test("catastrophic regex backtracking is stopped by the execution budget", 
   await assert.rejects(
     executeProgram(
       contextWithRun(),
-      `async tools => /(a+)+$/.test("a".repeat(40) + "b")`,
+      `return /(a+)+$/.test("a".repeat(40) + "b");`,
       {},
       {maxInterruptChecks: 100},
     ),
@@ -233,7 +228,7 @@ void test("SDK failures are propagated unchanged and never delivered to guest ca
       contextWithRun(() => {
         throw failure;
       }),
-      'async tools => { try { return await tools.lookup("a"); } catch { return "caught"; } }',
+      'try { return await tools.lookup("a"); } catch { return "caught"; }',
       {lookup: async () => "a"},
     ),
     (error) => error === failure,
@@ -242,9 +237,9 @@ void test("SDK failures are propagated unchanged and never delivered to guest ca
 
 void test("output serialization emits requests during the drain and snapshots only once", () => {
   const guest = new Guest(
-    `async tools => ({
+    `return {
     toJSON() { tools.lookup("serialized"); return { answer: 42 }; }
-  })`,
+  };`,
     ["lookup"],
   );
   try {

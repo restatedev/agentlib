@@ -126,7 +126,7 @@ export class Guest {
             return then(then(resolve(), () => program(tools)), value => {
               // toJSON may throw or emit tools. Serialize once, during the drain.
               const encoded = stringify(value);
-              if (encoded === undefined) throw new GuestError("Program must return JSON");
+              if (encoded === undefined) throw new GuestError("Program must return JSON; end it with a return statement");
               if (encoded.length > ${MAX_RESULT_LENGTH}) throw new GuestError("Program result exceeds 64,000 characters; return a smaller summary");
               snapshot = '{"status":"fulfilled","value":' + encoded + '}';
             });
@@ -162,7 +162,9 @@ export class Guest {
         "(() => { const then = Function.prototype.call.bind(Promise.prototype.then); return (start, fail, program) => then(start(program), undefined, fail); })()",
       );
       this.bridge.push(launch);
-      const program = this.evaluate(`(${source}\n)`);
+      // The source is an async function body, so top-level await and return work.
+      // The prefix shares its first line, keeping reported line numbers.
+      const program = this.evaluate(`(async (tools) => {${source}\n})`);
       try {
         this.checkResult(
           this.vm.callFunction(launch, this.vm.undefined, start, fail, program),
