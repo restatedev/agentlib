@@ -31,8 +31,15 @@ export type ModelRequest = {
   step?: number;
 };
 export type ModelChunk = {type: "text-delta" | "reasoning-delta"; text: string};
-/** Tokens a model call used, as the provider reported them. */
-export type ModelUsage = {inputTokens: number; outputTokens: number; cachedInputTokens?: number};
+/** Tokens a model call used, as the provider reported them. `inputTokens`
+ * includes the cached input read (`cachedInputTokens`) and written
+ * (`cacheWriteInputTokens`); providers that cache on their own report no writes. */
+export type ModelUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
+};
 export type ModelFinalResponse = {
   type: "final";
   text: string;
@@ -255,9 +262,11 @@ export type AgentOptions<Context, Output = string> = {
   contextWindow?: number;
   /** Shows the model a preview of each tool result estimated above `maxTokens`
    * (default 5000): its head and tail, `previewTokens` in all (default 2500).
-   * The model reads the rest with the `read_tool_result` tool, which appears
-   * once a preview does and stays for the rest of the run. The saved and returned transcript keeps every result
-   * whole. `false` shows every result in full. */
+   * The model reads the rest with the `read_tool_result` tool, listed in every
+   * request so the tool list, and with it the cached prefix, stays the same
+   * all run; an agent without other tools lists it only for previews in its
+   * loaded history. The saved and returned transcript keeps every result whole.
+   * `false` shows every result in full. */
   toolResults?: false | {maxTokens?: number; previewTokens?: number};
 };
 export type RunArguments<Context> = undefined extends Context

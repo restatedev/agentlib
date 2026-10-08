@@ -73,7 +73,7 @@ const cacheControls = (body: Body) =>
     message.content.filter((part: Body) => part.cache_control).map(() => index),
   );
 
-void test("Anthropic requests cache the instructions and the newest message", async () => {
+void test("Anthropic requests cache the instructions, the previous request and the newest message", async () => {
   const {bodies, fetch} = server(anthropicReply);
   const usages = await run(anthropicModel(fetch));
   assert.equal(bodies.length, 2);
@@ -81,14 +81,17 @@ void test("Anthropic requests cache the instructions and the newest message", as
     assert.deepEqual(body.system, [
       {type: "text", text: "Answer order questions.", cache_control: {type: "ephemeral"}},
     ]);
-    // Only the newest message carries the moving cache point.
-    assert.deepEqual(cacheControls(body), [body.messages.length - 1]);
   }
+  // The newest message moves the cache point forward; a second point marks
+  // where the previous request ended, so a step that adds more blocks than
+  // the provider looks back over still reads that request's cache.
+  assert.deepEqual(cacheControls(bodies[0]!), [0]);
+  assert.deepEqual(cacheControls(bodies[1]!), [0, 2]);
   assert.equal(bodies[1]!.messages.at(-1).content[0].type, "tool_result");
-  // Cache reads count in the input and are reported apart.
+  // Cache reads and writes count in the input and are reported apart.
   assert.deepEqual(usages, [
-    {inputTokens: 1210, outputTokens: 5},
-    {inputTokens: 1240, outputTokens: 5, cachedInputTokens: 1200},
+    {inputTokens: 1210, outputTokens: 5, cacheWriteInputTokens: 1200},
+    {inputTokens: 1240, outputTokens: 5, cachedInputTokens: 1200, cacheWriteInputTokens: 30},
   ]);
 });
 
@@ -101,7 +104,7 @@ void test("caching: false sends no cache points", async () => {
   }
 });
 
-void test("Bedrock requests place cache points after the instructions and the newest message", async () => {
+void test("Bedrock requests place cache points after the instructions, the previous request and the newest message", async () => {
   const {bodies, fetch} = server((step) => ({
     output: {
       message: {
@@ -130,7 +133,7 @@ void test("Bedrock requests place cache points after the instructions and the ne
     const points = body.messages.flatMap((message: Body, index: number) =>
       message.content.filter((part: Body) => part.cachePoint).map(() => index),
     );
-    assert.deepEqual(points, [body.messages.length - 1]);
+    assert.deepEqual(points, body === bodies[0] ? [0] : [0, 2]);
     assert.deepEqual(body.messages.at(-1).content.at(-1), {cachePoint: {type: "default"}});
   }
   assert.equal(usages[0]!.cachedInputTokens, 900);

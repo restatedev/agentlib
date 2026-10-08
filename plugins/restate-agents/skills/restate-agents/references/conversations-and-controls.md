@@ -55,7 +55,9 @@ saved conversation keep every message whole.
 **Tool-result previews are on by default.** A result estimated above
 `toolResults.maxTokens` reaches the model as its head and tail, with a ref.
 The model reads the rest with the built-in `read_tool_result` tool, which
-appears in the request once a preview does:
+every request lists while previews are on, so the tool list never changes
+mid-run and the cached prefix stays valid. An agent without other tools lists
+it only when its loaded history holds a preview:
 
 ```ts
 const researcher = agent({
@@ -65,9 +67,8 @@ const researcher = agent({
 });
 ```
 
-- Once a preview appears, `read_tool_result` stays for the rest of the run,
-  even after compaction folds the preview away. Each read returns up to four
-  times `maxTokens` worth of characters.
+- A ref stays readable after compaction folds its preview away. Each read
+  returns up to four times `maxTokens` worth of characters.
 - Background results are previewed the same way; their ref is the operation ID.
 - Reads come from the journaled history, so they work after a restart and on
   replay, and for earlier turns of a saved conversation.
