@@ -70,6 +70,28 @@ void test("schemaless handler -> permissive open object; scalar handler -> wrapp
   assert.deepEqual(echo.properties.value, refund._handlers.echo._inputSerde?.jsonSchema);
 });
 
+void test("a wrapped schema keeps its references resolvable", () => {
+  type Node = {name: string; children: Node[]};
+  const node: z.ZodType<Node> = z.lazy(() => z.object({name: z.string(), children: z.array(node)}));
+  const tree = r.iface.service("Tree", {
+    count: r.iface.schemas({input: z.array(node), output: z.number()}),
+  });
+  const schema = serviceTool({iface: tree, handler: "count"}).inputSchema;
+  const refs: string[] = [];
+  JSON.stringify(schema, (key, value: unknown) => {
+    if (key === "$ref" && typeof value === "string") refs.push(value);
+    return value;
+  });
+  assert.ok(refs.length > 0);
+  for (const ref of refs) {
+    const target = ref
+      .slice(2)
+      .split("/")
+      .reduce<unknown>((at, part) => (at as Record<string, unknown> | undefined)?.[part], schema);
+    assert.ok(target && typeof target === "object", `unresolved ${ref}`);
+  }
+});
+
 void test("inputSchema override replaces the derived schema", () => {
   const schema = {type: "object", properties: {q: {type: "string"}}, required: ["q"]};
   const tool = serviceTool({iface: refund, handler: "process", inputSchema: schema});

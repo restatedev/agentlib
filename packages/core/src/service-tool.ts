@@ -7,6 +7,7 @@ import {
   type ServiceDescriptor,
   type WorkflowDescriptor,
 } from "@restatedev/restate-sdk-gen";
+import {nestedSchema} from "./nested-schema.js";
 import {awaitChild, buildTool} from "./tool.js";
 import type {JsonValue, Tool} from "./types.js";
 
@@ -119,7 +120,7 @@ function buildSingleHandlerTool<C>(
   const inputSchema = wrap
     ? {
         type: "object",
-        properties: {value: base},
+        properties: {value: nestedSchema(base, "value")},
         required: ["value"],
         additionalProperties: false,
       }
