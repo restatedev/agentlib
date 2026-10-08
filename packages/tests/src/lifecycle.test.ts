@@ -787,6 +787,37 @@ for (const phase of ["tool-start", "tool-end"] as const) {
   });
 }
 
+void test("approval shows the model's input when the schema transforms it into non-JSON", async () => {
+  let step = 0;
+  let approved: unknown;
+  let received: unknown;
+  const a = agent({
+    tools: {
+      schedule: tool({
+        description: "Schedule a job",
+        input: z.object({at: z.string().pipe(z.coerce.date())}),
+        needsApproval: true,
+        *execute({at}) {
+          received = at;
+          return at.toISOString();
+        },
+      }),
+    },
+    *onHumanApproval(request) {
+      approved = request.call.input;
+      return true;
+    },
+    *model() {
+      if (++step === 1) return batch(call("schedule", "schedule", {at: "2026-01-02T03:04:05Z"}));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status, "completed");
+  assert.deepEqual(approved, {at: "2026-01-02T03:04:05Z"});
+  assert.ok(received instanceof Date);
+});
+
 void test("a nested call that spends the tool-call budget stops the run instead of failing it", async () => {
   let step = 0;
   const a = agent({

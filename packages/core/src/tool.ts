@@ -87,7 +87,10 @@ export function buildTool<Data, Context = unknown>(
         typeof lifecycle.needsApproval === "function"
           ? yield* lifecycle.needsApproval(data, context)
           : lifecycle.needsApproval;
-      if (approval && !(yield* context.approve(jsonSchema.parse(data as JsonValue))))
+      // Parsed data is not JSON when a schema transforms it, for example into a
+      // Date; the approver then sees the input as the model sent it.
+      const shown = jsonSchema.safeParse(data);
+      if (approval && !(yield* context.approve(shown.success ? shown.data : input)))
         throw new ToolDenied("Human approval denied");
       let result = yield* lifecycle.execute(data, context);
       if (lifecycle.after) result = yield* lifecycle.after(result, context);
