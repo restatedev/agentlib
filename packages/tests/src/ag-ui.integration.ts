@@ -1,7 +1,8 @@
 // Runs lesson 18 under the real AG-UI client, which verifies every event
-// sequence it receives, against a Restate server. Node strips this file's
-// types itself: under tsx, @ag-ui/client's fast-json-patch dependency
-// resolves to the TypeScript source it ships and fails to load.
+// sequence it receives, against a Restate server. The integration suite runs
+// on Node's own type stripping, not tsx: under tsx, @ag-ui/client's
+// fast-json-patch dependency resolves to the TypeScript source it ships and
+// fails to load.
 import assert from "node:assert/strict";
 import {createServer, type Server} from "node:http";
 import type {AddressInfo} from "node:net";
