@@ -30,6 +30,12 @@ A tool call whose pending acknowledgment lets planning continue before its outco
 is available. It remains owned by the run until completion or cancellation.
 _Avoid_: Detached job, fire-and-forget work
 
+**Skill**:
+Instructions for one kind of task that the model loads by name when a task
+matches its description. The application's skill source supplies them; a run
+lists the skills once and keeps that list for the run.
+_Avoid_: Plugin, prompt template
+
 **Handoff**:
 A change of active agent definition within a run that preserves its history,
 context, root policies, and remaining budgets.

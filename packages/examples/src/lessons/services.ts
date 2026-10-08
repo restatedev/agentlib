@@ -17,6 +17,7 @@ import {peerAuthor, peerReview, peerReviewer} from "./15_peer_review_rpc.js";
 import {inventoryAudit, progressFeed} from "./16_progress_feed.js";
 import {docsGuide} from "./17_mcp_tools.js";
 import {agUiThread} from "./18_ag_ui.js";
+import {skilledWriter} from "./19_skills.js";
 
 export const services = [
   hello,
@@ -42,4 +43,5 @@ export const services = [
   inventoryAudit,
   docsGuide,
   agUiThread,
+  skilledWriter,
 ];

@@ -27,6 +27,7 @@ import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from ".
 import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
 import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
+import {listSkills, skillsSection, skillTools} from "./skills.js";
 import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
@@ -66,6 +67,12 @@ export function* runAgent<C, O>(
 ): Operation<RunResult<O>> {
   const history = yield* RunHistory.load(input, options, config.toolResults);
   return yield* new AgentRun(root, config, history, options).run();
+}
+
+/** The agent's instructions followed by its skills section. */
+function withSkills(instructions: string | undefined, section: string | undefined) {
+  if (!section) return instructions;
+  return instructions ? `${instructions}\n\n${section}` : section;
 }
 
 function allow(result: GuardrailResult): void {
@@ -110,6 +117,8 @@ class AgentRun<C, O> {
   private lastRequest: Pick<ModelRequest, "instructions" | "tools"> | undefined;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
+  /** The root agent's skills, listed once at the start of the run. */
+  private skills: {section: string; tools: Record<string, Tool<C>>} | undefined;
   private readonly context: RunContext<C>;
   private readonly tasks = new RunTasks();
   private readonly tools: RunTools<C>;
@@ -160,6 +169,15 @@ class AgentRun<C, O> {
   private *start(): Operation<void> {
     if (this.root.beforeRun)
       allow(yield* this.root.beforeRun(this.history.snapshot(), this.context));
+    const source = this.root.skills;
+    const listed = source ? yield* listSkills(source) : [];
+    if (source && listed.length) {
+      this.skills = {
+        section: skillsSection(listed, source.read !== undefined),
+        tools: skillTools<C>(source, listed),
+      };
+      this.catalog = createToolCatalog(this.active.tools, this.runTools());
+    }
     yield* this.history.compact();
     const controls = resolveControls(this.options);
     this.steeringSource = controls.steering;
@@ -300,7 +318,9 @@ class AgentRun<C, O> {
   private requestOverhead(): number {
     const {instructions} = this.active;
     const text =
-      typeof instructions === "string" ? instructions : (this.lastRequest?.instructions ?? "");
+      typeof instructions === "function"
+        ? (this.lastRequest?.instructions ?? "")
+        : (withSkills(instructions, this.skills?.section) ?? "");
     return textTokens(text) + jsonTokens(JSON.stringify(this.visibleTools()));
   }
 
@@ -317,6 +337,10 @@ class AgentRun<C, O> {
   /** Tools that belong to the run rather than an agent, so they survive a handoff. */
   private runTools(): Record<string, Tool<C>> {
     const tools = {...this.options?.tools};
+    for (const [name, skillTool] of Object.entries(this.skills?.tools ?? {})) {
+      if (name in tools) throw new TypeError(`Duplicate tool name: ${name}`);
+      tools[name] = skillTool;
+    }
     const settings = this.config.toolResults;
     if (!settings) return tools;
     if (READ_TOOL in tools) throw new TypeError(`Duplicate tool name: ${READ_TOOL}`);
@@ -352,10 +376,12 @@ class AgentRun<C, O> {
     const {active} = this;
     const request = {
       // Called as a method, so an instructions function can use `this`.
-      instructions:
+      instructions: withSkills(
         typeof active.instructions === "function"
           ? yield* active.instructions(this.context)
           : active.instructions,
+        this.skills?.section,
+      ),
       outputSchema: this.config.outputSchema,
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,

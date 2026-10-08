@@ -5,7 +5,12 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import * as r from "@restatedev/restate-sdk-gen";
-import {journaledModel, type Model, type ModelResponse} from "@restate-agents/core";
+import {
+  journaledModel,
+  type Model,
+  type ModelRequest,
+  type ModelResponse,
+} from "@restate-agents/core";
 
 const sources = [
   {
@@ -284,6 +289,7 @@ const fixtureModel: Model = function* (request) {
   if (last?.role === "user" && last.content.startsWith("The run stopped:"))
     return {type: "final", text: "Stopped as requested."};
   if (instructions.startsWith("Research ")) return yield* researchModel(request);
+  if (instructions.startsWith("You write for a software team")) return skillsModel(request);
   if (instructions.startsWith("Code ")) return yield* reviewModel(request);
   if (instructions.startsWith("Quick answer.")) return yield* racingModels.quick(request);
   if (instructions.startsWith("Thorough answer.")) return yield* racingModels.thorough(request);
@@ -296,6 +302,37 @@ const fixtureModel: Model = function* (request) {
     return yield* tutorialModel(request);
   throw new Error(`Unexpected example instructions: ${instructions}`);
 };
+
+// Lesson 19: load the release-notes skill, read its template, answer from it.
+function skillsModel(request: ModelRequest): ModelResponse {
+  assert.match(request.instructions!, /- release-notes: Write release notes/);
+  assert.match(request.instructions!, /- incident-summary: Summarize a production incident/);
+  if (request.step === 1)
+    return {
+      type: "tool_calls",
+      calls: [{id: "load", name: "load_skill", input: {name: "release-notes"}}],
+    };
+  if (request.step === 2)
+    return {
+      type: "tool_calls",
+      calls: [
+        {
+          id: "read",
+          name: "read_skill_file",
+          input: {name: "release-notes", path: "template.md"},
+        },
+      ],
+    };
+  const [skill, template] = request.messages.flatMap((message) =>
+    message.role === "tool" &&
+    message.result.status === "success" &&
+    typeof message.result.output === "string"
+      ? [message.result.output]
+      : [],
+  );
+  assert.match(skill!, /^# Release notes/);
+  return {type: "final", text: template!.split("\n")[0]!};
+}
 
 // Replace only the external model. Import the same service instances the app serves.
 mock.module("@restate-agents/core/openai", {
@@ -315,6 +352,7 @@ const [
   {guardedBooking},
   {peerAuthor, peerReviewer, peerReview},
   {progressFeed, inventoryAudit},
+  {skilledWriter},
 ] = await Promise.all([
   import("@restate-agents/examples/hello"),
   import("@restate-agents/examples/tools"),
@@ -329,6 +367,7 @@ const [
   import("@restate-agents/examples/tool-guardrail"),
   import("@restate-agents/examples/peer-review-rpc"),
   import("@restate-agents/examples/progress-feed"),
+  import("@restate-agents/examples/skills"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -354,6 +393,7 @@ before(
         peerReview,
         progressFeed,
         inventoryAudit,
+        skilledWriter,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -630,3 +670,8 @@ void test(
     assert.deepEqual(await subscriber, {type: "step", step: 1});
   },
 );
+
+void test("19: the agent loads a skill from the folder and reads its file", async () => {
+  const notes = await ingress().client(skilledWriter).write("Release notes for 2.4.0");
+  assert.equal(notes, "## <version> — <date>");
+});
