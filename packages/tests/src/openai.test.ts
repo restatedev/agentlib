@@ -165,6 +165,28 @@ void test("permanent OpenAI errors fail once and replay without HTTP", async () 
   assert.equal(requests, 1);
 });
 
+void test("throttled, conflicting and server-side OpenAI errors stay retryable", async () => {
+  for (const status of [408, 409, 429, 500, 503]) {
+    let requests = 0;
+    const client = new OpenAI({
+      apiKey: "test-only",
+      // Restate owns retries; the client must not hide one.
+      maxRetries: 0,
+      fetch: async () => {
+        requests++;
+        return Response.json({error: {message: `failed with ${status}`}}, {status});
+      },
+    });
+    const a = agent({model: openAIModel({client, model: "test"})});
+    // The harness surfaces a retryable failure instead of retrying it.
+    await assert.rejects(
+      runHandler((ctx) => execute(ctx, a.run("hello"))),
+      new RegExp(`SDK failure.*failed with ${status}`),
+    );
+    assert.equal(requests, 1, `status ${status}`);
+  }
+});
+
 void test(
   "malformed or truncated model responses never execute a tool",
   {timeout: 5000},
