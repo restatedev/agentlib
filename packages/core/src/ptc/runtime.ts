@@ -8,6 +8,7 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import type {CapturedFailure} from "../errors.js";
 import {
+  describeFailure,
   Guest,
   type GuestLimits,
   type Json,
@@ -45,7 +46,7 @@ export function* executeProgram(
         value = state.value;
         break;
       }
-      if (state.status === "rejected") throw new ProgramError(state.error.message);
+      if (state.status === "rejected") throw new ProgramError(describeFailure(state.error));
       if (pending.size === 0) throw new ProgramError("Program is stuck with no pending tool");
 
       // Exactly one completion, followed by a full guest drain. Do not resolve

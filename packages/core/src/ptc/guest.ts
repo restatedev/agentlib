@@ -10,7 +10,7 @@ import {
 } from "quickjs-emscripten-core";
 
 export type Json = null | boolean | number | string | Json[] | {[key: string]: Json};
-type Failure = {name: string; message: string};
+type Failure = {name: string; message: string; stack?: string};
 export type Outcome = {ok: true; value: Json} | {ok: false; error: Failure};
 export type Request = {id: string; name: string; args: Json[]};
 type State =
@@ -41,6 +41,28 @@ function replaceEngine(): void {
 
 /** Only known, deterministic guest failures may become model feedback. */
 export class ProgramError extends Error {}
+
+// Program frames carry this file name; the bridge's own frames are left out.
+const PROGRAM_FILE = "program.js";
+const PROGRAM_PREFIX = "(async (tools) => {";
+
+/** `Name: message` and the frames inside the program, at the model's line and column. */
+export function describeFailure({name, message, stack = ""}: Failure): string {
+  const frames = stack
+    .split("\n")
+    .filter((line) => line.includes(`${PROGRAM_FILE}:`))
+    // The first line starts with the wrapper's prefix.
+    .map((line) =>
+      line
+        .trimEnd()
+        .replace(
+          /program\.js:1:(\d+)/,
+          (_, column: string) =>
+            `${PROGRAM_FILE}:1:${Math.max(1, Number(column) - PROGRAM_PREFIX.length)}`,
+        ),
+    );
+  return [message ? `${name}: ${message}` : name, ...frames].join("\n");
+}
 
 export type GuestLimits = {
   maxInterruptChecks?: number;
@@ -137,14 +159,19 @@ export class Guest {
             remove(id);
             const outcome = parse(encoded);
             if (outcome.ok) p.resolve(outcome.value);
-            else p.reject(new GuestError(outcome.error.message));
+            else {
+              const error = new GuestError(outcome.error.message);
+              error.name = outcome.error.name;
+              p.reject(error);
+            }
           },
           snapshot() { return snapshot; },
           fail(error) {
-            let name = "Error", message = "Unprintable guest error";
+            let name = "Error", message = "Unprintable guest error", stack = "";
             try { name = toString(error?.name ?? "Error"); } catch {}
             try { message = toString(error?.message ?? error); } catch {}
-            snapshot = '{"status":"rejected","error":{"name":' + stringify(name) + ',"message":' + stringify(message) + '}}';
+            try { stack = toString(error?.stack ?? ""); } catch {}
+            snapshot = '{"status":"rejected","error":{"name":' + stringify(name) + ',"message":' + stringify(message) + ',"stack":' + stringify(stack) + '}}';
           }
         };
       })()`);
@@ -164,7 +191,7 @@ export class Guest {
       this.bridge.push(launch);
       // The source is an async function body, so top-level await and return work.
       // The prefix shares its first line, keeping reported line numbers.
-      const program = this.evaluate(`(async (tools) => {${source}\n})`);
+      const program = this.evaluate(`${PROGRAM_PREFIX}${source}\n})`, PROGRAM_FILE);
       try {
         this.checkResult(
           this.vm.callFunction(launch, this.vm.undefined, start, fail, program),
@@ -187,7 +214,13 @@ export class Guest {
     try {
       const value = this.vm.dump(error);
       detail =
-        typeof value?.message === "string" ? value.message : (JSON.stringify(value) ?? detail);
+        typeof value?.message === "string"
+          ? describeFailure({
+              name: String(value.name ?? "Error"),
+              message: value.message,
+              stack: typeof value.stack === "string" ? value.stack : "",
+            })
+          : (JSON.stringify(value) ?? detail);
     } catch {
       /* Error rendering must not replace the original guest failure. */
     } finally {
@@ -206,10 +239,10 @@ export class Guest {
     return result.value;
   }
 
-  private evaluate(code: string): QuickJSHandle {
+  private evaluate(code: string, filename = "bridge.js"): QuickJSHandle {
     // Host/WASM exceptions propagate unchanged; only returned VM errors are
     // classified as deterministic program failures.
-    return this.checkResult(this.vm.evalCode(code));
+    return this.checkResult(this.vm.evalCode(code, filename));
   }
 
   /** Never yield to Node while draining the guest microtask queue. */

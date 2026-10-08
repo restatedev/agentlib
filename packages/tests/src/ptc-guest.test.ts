@@ -221,6 +221,43 @@ void test("catastrophic regex backtracking is stopped by the execution budget", 
   );
 });
 
+void test("a failed program reports its error at the line and column of the source", async () => {
+  const cases: [string, string][] = [
+    [
+      "const a = {};\nconst b = a.missing.field;\nreturn b;",
+      "TypeError: cannot read property 'field' of undefined\n    at <anonymous> (program.js:2:20)",
+    ],
+    // Columns on the first line do not count the wrapper around the source.
+    ["return 1 +;", "SyntaxError: unexpected token in expression: ';'\n    at program.js:1:11"],
+    [
+      "const helper = () => { throw new RangeError('deep'); };\nhelper();",
+      "RangeError: deep\n    at helper (program.js:1:44)\n    at <anonymous> (program.js:2:7)",
+    ],
+  ];
+  for (const [source, expected] of cases) {
+    await assert.rejects(
+      executeProgram(contextWithRun(), source, {}),
+      (error) => error instanceof ProgramError && error.message.endsWith(expected),
+    );
+  }
+});
+
+void test("a failed tool call keeps its error name inside the program", () => {
+  const guest = new Guest(
+    "try { await tools.lookup({}); } catch (error) { return error.name + ': ' + error.message; }",
+    ["lookup"],
+  );
+  try {
+    guest.drain();
+    guest.takeRequests();
+    guest.deliver("call-0", {ok: false, error: {name: "ToolError", message: "no such ticket"}});
+    guest.drain();
+    assert.deepEqual(guest.state(), {status: "fulfilled", value: "ToolError: no such ticket"});
+  } finally {
+    guest.dispose();
+  }
+});
+
 void test("SDK failures are propagated unchanged and never delivered to guest catch handlers", async () => {
   const failure = new Error("simulated SDK failure");
   await assert.rejects(
