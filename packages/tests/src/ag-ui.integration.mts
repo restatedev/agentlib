@@ -10,7 +10,8 @@ import {HttpAgent} from "@ag-ui/client";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import type {Model, ModelResponse} from "@restate-agents/core";
 
-// Status questions look the order up; anything else cancels it.
+// Status questions look the order up, highlighting runs the client's tool,
+// and anything else cancels the order.
 const orders: Model = function* (request): Generator<never, ModelResponse> {
   const last = request.messages.at(-1)!;
   if (last.role === "tool") {
@@ -19,8 +20,10 @@ const orders: Model = function* (request): Generator<never, ModelResponse> {
     const {status} = last.result.output as {status: string};
     return {type: "final", text: `Order O-7 is ${status}.`};
   }
-  const name =
-    last.role === "user" && last.content.includes("status") ? "lookupOrder" : "cancelOrder";
+  const text = last.role === "user" ? last.content : "";
+  let name = "cancelOrder";
+  if (text.includes("status")) name = "lookupOrder";
+  else if (text.includes("Highlight")) name = "highlightOrder";
   // Call IDs stay unique across the thread's turns.
   const turn = request.messages.filter((message) => message.role === "user").length;
   return {type: "tool_calls", calls: [{id: `${name}-${turn}`, name, input: {orderId: "O-7"}}]};
@@ -124,3 +127,82 @@ void test("an answer to an interrupt that is not waiting fails the run", async (
   assert.equal(errors.length, 1);
   assert.match(errors[0]!, /not waiting for an answer/);
 });
+
+const highlightOrder = {
+  name: "highlightOrder",
+  description: "Highlight an order on the page.",
+  parameters: {type: "object", properties: {orderId: {type: "string"}}, required: ["orderId"]},
+};
+
+void test("a client tool ends the run and the next run answers it", {timeout: 30000}, async () => {
+  const agent = client("client-tool", "Highlight order O-7.");
+  const first = await agent.runAgent(
+    {tools: [highlightOrder]},
+    {
+      onRunErrorEvent({event}) {
+        assert.fail(event.message);
+      },
+    },
+  );
+  // The client runs the tool, so the run gives it the call and no result.
+  assert.deepEqual(
+    first.newMessages.map((message) => message.role),
+    ["assistant"],
+  );
+  const [call] = (first.newMessages[0] as {toolCalls: {id: string; function: {name: string}}[]})
+    .toolCalls;
+  assert.equal(call!.function.name, "highlightOrder");
+
+  agent.addMessage({
+    id: crypto.randomUUID(),
+    role: "tool",
+    toolCallId: call!.id,
+    content: JSON.stringify({status: "highlighted"}),
+  });
+  const {newMessages} = await agent.runAgent();
+  assert.equal(newMessages.at(-1)!.content, "Order O-7 is highlighted.");
+  assert.deepEqual(
+    agent.messages.map((message) => message.role),
+    ["user", "assistant", "tool", "assistant"],
+  );
+});
+
+void test("a run without a new message gets the conversation", {timeout: 30000}, async () => {
+  await client("reconnect", "What is the status of order O-7?").runAgent();
+  const fresh = new HttpAgent({url, threadId: "reconnect"});
+  await fresh.runAgent();
+  assert.deepEqual(
+    fresh.messages.map((message) => message.role),
+    ["user", "assistant", "tool", "assistant"],
+  );
+  assert.equal(fresh.messages.at(-1)!.content, "Order O-7 is shipped.");
+});
+
+void test("a reconnect shows an approval that is still open", {timeout: 30000}, async () => {
+  await client("reconnect-approval", "Cancel order O-7.").runAgent();
+  const fresh = new HttpAgent({url, threadId: "reconnect-approval"});
+  await fresh.runAgent();
+  assert.equal(fresh.messages[0]!.content, "Cancel order O-7.");
+  const [interrupt] = fresh.pendingInterrupts;
+  assert.equal(interrupt!.toolCallId, "cancelOrder-1");
+  const {newMessages} = await fresh.runAgent({
+    resume: [{interruptId: interrupt!.id, status: "resolved", payload: {approved: true}}],
+  });
+  assert.equal(newMessages.at(-1)!.content, "Order O-7 is cancelled.");
+});
+
+void test(
+  "a retried message follows its turn instead of starting another",
+  {timeout: 30000},
+  async () => {
+    const agent = client("retry", "What is the status of order O-7?");
+    const [message] = agent.messages;
+    await agent.runAgent();
+    const retry = new HttpAgent({url, threadId: "retry"});
+    retry.addMessage(message!);
+    const {newMessages} = await retry.runAgent();
+    assert.equal(newMessages.at(-1)!.content, "Order O-7 is shipped.");
+    const messages = (await env.stateOf(agUiThread, "retry").get<{role: string}[]>("messages"))!;
+    assert.equal(messages.filter((entry) => entry.role === "user").length, 1);
+  },
+);

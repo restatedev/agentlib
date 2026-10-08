@@ -59,7 +59,8 @@ from the workspace root:
 ```sh
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
-# Optional: export AGENT_MODEL=...
+# Optional: export AGENT_MODEL=...  For example anthropic:claude-sonnet-5-5,
+# with ANTHROPIC_API_KEY; see "Model configuration" below.
 pnpm dev
 ```
 
@@ -461,9 +462,14 @@ curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '"What is a virtual object?"'
 [AG-UI](https://docs.ag-ui.com) is an open protocol between agents and user
 interfaces; CopilotKit is one client. An `AgUiThread` object, one per AG-UI
 thread, runs each turn and appends the AG-UI events of its work to its state.
-`agUiHandler` is AG-UI's HTTP transport: it takes a `RunAgentInput`, sends the
-last user message as a turn, and streams the turn's events as server-sent
-events. [app.ts](src/app.ts) serves it on port 9081.
+`agUiHandler` is AG-UI's HTTP transport: it takes a `RunAgentInput` and streams
+the turn's events as server-sent events. [app.ts](src/app.ts) serves it on port 9081.
+
+A run with a user message last sends it as a turn, once per message ID: a
+retried run, or a client that reconnects with the same messages, follows the
+same turn. A run with no new message reconnects: it gets the conversation as
+`MESSAGES_SNAPSHOT`, then the turn in progress, including an approval that is
+still open.
 
 An approval ends the AG-UI run with an interrupt. The turn waits on a durable
 signal meanwhile, and a run with `resume` answers it
@@ -475,13 +481,22 @@ curl -N localhost:9081 --json '{"threadId":"t1","runId":"r1","messages":[{"id":"
 curl -N localhost:9081 --json '{"threadId":"t1","runId":"r2","messages":[],"resume":[{"interruptId":"<id from the interrupt>","status":"resolved","payload":{"approved":true}}]}'
 ```
 
+The client's `tools`, such as CopilotKit's frontend tools, become tools of the
+turn. The model calls one like any other tool; the run ends with the call, the
+client runs it and starts a run with the result as a `tool` message, which
+resolves the signal the turn waits on.
+
 The handler polls the object's state, which keeps the lesson small. It ignores
-the client's `tools`, `context` and `state`, and reads only the newest user
-message: the object holds the conversation.
+the client's `context` and `state`: the object holds the conversation.
 
 ## Model configuration
 
-[shared.ts](src/shared.ts) configures the example model. `openAIModel` defaults
+[shared.ts](src/shared.ts) configures the example model from `AGENT_MODEL`:
+`anthropic:<model>` (reads `ANTHROPIC_API_KEY`), `bedrock:<model>` (reads the
+AWS credentials), or an OpenAI model, optionally as `openai:<model>`. The
+OpenAI adapter speaks Chat Completions, so with `OPENAI_BASE_URL` it reaches
+compatible servers such as DeepSeek, xAI, OpenRouter, Ollama or vLLM.
+`openAIModel` defaults
 GPT-5.6 function-tool requests to `reasoning_effort: "none"` to avoid the default
 Luna model's Chat Completions tool/reasoning compatibility error. Explicit model
 settings are preserved. Change an agent's `model` field to use another adapter

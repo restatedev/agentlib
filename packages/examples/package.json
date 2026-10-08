@@ -85,6 +85,8 @@
   },
   "dependencies": {
     "@ag-ui/core": "1.0.0",
+    "@ai-sdk/amazon-bedrock": "5.0.20",
+    "@ai-sdk/anthropic": "4.0.14",
     "@restate-agents/core": "workspace:*",
     "@restatedev/restate-sdk": "^1.17.2",
     "@restatedev/restate-sdk-clients": "1.17.2",
