@@ -6,7 +6,7 @@ import {strictSchema} from "../../core/src/strict-schema.js";
 const json = (schema: z.ZodType) =>
   z.toJSONSchema(schema, {io: "input"}) as Record<string, unknown>;
 
-void test("strict schemas close every object and drop value checks strict mode rejects", () => {
+void test("strict schemas close every object and describe value checks strict mode rejects", () => {
   const schema = json(
     z.object({
       city: z.string().min(1).describe("City"),
@@ -17,7 +17,7 @@ void test("strict schemas close every object and drop value checks strict mode r
   assert.deepEqual(strictSchema(schema), {
     type: "object",
     properties: {
-      city: {type: "string", description: "City"},
+      city: {type: "string", description: "City (minLength: 1)"},
       mode: {type: "string", enum: ["fast"]},
       stops: {
         type: "array",
@@ -33,6 +33,21 @@ void test("strict schemas close every object and drop value checks strict mode r
     required: ["city", "mode", "stops"],
     additionalProperties: false,
   });
+});
+
+void test("hints strict mode drops reach the model through the description", () => {
+  const strict = strictSchema(
+    json(
+      z.object({
+        at: z.iso.datetime(),
+        code: z.string().regex(/^[A-Z]{3}$/),
+      }),
+    ),
+  )!;
+  const properties = strict.properties as Record<string, {description?: string}>;
+  assert.match(properties.at!.description!, /format: "date-time"/);
+  assert.match(properties.code!.description!, /pattern: "\^\[A-Z\]\{3\}\$"/);
+  assert.equal("format" in properties.at!, false);
 });
 
 void test("schemas without an exact strict form stay non-strict", () => {
