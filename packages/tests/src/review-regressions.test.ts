@@ -7,6 +7,7 @@ import {
   GuardrailError,
   handoff,
   LazyStateConversation,
+  ModelProtocolError,
   tool,
   type ModelResponse,
 } from "@restate-agents/core";
@@ -148,6 +149,81 @@ void test("root step policies still apply after transferring to a specialist", a
   });
   await assert.rejects(r.execute(context(), a.run("go")), GuardrailError);
   assert.equal(specialistCalled, false);
+});
+
+void test("a batch with two handoffs fails before any of its calls run", async () => {
+  let writes = 0;
+  const specialist = agent({
+    *model() {
+      return final;
+    },
+  });
+  const a = agent({
+    tools: {
+      first: handoff(specialist),
+      second: handoff(specialist),
+      write: tool({
+        description: "write",
+        input: z.object({}),
+        *execute() {
+          writes++;
+          return "ok";
+        },
+      }),
+    },
+    *model() {
+      return {
+        type: "tool_calls",
+        calls: [
+          {id: "write", name: "write", input: {}},
+          {id: "a", name: "first", input: {}},
+          {id: "b", name: "second", input: {}},
+        ],
+      };
+    },
+  });
+  await assert.rejects(r.execute(context(), a.run("go")), ModelProtocolError);
+  assert.equal(writes, 0);
+});
+
+void test("a handoff batched with other calls runs them, then transfers", async () => {
+  let writes = 0;
+  const specialist = agent({
+    *model(request) {
+      // The specialist sees the batch's results.
+      assert.match(JSON.stringify(request.messages), /"written"/);
+      return {type: "final", text: "specialist answer"};
+    },
+  });
+  let steps = 0;
+  const a = agent({
+    tools: {
+      transfer: handoff(specialist),
+      write: tool({
+        description: "write",
+        input: z.object({}),
+        *execute() {
+          writes++;
+          return "written";
+        },
+      }),
+    },
+    *model() {
+      steps++;
+      return {
+        type: "tool_calls",
+        calls: [
+          {id: "write", name: "write", input: {}},
+          {id: "handoff", name: "transfer", input: {}},
+        ],
+      };
+    },
+  });
+  const result = await r.execute(context(), a.run("go"));
+  assert.equal(result.status, "completed");
+  assert.equal(result.output, "specialist answer");
+  assert.equal(writes, 1);
+  assert.equal(steps, 1);
 });
 
 void test("output hooks cannot mutate the runtime's history through their candidate", async () => {
