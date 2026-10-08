@@ -141,11 +141,12 @@ export class RunHistory {
 
   /** The tokens the model's view takes: the last reported input plus an
    * estimate for the events added since, or an estimate of the whole view when
-   * no report applies, because there was none or compaction replaced the view. */
-  viewTokens(): number {
+   * no report applies, because there was none or compaction replaced the view.
+   * A report already counts `overhead`, what a request adds to its messages. */
+  viewTokens(overhead: number): number {
     const {measured} = this;
     if (!measured || measured.mark.from !== (this.view?.from ?? 0))
-      return estimateTokens(this.snapshot());
+      return overhead + estimateTokens(this.snapshot());
     return (
       measured.inputTokens + estimateTokens(this.shown(this.messages.slice(measured.mark.events)))
     );

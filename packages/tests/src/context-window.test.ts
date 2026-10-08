@@ -20,6 +20,7 @@ import {
 import {openAIModel} from "@restate-agents/core/openai";
 import {aiModel} from "@restate-agents/core/provider";
 import {z} from "zod";
+import {estimateTokens} from "../../core/src/context-size.js";
 import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";
 
@@ -679,6 +680,55 @@ void test("contextWindow shrinks a view that would not fit before asking", async
   assert.deepEqual(summarized.events, [
     {type: "compaction", mode: "summary", status: "applied", reason: "window"},
   ]);
+});
+
+void test("contextWindow counts instructions and tools before any usage report", async () => {
+  const compactedAt: number[] = [];
+  let step = 0;
+  const a = agent({
+    instructions: "Be brief.",
+    tools: {
+      // The description alone takes about half of the window.
+      medium: tool({
+        description: "d".repeat(6000),
+        input: z.object({}),
+        *execute() {
+          return "x".repeat(1200);
+        },
+      }),
+    },
+    contextWindow: 6000,
+    maxOutputTokens: 1000,
+    *model() {
+      // No usage: the estimate alone must see that the view no longer fits.
+      return ++step <= 6 ? call(`m${step}`, "medium") : {type: "final", text: "Done"};
+    },
+  });
+  let current = 0;
+  const result = await r.execute(
+    context(),
+    a.run("Go", {
+      *onProgress(event) {
+        if (event.type === "step") current = event.step;
+        if (event.type === "compaction") {
+          assert.equal(event.reason, "window");
+          compactedAt.push(current);
+        }
+      },
+    }),
+  );
+  assert.equal(result.status, "completed");
+  assert.ok(compactedAt.length > 0);
+  // Retained messages leave room for the tools, so a step's compaction lasts
+  // beyond the next step.
+  for (const [i, at] of compactedAt.entries()) if (i > 0) assert.ok(at - compactedAt[i - 1]! > 1);
+});
+
+void test("the estimate counts a token for each non-ASCII character", () => {
+  const tokens = (content: string) => estimateTokens([{role: "user", content}]);
+  assert.ok(tokens("漢".repeat(1000)) >= 1000);
+  assert.ok(tokens("😀".repeat(500)) >= 1000);
+  assert.ok(tokens("a".repeat(1000)) < 300);
 });
 
 void test("contextWindow must leave room for the output", () => {
