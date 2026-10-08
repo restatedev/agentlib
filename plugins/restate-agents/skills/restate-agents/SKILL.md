@@ -49,8 +49,9 @@ apply to agent handlers and tools too.
   https://github.com/restatedev/agentsdk.
 - A model adapter: `openAIModel` (`/openai`, reads `OPENAI_API_KEY`) or any AI
   SDK provider through `aiModel` (`/provider`). See `references/models-and-testing.md`.
-- Serve the handlers with `serve({services, port: 9080})` and register them,
-  as in `restate-gen-sdk`'s `references/running-and-testing.md`.
+- Serve the handlers with `serve({services, port: 9080})` from
+  `@restatedev/restate-sdk` and register them, as in the `restate-gen-sdk`
+  skill.
 
 ## Learning path
 
@@ -99,6 +100,8 @@ Restate journals. Move on only when the learner is ready.
 | Delegate a subtask, keep control                               | `agentTool(subAgent, {description})`                                                      |
 | Hand over the conversation                                     | `handoff(specialist)`                                                                     |
 | Independent, separately retried agents                         | one Restate service per agent, called with `restate.client`                               |
+| A long run outgrows the model's context                        | `toolResults` (on by default), `compaction`, `contextWindow`                              |
+| Tools that depend on the request, such as a UI's own tools     | `run(input, {tools})`                                                                     |
 
 ## Rules to check before finishing
 
@@ -122,4 +125,4 @@ Restate journals. Move on only when the learner is ready.
 - [ ] Approval requests and active-turn IDs stored in state are cleared in a
       `finally`.
 - [ ] Tests use a fixture model (`journaledModel`) against
-      `RestateContainer().alwaysReplay()`. No paid model calls.
+      `RestateContainer().alwaysReplay().disableRetries()`. No paid model calls.

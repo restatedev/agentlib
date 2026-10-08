@@ -47,13 +47,14 @@ export const hello = restate.service({
   handlers: {
     *ask(question: string) {
       const result = yield* assistant.run(question);
-      return result.status === "completed" ? result.output : result.reason;
+      // A stopped or interrupted run may still carry a summary in output.
+      return result.status === "completed" ? result.output : (result.output ?? result.reason);
     },
   },
 });
 ```
 
-This is lesson 01 without its input schema. Each request starts with no
+This is lesson 01 without its input schema, on a fixed OpenAI model. Each request starts with no
 conversation history. Add a [conversation](packages/examples/src/lessons/03_conversation.ts)
 when the agent needs to remember earlier requests, or add
 [tools](packages/examples/src/lessons/02_tools.ts) when it needs to act.
@@ -68,8 +69,9 @@ with live controls. Start a Restate server, for example with
 ```sh
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
-# Optional: export AGENT_MODEL=...  An OpenAI model, or anthropic:<model> or
-# bedrock:<model> with that provider's credentials. Lessons that need other keys say so.
+# Optional: export AGENT_MODEL=...  An OpenAI model (with OPENAI_BASE_URL, one on
+# any Chat Completions server), or anthropic:<model> or bedrock:<model> with that
+# provider's credentials. Lessons that need other keys say so.
 pnpm dev
 ```
 
@@ -134,10 +136,10 @@ repeat a completed model call.
 | Capability                   | API                                                                        | Lesson                                                      |
 | ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Tools with journaled results | `asyncTool`, `tool`                                                        | [02](packages/examples/src/lessons/02_tools.ts)             |
-| Conversation history         | `run(input, {messages})`, `LazyStateConversation`                          | [03](packages/examples/src/lessons/03_conversation.ts), 09  |
+| Conversation history         | `run(input, {messages})`, `run(input, {conversation})`                     | [03](packages/examples/src/lessons/03_conversation.ts), 09  |
 | Typed output                 | `agent({output})`                                                          | [04](packages/examples/src/lessons/04_structured_output.ts) |
 | Human approval               | `needsApproval`, `onApproval`, `humanApprovalTool`                         | [06](packages/examples/src/lessons/06_human_approval.ts)    |
-| Steering and interruption    | `run(input, {steeringSignal, interruptSignal})`                            | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Steering and interruption    | `run(input, {steeringSignal, interruptSignal})` or `{controls}`            | [09](packages/examples/src/lessons/09_support_session.ts)   |
 | Progress events              | `run(input, {onProgress})`, `context.progress`                             | [16](packages/examples/src/lessons/16_progress_feed.ts)     |
 | Handoffs                     | `handoff`                                                                  | —                                                           |
 | Sub-agents as tools          | `agentTool`                                                                | —                                                           |
@@ -145,14 +147,19 @@ repeat a completed model call.
 | Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | —                                                           |
 | Tool search                  | `searchToolsTool`, `deferred: true`                                        | —                                                           |
 | Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
-| MCP                          | `mcpTools` (`/mcp`)                                                        | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
+| MCP                          | `mcpTools` (`/mcp`), passed as `run(input, {tools})`                       | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
 | AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
 | Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
-| Models                       | `openAIModel` (`/openai`), `aiModel` and `modelGateway` (`/provider`)      | [shared.ts](packages/examples/src/shared.ts)                |
+| Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
+| Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
+| Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |
+| Custom model adapters        | `journaledModel`                                                           | —                                                           |
+| Models                       | `openAIModel` (`/openai`), `aiModel`, `modelGateway` (`/provider`)         | [shared.ts](packages/examples/src/shared.ts)                |
 
 Subpaths are imports from `@restate-agents/core`, such as
-`@restate-agents/core/mcp`. `aiModel` accepts an OpenTelemetry `tracer`.
+`@restate-agents/core/mcp`. `aiModel` accepts an OpenTelemetry `tracer`, and
+marks prompt-cache points for Anthropic and Bedrock unless `caching: false`.
 
 Agents run inside Restate's generator SDK. A promise-based entry point existed
 earlier and was removed; [PROMISE_SDK.md](PROMISE_SDK.md) explains how to bring

@@ -15,13 +15,19 @@ export const model = openAIModel({
 });
 ```
 
+`openAIModel` speaks Chat Completions and reads `OPENAI_API_KEY` and
+`OPENAI_BASE_URL`, so it also reaches compatible servers (DeepSeek, xAI,
+OpenRouter, Ollama, vLLM); pass `client` for an `OpenAI` client of your own
+and `settings` for request settings. For `gpt-5.6` models, tool requests
+default to `reasoning_effort: "none"` unless `settings` says otherwise.
+
 Any [AI SDK](https://ai-sdk.dev) provider works through `aiModel`:
 
 ```ts
 import {anthropic} from "@ai-sdk/anthropic";
 import {aiModel} from "@restate-agents/core/provider";
 
-export const model = aiModel({model: anthropic("claude-sonnet-5"), retry: {maxAttempts: 3}});
+export const model = aiModel({model: anthropic("claude-sonnet-5-5"), retry: {maxAttempts: 3}});
 ```
 
 `aiModel` also accepts `providerOptions`, an OpenTelemetry `tracer`, and
@@ -29,12 +35,14 @@ export const model = aiModel({model: anthropic("claude-sonnet-5"), retry: {maxAt
 models: set `model` on each agent.
 
 Prompt caching is on by default. `aiModel` marks the instructions (which
-follow the tools) and the newest message as cache points for Anthropic and
-Bedrock, so each step reads the previous step's prefix from the cache; other
+follow the tools), the newest message, and the message before the newest
+model reply (where the previous request ended) as cache points for Anthropic
+and Bedrock, so each step reads the previous step's prefix from the cache; other
 providers cache prefixes on their own and ignore these options. Pass
 `caching: false` to send none, for example for a Bedrock model without
-prompt caching. Both adapters report `usage` on each response, with
-`cachedInputTokens` for cache reads.
+prompt caching. Both adapters report `usage` when the provider gives counts:
+`inputTokens` includes cached reads and writes, `cachedInputTokens` counts the
+reads, and `cacheWriteInputTokens` the writes (`aiModel` only).
 
 Both adapters send a tool schema in strict mode when it has an exact strict
 form, so the model's arguments always match it: every property is required
@@ -77,7 +85,7 @@ const fixtureModel = journaledModel(async (request): Promise<ModelResponse> => {
 - Build agents from a model you can swap: pass it in, read it from a shared
   module, or mock that module in tests.
 - Start `RestateTestEnvironment` with
-  `container: () => new RestateContainer().alwaysReplay()` (see
+  `container: () => new RestateContainer().alwaysReplay().disableRetries()` (see
   `restate-gen-sdk`'s `running-and-testing.md`), then call the services
   through `@restatedev/restate-sdk-clients`.
 - Assert on observable effects: tools that must run once really run once,
@@ -85,4 +93,4 @@ const fixtureModel = journaledModel(async (request): Promise<ModelResponse> => {
 
 The repository's
 [examples.integration.ts](https://github.com/restatedev/agentsdk/blob/main/packages/tests/src/examples.integration.ts)
-tests every lesson this way.
+tests the lessons this way.

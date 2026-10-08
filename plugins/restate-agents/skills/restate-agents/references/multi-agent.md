@@ -131,7 +131,9 @@ const lead = agent({
 
 - **`agentTool`**: the sub-agent gets the task as a fresh conversation plus
   the parent's `context`. Its answer becomes the tool result. Its approvals
-  and progress flow through the parent. Pass `background: true` to let the
+  and progress flow through the parent. A sub-agent that stops early
+  becomes a tool error with code `agent_stopped` carrying its summary; an
+  interrupted one, a cancelled call. Pass `background: true` to let the
   parent keep working meanwhile.
 - **`handoff`**: after the current tool batch settles, the target agent's
   instructions and tools take over the same run and history. Run-level
