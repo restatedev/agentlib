@@ -785,7 +785,8 @@ for (const scenario of [
         message: "expected terminal failure",
       });
     }
-    if (scenario === "parallel" || scenario === "program") assert.equal(effects.get(scenario), 1);
+    if (scenario === "parallel" || scenario === "program")
+      assert.equal(effects.get(scenario), 1, JSON.stringify(result.result.messages));
     if (scenario === "steering-tools") assert.equal(effects.get(scenario) ?? 0, 0);
     if (scenario === "parallel")
       assert.match(JSON.stringify(result.result.messages), /background-tool-result/);

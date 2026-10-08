@@ -199,7 +199,7 @@ and lifecycle controls.
 
 ## Development
 
-Requires Node.js 22+ and pnpm 12. Integration tests also need Docker.
+Requires Node.js 24+ and pnpm 12. Integration tests also need Docker.
 
 ```sh
 pnpm build             # compile, TypeScript 7 type check, type-aware Oxlint, Oxfmt check
