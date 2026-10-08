@@ -86,9 +86,10 @@ and a failed handler is reported to the model as a tool error. Pass
 Objects and workflows also take a `key`. Configure retries with
 `retryPolicy` on the called handler.
 
-`restateTools({adminUrl, allow})` from `@restate-agents/core/discovery`
-builds tools from every registered handler annotated with the metadata key
-`restate.dev/agent`. Filter the result with `allow`. The result's `targets`
+`yield* restateTools({adminUrl, allow})` from `@restate-agents/core/discovery`
+runs inside a handler and builds tools from every registered handler
+annotated with the metadata key `restate.dev/agent`. Filter them with
+`allow(target, name)`; `token` supplies the admin API's bearer token. The result's `targets`
 maps each tool name to its handler (`service`, `handler`, `keyed`), for
 permissions keyed by `service/handler`.
 
@@ -139,17 +140,19 @@ const docs = yield* mcpTools({
 });
 const result = yield* guide.run(question, {tools: docs.tools});
 
-// Web search through Tavily; results are journaled. Without an API key it uses
-// Tavily's free, rate-limited keyless access.
+// Web search through Tavily; results are journaled. Pass {apiKey}; without one
+// it uses Tavily's free, rate-limited keyless access.
 const researcher = agent({model, tools: {searchWeb: webSearch()}});
 ```
 
 `mcpTools` also takes `token` (a generator returning a bearer token),
-`protocol: "stateful"` for servers that need sessions, and `retry` for tool
-calls (default three attempts; each call sends an `Idempotency-Key`, but a
+`protocol: "stateful"` for servers that need sessions, `timeoutMs` per request
+(default 60000), `onAuthorizationRequired` to wait for fresh credentials, and
+`retry` for tool calls (default three attempts; each call sends an `Idempotency-Key`, but a
 server that ignores it may repeat work). A credential the server echoes back
 is replaced with `[redacted]` before any result or error is journaled. Call
-`close()` when done with a stateful session.
+`close()` when done with a stateful session. A namespace is 1 to 24 letters,
+digits, `_` or `-`; anything else is a terminal error.
 
 Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
 `searchToolsTool`, `programTool`, `webSearch`) accepts `description` and
@@ -162,6 +165,6 @@ Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
 | `deferred: true` on a tool, plus `searchTools: searchToolsTool()` | The tool's schema is hidden until the model searches for it                                                  |
 | `background: true`                                                | The model gets a pending result and keeps working; the real result arrives in a later step                   |
 | `sleepTool()`, `cancelOperationTool()`                            | Let the model wait durably, or cancel a background operation                                                 |
-| `programTool()` (`/program`)                                      | The model writes one JavaScript program that calls several tools (runs in QuickJS; no network or filesystem) |
+| `programTool({tools, limits})` (`/program`)                       | The model writes one JavaScript program that calls several tools (runs in QuickJS; no network or filesystem); `tools` narrows which it may call |
 | `describe` / `context.describe(info)`                             | Display info for UIs, delivered through progress events                                                      |
 | `context.callTool(name, input)`                                   | Call another tool from a tool, under the same policy and budgets                                             |

@@ -101,6 +101,6 @@ tool's output (`afterTool`).
 _Avoid_: Policy, retry policy
 
 **Output policy**:
-A rule that accepts, replaces, or rejects candidate output after inspecting the
-run's facts. It does not decide the run's lifecycle status or rewrite its history.
+A rule (`afterRun`) that accepts, replaces, or rejects candidate output after
+inspecting the run's facts. It does not decide the run's lifecycle status or rewrite its history.
 _Avoid_: Result editor, lifecycle controller

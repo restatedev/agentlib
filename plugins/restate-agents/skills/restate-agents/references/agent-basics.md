@@ -115,6 +115,12 @@ This makes it the place for trusted data.
 
 `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, and
 `maxOutputTokens` bound a run. `maxSteps` is a loop bound, not a retry
-count. Using up `maxSteps` or `maxToolCalls` (default 128, counting calls a
-program makes) stops the run with a summary rather than failing it. Retries
-are configured on the model adapter and on each tool.
+count. Using up `maxSteps` (default 10) or `maxToolCalls` (default 128,
+counting calls a program makes) stops the run with a summary rather than
+failing it. `maxToolDepth` (default 16) bounds nested tool calls,
+`maxOutputTokens` (default 4096) each model reply, and `maxOutputChars`
+(default 128000) the model's text, the final output, and a tool's display
+information and progress; passing it fails the run
+with a terminal `AgentLimitError`. Retries are configured on the model adapter
+and on each tool. For runs that outgrow the model's context, see `toolResults`,
+`compaction` and `contextWindow` in `conversations-and-controls.md`.

@@ -89,10 +89,11 @@ const researcher = agent({
 
 - The size is the input tokens the model reported for its last request plus
   an estimate for messages added since. Before any report, or after a
-  compaction, it is an estimate of the messages alone (about four characters
-  per token for text, two for JSON), not instructions or tool schemas; leave
-  room for them. Both adapters report usage.
-- The newest messages that fit `retainTokens` stay verbatim; a tool call is
+  compaction, it is an estimate of the messages, instructions and tool
+  schemas (about four characters per token for text, two for JSON). Both
+  adapters report usage.
+- The newest messages that fit `retainTokens`, and at most half of what
+  instructions and tools leave of `maxTokens`, stay verbatim; a tool call is
   never separated from its results. The rest become one handoff note, which
   restates the run's input once it is summarized and lists background calls
   still running. A previewed result keeps its ref, so it can still be read.
@@ -104,7 +105,8 @@ const researcher = agent({
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
 that would not fit the window with `maxOutputTokens` is shrunk first:
 summarized when `compaction` is set, truncated otherwise, to
-`compaction.retainTokens` or a quarter of the window, whichever is smaller.
+`compaction.retainTokens` or a quarter of the window, whichever is smaller,
+and at most half of what instructions, tools and `maxOutputTokens` leave.
 
 ```ts
 const researcher = agent({model, tools: {search, fetchPage}, contextWindow: 200000});
@@ -156,7 +158,9 @@ interrupt cancels unfinished tools and child invocations and returns
 `{status: "interrupted", reason, output}`.
 
 To control the run from your own loop instead of signals, pass
-`controls: {steering, interrupt}` with futures. A steering future resolves to
+`controls: {steering, interrupt}`: `steering` is a function that returns the
+next steering future, called again after each message, and `interrupt` is a
+future. A steering future resolves to
 a message string, or to `{message, data}`: `data` comes back on the
 `steering` progress event, so the app can tell which of its messages the run
 accepted.
@@ -184,3 +188,13 @@ Lesson 16 pairs this with a pub/sub object (see `restate-gen-sdk`'s
 `patterns.md`), so clients can `subscribe` and receive each next event.
 Sub-agents started with `agentTool` report their events as progress of the
 parent's tool call.
+
+## Tools for one run
+
+`run(input, {tools})` adds tools to that run only, next to the agent's own.
+They belong to the run, so they survive a handoff. Use them for tools that
+depend on the request: lesson 17 passes the tools of an MCP server, and
+[lesson 18](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/18_ag_ui.ts)
+turns the tools an AG-UI client sends into tools that wait on a durable
+signal until the client returns their result. The name `read_tool_result` is
+reserved while `toolResults` is on.

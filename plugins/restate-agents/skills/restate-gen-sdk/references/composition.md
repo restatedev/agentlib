@@ -119,13 +119,14 @@ yield* restate.client(refundIface).issueRefund({orderId: "O-1", amountCents: 500
 
 `restate.iface.object` and `restate.iface.workflow` work the same way.
 
-- `restate.iface.shared.schemas` marks a handler as shared in the types
-  only. `restate.implement` does not carry the flag over, so the handler
+- `restate.iface.shared.schemas` marks a handler as shared, but
+  `restate.implement` ignores that marker, so the handler
   runs exclusive unless the implementation also sets
   `options: {handlers: {name: {shared: true}}}`.
 - A handler's description goes in `restate.iface.schemas({..., description})`.
-  `restate.implement` carries it to the deployed handler, and `serviceTool`
-  shows it to the model. Plain `restate.schemas` has no `description`; there
+  `restate.implement` carries it to the deployed handler. `serviceTool`
+  shows it to the model when you pass the interface (`serviceTool(refundIface)`);
+  the implemented definition does not keep it. Plain `restate.schemas` has no `description`; there
   it belongs in the options (`options: {handlers: {name: {description}}}`).
 
 ## Scopes

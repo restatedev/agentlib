@@ -51,8 +51,8 @@ invocation themselves. Do not mix in promise-SDK idioms such as
 
 ## Building blocks, in learning order
 
-Introduce concepts one at a time, the way the lessons do. Each step adds one
-idea to a working handler.
+Introduce concepts one at a time. Each step adds one idea to a working
+handler.
 
 | #   | Concept                                          | Core API                                                                              | Reference                               |
 | --- | ------------------------------------------------ | ------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -84,7 +84,9 @@ and human-in-the-loop flows.
 ## Rules to check before finishing
 
 - [ ] Every handler is a generator (`*name()` or `function*`), and every
-      `Future` or `Operation` it uses is consumed with `yield*`.
+      `Future` or `Operation` it uses is consumed with `yield*`, except
+      one-way `sendClient` sends, which dispatch at once; yield those only
+      for the invocation ID.
 - [ ] All non-deterministic work (HTTP, DB, LLM, time, randomness, UUIDs) goes
       through `restate.run`, or through `restate.date()` / `restate.rand()`.
 - [ ] `await` and promises appear only inside a `restate.run(async () => ...)` closure.
@@ -101,7 +103,7 @@ and human-in-the-loop flows.
       uses `iface.shared.*`.
 - [ ] No cycles of exclusive calls between objects (A→B→A on the same key deadlocks).
 - [ ] The service is registered, called once with curl, and covered by a test
-      that uses `alwaysReplay()`.
+      that uses `alwaysReplay().disableRetries()`.
 
 For deployment, server configuration, Kafka, and other operational topics,
 query the bundled `restate-docs` MCP server (https://docs.restate.dev/mcp).

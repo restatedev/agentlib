@@ -443,7 +443,7 @@ The agent's `onProgress` handler sends each event to a `ProgressFeed` object.
 Its shared `subscribe` handler waits for the next event.
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" &
+curl --globoff --request POST "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe" &
 curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit" --json '{"job":"audit-1"}'
 ```
 
@@ -463,7 +463,14 @@ curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '"What is a virtual object?"'
 interfaces; CopilotKit is one client. An `AgUiThread` object, one per AG-UI
 thread, runs each turn and appends the AG-UI events of its work to its state.
 `agUiHandler` is AG-UI's HTTP transport: it takes a `RunAgentInput` and streams
-the turn's events as server-sent events. [app.ts](src/app.ts) serves it on port 9081.
+the turn's events as server-sent events. [app.ts](src/app.ts) serves it on port 9081
+and calls the Restate ingress at `RESTATE_CALL_URL` (default
+`http://localhost:8080`); export it before `pnpm dev` if your server uses a
+scoped call prefix.
+
+A run does the first of these that applies: `resume` answers an approval;
+`tool` messages last answer the client tools the turn waits for; a user
+message last starts a turn; anything else reconnects.
 
 A run with a user message last sends it as a turn, once per message ID: a
 retried run, or a client that reconnects with the same messages, follows the
@@ -579,7 +586,7 @@ bounded author-reviewer exchange. It combines durable RPC, parallel feedback,
 and one explicit revision without extra messaging infrastructure.
 
 `pnpm test:integration` registers these exported services with the official
-`RestateTestEnvironment` and a real `RestateContainer().alwaysReplay()`. Tests
+`RestateTestEnvironment` and a real `RestateContainer().alwaysReplay().disableRetries()`. Tests
 replace the model adapter import with fixture models using Node's module mocking.
 They verify the introductory lessons, approval and denial before effects, rejection of stale decisions,
 conversation isolation, parallel RPC execution, committed effects occurring once,

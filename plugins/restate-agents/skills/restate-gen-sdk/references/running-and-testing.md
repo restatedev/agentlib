@@ -51,7 +51,7 @@ let env: RestateTestEnvironment;
 before(async () => {
   env = await RestateTestEnvironment.start({
     services: [counter],
-    container: () => new RestateContainer().alwaysReplay(),
+    container: () => new RestateContainer().alwaysReplay().disableRetries(),
   });
 });
 after(async () => env?.stop());
