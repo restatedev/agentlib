@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
+import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {agent, searchToolsTool, type Message, type ModelResponse} from "@restate-agents/core";
 import {mcpTools} from "@restate-agents/core/mcp";
@@ -20,6 +20,7 @@ function fixture(
     toolError?: boolean;
     badSchema?: boolean;
     unavailable?: boolean;
+    tooMany?: boolean;
     echo?: "result" | "error";
   } = {},
 ) {
@@ -94,6 +95,13 @@ function fixture(
                   inputSchema: {type: "object", properties: {x: {$ref: "#/definitions/missing"}}},
                 },
               ]
+            : []),
+          ...(config.tooMany
+            ? Array.from({length: 127}, (_, i) => ({
+                name: `extra${i}`,
+                description: "Filler",
+                inputSchema: {type: "object", properties: {}},
+              }))
             : []),
         ],
       };
@@ -173,6 +181,30 @@ for (const echo of ["result", "error"] as const) {
     assert.match(JSON.stringify(output), /\[redacted\]/);
   });
 }
+
+void test("MCP fails once, without retries, when its own checks reject a catalog", async () => {
+  const mock = fixture("stateless", {tooMany: true});
+  const {output} = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        try {
+          yield* mcpTools({
+            url: "https://fixture.test/mcp",
+            namespace: "remote",
+            protocol: "stateless",
+            fetch: mock.fetch,
+          });
+          return "loaded";
+        } catch (error) {
+          return error instanceof TerminalError ? error.message : "retryable";
+        }
+      })(),
+    ),
+  );
+  assert.equal(output, "MCP catalog exceeds 128 tools");
+  assert.equal(mock.seen.filter((x) => x.method === "tools/list").length, 1);
+});
 
 void test("MCP tool calls use the configured retry policy", async () => {
   const mock = fixture("stateless", {unavailable: true});

@@ -145,6 +145,9 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
           } catch (error) {
             if (error instanceof UnauthorizedError || error instanceof InsufficientScopeError)
               return {type: "auth" as const};
+            // Checks of our own, such as the catalog limit, fail the same way every time.
+            if (error instanceof TerminalError)
+              throw new TerminalError(redactText(error.message, token), {errorCode: error.code});
             // A server can echo the credential; it must not reach the journal.
             const message = redactText(String(error), token);
             throw permanent(error) ? new TerminalError(message) : new Error(message);
