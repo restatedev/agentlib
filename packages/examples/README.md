@@ -399,9 +399,8 @@ curl --globoff "$RESTATE_CALL_URL/WebResearch/answer" \
   --json '"Find the current Restate TypeScript SDK docs and cite their URLs."'
 ```
 
-Keep private data out of search queries. The key stays in application code and
-is not part of the model's tool schema. If it is missing, the handler fails with
-a clear setup error before calling the model.
+Keep private data out of search queries. A key, when you pass one, stays in
+application code and is not part of the model's tool schema.
 
 ## 15 — Let agents exchange feedback over RPC
 
