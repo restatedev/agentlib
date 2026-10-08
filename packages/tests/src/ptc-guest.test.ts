@@ -199,6 +199,19 @@ void test("instruction and microtask budgets are terminal even with guest catch 
   );
 });
 
+void test("catastrophic regex backtracking is stopped by the execution budget", async () => {
+  // Without interrupt checks in the regex engine this blocks the process for hours.
+  await assert.rejects(
+    executeProgram(
+      contextWithRun(),
+      `async tools => /(a+)+$/.test("a".repeat(40) + "b")`,
+      {},
+      {maxInterruptChecks: 100},
+    ),
+    (error) => error instanceof ProgramError && /execution budget exceeded/.test(error.message),
+  );
+});
+
 void test("SDK failures are propagated unchanged and never delivered to guest catch handlers", async () => {
   const failure = new Error("simulated SDK failure");
   await assert.rejects(

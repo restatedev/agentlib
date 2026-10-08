@@ -191,8 +191,8 @@ importers:
   packages/core:
     dependencies:
       '@jitl/quickjs-singlefile-cjs-release-sync':
-        specifier: 0.31.0
-        version: 0.31.0
+        specifier: 0.32.0
+        version: 0.32.0
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
@@ -209,8 +209,8 @@ importers:
         specifier: ^7.17.0
         version: 7.17.0(undici@7.29.1)(zod@4.6.5)
       quickjs-emscripten-core:
-        specifier: 0.31.0
-        version: 0.31.0
+        specifier: 0.32.0
+        version: 0.32.0
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -554,11 +554,11 @@ packages:
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
     engines: {node: '>=12'}
 
-  '@jitl/quickjs-ffi-types@0.31.0':
-    resolution: {integrity: sha512-1yrgvXlmXH2oNj3eFTrkwacGJbmM0crwipA3ohCrjv52gBeDaD7PsTvFYinlAnqU8iPME3LGP437yk05a2oejw==}
+  '@jitl/quickjs-ffi-types@0.32.0':
+    resolution: {integrity: sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==}
 
-  '@jitl/quickjs-singlefile-cjs-release-sync@0.31.0':
-    resolution: {integrity: sha512-TQ6WUsmdcdlXQKPyyGE/qNAoWY83mvjn+VNru6ug5ILv1D3Y+yaFXnMx+QyNX0onx9xSRGgVNZxXN0V0U+ZKpQ==}
+  '@jitl/quickjs-singlefile-cjs-release-sync@0.32.0':
+    resolution: {integrity: sha512-NjUUcw26PoeJHND6nmflAH8nIvAJvxJ2qkSPi95wfiBqPim80GtcdWommroiWb8hh1/7fVettEwodAsGt2Mrsg==}
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
@@ -1617,8 +1617,8 @@ packages:
   pump@3.0.4:
     resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
 
-  quickjs-emscripten-core@0.31.0:
-    resolution: {integrity: sha512-oQz8p0SiKDBc1TC7ZBK2fr0GoSHZKA0jZIeXxsnCyCs4y32FStzCW4d1h6E1sE0uHDMbGITbk2zhNaytaoJwXQ==}
+  quickjs-emscripten-core@0.32.0:
+    resolution: {integrity: sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==}
 
   readable-stream@2.3.8:
     resolution: {integrity: sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==}
@@ -2059,11 +2059,11 @@ snapshots:
       wrap-ansi: 8.1.0
       wrap-ansi-cjs: wrap-ansi@7.0.0
 
-  '@jitl/quickjs-ffi-types@0.31.0': {}
+  '@jitl/quickjs-ffi-types@0.32.0': {}
 
-  '@jitl/quickjs-singlefile-cjs-release-sync@0.31.0':
+  '@jitl/quickjs-singlefile-cjs-release-sync@0.32.0':
     dependencies:
-      '@jitl/quickjs-ffi-types': 0.31.0
+      '@jitl/quickjs-ffi-types': 0.32.0
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
@@ -2969,9 +2969,9 @@ snapshots:
       end-of-stream: 1.4.5
       once: 1.4.0
 
-  quickjs-emscripten-core@0.31.0:
+  quickjs-emscripten-core@0.32.0:
     dependencies:
-      '@jitl/quickjs-ffi-types': 0.31.0
+      '@jitl/quickjs-ffi-types': 0.32.0
 
   readable-stream@2.3.8:
     dependencies:
