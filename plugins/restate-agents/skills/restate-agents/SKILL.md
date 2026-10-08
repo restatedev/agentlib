@@ -77,7 +77,7 @@ Follow the same order when teaching or when growing an agent step by step.
 | 15  | Agents reviewing each other over RPC | typed services per role                                      | `references/multi-agent.md`                |
 | 16  | Stream progress to subscribers       | `onProgress`, `context.progress`                             | `references/conversations-and-controls.md` |
 | 17  | Tools from an MCP server             | `mcpTools` (`/mcp`)                                          | `references/tools.md`                      |
-| 18  | Serve an agent to AG-UI clients      | `onProgress`, `onApproval` as AG-UI events and interrupts    | `references/conversations-and-controls.md` |
+| 18  | Serve an agent to AG-UI clients      | `onProgress`, `onApproval`, client-run tools as AG-UI events | `references/conversations-and-controls.md` |
 
 **When teaching:** go one row at a time. Show the smallest code that adds
 the new concept to the previous step, run it with curl, and explain what

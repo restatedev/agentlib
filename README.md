@@ -68,7 +68,8 @@ with live controls. Start a Restate server, for example with
 ```sh
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
-# Optional: export AGENT_MODEL=...  Lessons that need other keys say so.
+# Optional: export AGENT_MODEL=...  An OpenAI model, or anthropic:<model> or
+# bedrock:<model> with that provider's credentials. Lessons that need other keys say so.
 pnpm dev
 ```
 
@@ -145,7 +146,7 @@ repeat a completed model call.
 | Tool search                  | `searchToolsTool`, `deferred: true`                                        | —                                                           |
 | Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
 | MCP                          | `mcpTools` (`/mcp`)                                                        | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
-| AG-UI clients                | `onProgress` and `onApproval` as AG-UI events and interrupts               | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
+| AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
 | Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Models                       | `openAIModel` (`/openai`), `aiModel` and `modelGateway` (`/provider`)      | [shared.ts](packages/examples/src/shared.ts)                |
