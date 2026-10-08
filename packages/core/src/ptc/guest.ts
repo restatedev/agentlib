@@ -20,7 +20,24 @@ type State =
 
 // Embedded WASM also works in the endpoint's single-file esbuild deployment.
 // Initialization failures fail startup, never become model observations.
-const engine = await newQuickJSWASMModuleFromVariant(variant.default);
+const load = () => newQuickJSWASMModuleFromVariant(variant.default);
+let engine = await load();
+let reloading = false;
+
+/** A runtime whose disposal aborted keeps its memory inside the WASM module.
+ * Later guests move to a fresh module, so the old one can be collected. */
+function replaceEngine(): void {
+  if (reloading) return;
+  reloading = true;
+  load().then(
+    (fresh) => {
+      engine = fresh;
+      reloading = false;
+    },
+    // The current module still works; a later abort tries again.
+    () => (reloading = false),
+  );
+}
 
 /** Only known, deterministic guest failures may become model feedback. */
 export class ProgramError extends Error {}
@@ -230,9 +247,15 @@ export class Guest {
     }
   }
 
+  /** Never throws: QuickJS can abort while freeing a runtime that leaked
+   * objects, and that must not replace the program's outcome or skip cleanup. */
   dispose(): void {
-    for (const handle of this.bridge) handle.dispose();
-    this.vm.dispose();
-    this.rt.dispose();
+    try {
+      for (const handle of this.bridge) handle.dispose();
+      this.vm.dispose();
+      this.rt.dispose();
+    } catch {
+      replaceEngine();
+    }
   }
 }

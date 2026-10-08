@@ -199,6 +199,20 @@ void test("instruction and microtask budgets are terminal even with guest catch 
   );
 });
 
+void test("a QuickJS abort while disposing the guest keeps the program's result", async () => {
+  // This program leaves objects behind in QuickJS, so freeing its runtime aborts.
+  const source = `async tools => {
+    const values = [];
+    for (let i = 0; i < 300000; i++) values.push(i);
+    values.sort();
+    return values.length;
+  }`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.equal(await executeProgram(contextWithRun(), source, {}), 300000);
+  }
+  assert.equal(await executeProgram(contextWithRun(), "async tools => 1", {}), 1);
+});
+
 void test("catastrophic regex backtracking is stopped by the execution budget", async () => {
   // Without interrupt checks in the regex engine this blocks the process for hours.
   await assert.rejects(
