@@ -170,33 +170,55 @@ void test(
   {timeout: 5000},
   async () => {
     const validCall = {id: "one", type: "function", function: {name: "write", arguments: "{}"}};
-    const cases = [
-      {choices: []},
-      {
-        choices: [
-          {finish_reason: "length", message: {content: "Partial", tool_calls: [validCall]}},
-        ],
-      },
-      {choices: [{finish_reason: "content_filter", message: {content: "Partial"}}]},
-      {
-        choices: [
-          {
-            finish_reason: "tool_calls",
-            message: {tool_calls: [{...validCall, function: {name: "write", arguments: "{"}}]},
-          },
-        ],
-      },
-      {choices: [{finish_reason: "tool_calls", message: {tool_calls: []}}]},
-      {
-        choices: [
-          {finish_reason: "tool_calls", message: {tool_calls: [{type: "custom", id: "one"}]}},
-        ],
-      },
-      {choices: [{finish_reason: "stop", message: {refusal: "Cannot help"}}]},
-      {choices: [{finish_reason: "stop", message: {content: ""}}]},
+    // Each case fails its own protocol check, not some unrelated error.
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{choices: []}, /Incomplete model response: no choices/],
+      [
+        {
+          choices: [
+            {finish_reason: "length", message: {content: "Partial", tool_calls: [validCall]}},
+          ],
+        },
+        /Incomplete model response: length/,
+      ],
+      [
+        {choices: [{finish_reason: "content_filter", message: {content: "Partial"}}]},
+        /Incomplete model response: content_filter/,
+      ],
+      [
+        {
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {tool_calls: [{...validCall, function: {name: "write", arguments: "{"}}]},
+            },
+          ],
+        },
+        /Invalid JSON arguments for tool write/,
+      ],
+      [
+        {choices: [{finish_reason: "tool_calls", message: {tool_calls: []}}]},
+        /Model indicated tool calls but returned none/,
+      ],
+      [
+        {
+          choices: [
+            {finish_reason: "tool_calls", message: {tool_calls: [{type: "custom", id: "one"}]}},
+          ],
+        },
+        /Unsupported model tool-call type/,
+      ],
+      [
+        {choices: [{finish_reason: "stop", message: {refusal: "Cannot help"}}]},
+        /Model refused the request: Cannot help/,
+      ],
+      [
+        {choices: [{finish_reason: "stop", message: {content: ""}}]},
+        /Model returned an invalid response/,
+      ],
     ];
     let writes = 0;
-    for (const response of cases) {
+    for (const [response, expected] of cases) {
       let requests = 0;
       const client = new OpenAI({
         apiKey: "test-only",
@@ -232,7 +254,7 @@ void test(
         }
       };
       const live = await runHandler(handler);
-      assert.equal(typeof live.output.error, "string");
+      assert.match(live.output.error, expected);
       assert.equal(
         requests,
         1,
