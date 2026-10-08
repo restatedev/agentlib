@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {serviceTool} from "@restate-agents/core";
+import {serviceTool, ToolError} from "@restate-agents/core";
+import {testContext} from "./helpers.js";
 
 const refund = r.iface.service(
   "Refund",
@@ -36,6 +37,16 @@ void test("bare interface -> one multiplexed tool that selects any handler", () 
   // The description lists the handlers and their contract descriptions.
   assert.match(tool.description, /Invoke a handler of the "Refund" service/);
   assert.match(tool.description, /- process: Process a refund for an order/);
+});
+
+void test("a multiplexed tool rejects names that are not handlers", async () => {
+  const tool = serviceTool(refund);
+  for (const handler of ["toString", "constructor", "__proto__", "missing"]) {
+    await assert.rejects(
+      r.execute(testContext(), tool.execute({handler}, {} as Parameters<typeof tool.execute>[1])),
+      (error) => error instanceof ToolError && error.code === "invalid_input",
+    );
+  }
 });
 
 void test("scoped to one handler -> the handler's own description and schema", () => {
