@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import OpenAI from "openai";
 import type {ChatCompletionAssistantMessageParam} from "openai/resources/chat/completions";
-import {execute} from "@restatedev/restate-sdk-gen";
+import {execute, run, spawn} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {agent, tool, type ToolManifest} from "@restate-agents/core";
 import {openAIModel} from "@restate-agents/core/openai";
@@ -163,6 +163,41 @@ void test("permanent OpenAI errors fail once and replay without HTTP", async () 
   const replay = await runHandler(handler, {replay: live.journal});
   assert.deepEqual(replay.output, live.output);
   assert.equal(requests, 1);
+});
+
+void test("interrupting a run aborts the model request in flight", async () => {
+  let started!: () => void;
+  const requested = new Promise<void>((resolve) => (started = resolve));
+  let aborted = false;
+  const client = new OpenAI({
+    apiKey: "test-only",
+    maxRetries: 0,
+    fetch: (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        // Fail rather than hang when the request is never aborted.
+        const timer = setTimeout(() => reject(new Error("request was not aborted")), 2000);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          aborted = true;
+          reject(init.signal!.reason);
+        });
+        started();
+      }),
+  });
+  const a = agent({model: openAIModel({client, model: "test"}), finalize: false});
+  const {output} = await runHandler((ctx) =>
+    execute(
+      ctx,
+      (function* () {
+        // A journaled step stands in for the user: it interrupts once the request is out.
+        const interrupt = spawn(run(async () => (await requested, "Stop"), {name: "user"}));
+        const result = yield* a.run("hello", {controls: {interrupt}});
+        return result.status;
+      })(),
+    ),
+  );
+  assert.equal(output, "interrupted");
+  assert.equal(aborted, true);
 });
 
 void test("throttled, conflicting and server-side OpenAI errors stay retryable", async () => {
