@@ -730,6 +730,40 @@ void test("a spent tool-call budget stops the run with a summary instead of fail
   assert.equal(JSON.stringify(result.messages).includes('"c"'), false);
 });
 
+void test("a nested call that spends the tool-call budget stops the run instead of failing it", async () => {
+  let step = 0;
+  const a = agent({
+    maxToolCalls: 2,
+    finalize: function* () {
+      return {type: "final", text: "Stopped early."};
+    },
+    tools: {
+      leaf: tool({
+        ...base,
+        *execute() {
+          return "ok";
+        },
+      }),
+      parent: tool({
+        ...base,
+        *execute(_input, context) {
+          yield* context.callTool("leaf", {});
+          return yield* context.callTool("leaf", {});
+        },
+      }),
+    },
+    *model() {
+      if (++step === 1) return batch(call("parent"));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status === "stopped" && result.reason, "max_tool_calls");
+  assert.equal(result.output, "Stopped early.");
+  const parent = result.messages.find((m) => m.role === "tool" && m.callId === "parent");
+  assert.equal(parent?.role === "tool" && parent.result.status, "cancelled");
+});
+
 void test("a tool fails the whole run with RunFailedError", async () => {
   const a = agent({
     tools: {
