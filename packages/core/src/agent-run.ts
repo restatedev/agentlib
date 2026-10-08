@@ -429,10 +429,7 @@ class AgentRun<C, O> {
     const update = steeringUpdate.safeParse(typeof value === "string" ? {message: value} : value);
     if (!update.success) throw new TypeError("Steering must be a nonempty message");
     const {message} = update.data;
-    this.history.append({
-      role: "user",
-      content: JSON.stringify({source: "agent-runtime", type: "steering", message}),
-    });
+    this.history.appendSteering(message);
     // A steering future only exists when its source does.
     this.steering = this.steeringSource!();
     return update.data;

@@ -43,6 +43,8 @@ function modelTranscript(events: readonly Message[]): Message[] {
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
   private readonly provisional = new Set<Message>();
+  /** Steering notes and their messages, so a truncation can restate what it drops. */
+  private readonly steering = new WeakMap<Message, string>();
   /** Set by in-run compaction: the model sees `note` instead of the events before `from`. */
   private view: {from: number; note: NoteMessage} | undefined;
   /** Index of this run's input message among the events. */
@@ -173,6 +175,24 @@ export class RunHistory {
 
   append(...messages: Message[]): void {
     this.messages.push(...messages);
+  }
+
+  /** Records a steering update as a runtime note the model sees in order. */
+  appendSteering(message: string): void {
+    const note: Message = {
+      role: "user",
+      content: JSON.stringify({source: "agent-runtime", type: "steering", message}),
+    };
+    this.steering.set(note, message);
+    this.messages.push(note);
+  }
+
+  /** The steering messages among `events`, oldest first. */
+  steeringIn(events: readonly Message[]): string[] {
+    return events.flatMap((event) => {
+      const message = this.steering.get(event);
+      return message === undefined ? [] : [message];
+    });
   }
 
   /** Model-visible for the rest of the run, but never saved or returned. */
