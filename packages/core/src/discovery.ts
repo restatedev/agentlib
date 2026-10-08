@@ -1,5 +1,6 @@
 import {call, run, serde, type Operation} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
+import {nestedSchema} from "./nested-schema.js";
 import {awaitChild, tool} from "./tool.js";
 import type {JsonValue, Tool} from "./types.js";
 
@@ -33,22 +34,6 @@ const servicesSchema = z.object({
     }),
   ),
 });
-function nestedSchema(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(nestedSchema);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => {
-      if (
-        (key === "$ref" || key === "$dynamicRef") &&
-        typeof child === "string" &&
-        child.startsWith("#")
-      ) {
-        return [key, `#/properties/input${child.slice(1)}`];
-      }
-      return [key, nestedSchema(child)];
-    }),
-  );
-}
 /** The model-facing schema: an optional object key plus the handler's input. */
 function inputSchema(raw: unknown, target: RestateToolTarget) {
   const properties: Record<string, unknown> = {};
@@ -58,7 +43,7 @@ function inputSchema(raw: unknown, target: RestateToolTarget) {
     required.push("key");
   }
   if (target.acceptsInput) {
-    properties.input = nestedSchema(raw);
+    properties.input = nestedSchema(raw, "input");
     required.push("input");
   }
   return {type: "object", properties, required, additionalProperties: false};

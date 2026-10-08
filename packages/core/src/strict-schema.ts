@@ -1,8 +1,9 @@
 // OpenAI's strict mode guarantees that tool arguments and structured output
 // match their schema, but it accepts only a subset of JSON Schema: every
 // object closes with additionalProperties false and requires all of its
-// properties. Value checks outside that subset are dropped from what the model
-// sees; the SDK still validates every call against the original schema.
+// properties. Value checks outside that subset move into the description, so
+// the model still sees them; the SDK validates every call against the
+// original schema.
 
 type Schema = Record<string, unknown>;
 
@@ -33,16 +34,12 @@ const DROPPED = new Set([
   "$id",
   "$comment",
   "title",
-  "default",
-  "examples",
   "deprecated",
   "readOnly",
   "writeOnly",
-  "minLength",
-  "maxLength",
-  "pattern",
-  "format",
 ]);
+/** Hints strict mode rejects as keywords; they are described instead. */
+const DESCRIBED = new Set(["format", "pattern", "minLength", "maxLength", "default", "examples"]);
 const MAX_OBJECT_DEPTH = 10;
 
 class NotStrict extends Error {}
@@ -54,10 +51,19 @@ function isSchema(value: unknown): value is Schema {
 function convert(node: unknown, depth: number): Schema {
   if (!isSchema(node)) throw new NotStrict();
   const out: Schema = {};
+  const hints: string[] = [];
   for (const [key, value] of Object.entries(node)) {
     if (DROPPED.has(key)) continue;
+    if (DESCRIBED.has(key)) {
+      hints.push(`${key}: ${JSON.stringify(value)}`);
+      continue;
+    }
     if (!STRUCTURE.has(key)) throw new NotStrict();
     out[key] = value;
+  }
+  if (hints.length) {
+    const text = hints.join("; ");
+    out.description = typeof out.description === "string" ? `${out.description} (${text})` : text;
   }
   // An exact enum is equivalent and more widely accepted than const.
   if ("const" in out) {

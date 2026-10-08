@@ -179,6 +179,67 @@ void test("a failed summary falls back to truncation and is not retried", async 
   assert.equal(result.messages.filter((m) => m.role === "tool").length, 7);
 });
 
+void test("truncation keeps an earlier summary instead of discarding it", async () => {
+  const views: Message[][] = [];
+  let summaries = 0;
+  const a = agent({
+    tools: {read},
+    *model(request) {
+      views.push(structuredClone(request.messages));
+      return views.length <= 7 ? reads(`r${views.length}`) : {type: "final", text: "Done"};
+    },
+    compaction: {
+      ...compaction,
+      *model() {
+        if (++summaries > 1) throw new Error("compactor down");
+        return {type: "final", text: "read pages 1-3"};
+      },
+    },
+  });
+  const result = await r.execute(context(), a.run("Go"));
+  assert.equal(result.status, "completed");
+  const truncated = JSON.parse((views.at(-1)![0] as {content: string}).content);
+  assert.equal(truncated.type, "context-truncated");
+  assert.equal(truncated.handoff, "read pages 1-3");
+});
+
+void test("truncation restates the steering it drops", async () => {
+  const views: Message[][] = [];
+  await r.execute(
+    context(),
+    (function* () {
+      const change = r.channel<string>(),
+        never = r.channel<string>();
+      let listens = 0;
+      const a = agent({
+        tools: {read},
+        *model(request) {
+          views.push(structuredClone(request.messages));
+          if (views.length === 1) yield* change.send("Write about Y instead");
+          return views.length <= 8 ? reads(`r${views.length}`) : {type: "final", text: "Done"};
+        },
+        compaction: {
+          ...compaction,
+          *model() {
+            throw new Error("compactor down");
+          },
+        },
+      });
+      const result = yield* a.run("Write about X", {
+        controls: {steering: () => (listens++ === 0 ? change.receive : never.receive)},
+      });
+      assert.equal(result.status, "completed");
+    })(),
+  );
+  const last = views.at(-1)!;
+  const truncated = JSON.parse((last[0] as {content: string}).content);
+  assert.equal(truncated.type, "context-truncated");
+  assert.equal(truncated.request, "Write about X");
+  assert.deepEqual(truncated.steering, ["Write about Y instead"]);
+  // The update is restated once, not also kept verbatim.
+  assert.equal(JSON.stringify(last.slice(1)).includes("Write about Y"), false);
+});
+
 void test("a stopped run finalizes from the compacted view", async () => {
   let finalized: readonly Message[] = [];
   let step = 0;

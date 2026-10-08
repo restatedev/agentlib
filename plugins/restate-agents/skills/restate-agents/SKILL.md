@@ -69,7 +69,7 @@ Follow the same order when teaching or when growing an agent step by step.
 | 07  | Race two agents                      | `restate.spawn`, `restate.any`                               | `references/multi-agent.md`                |
 | 08  | Parallel workers over RPC            | `restate.all` of `restate.client` calls                      | `references/multi-agent.md`                |
 | 09  | Steer and interrupt a running turn   | `LazyStateConversation`, `steeringSignal`, `interruptSignal` | `references/conversations-and-controls.md` |
-| 10  | A Restate service as a tool          | `serviceTool`, `handlerTool`                                 | `references/tools.md`                      |
+| 10  | A Restate service as a tool          | `serviceTool`                                                | `references/tools.md`                      |
 | 11  | Tools backed by a sandbox            | run `context`, `asyncTool`                                   | `references/tools.md`                      |
 | 12  | Route to a specialist                | structured-output router                                     | `references/multi-agent.md`                |
 | 13  | Enforce a policy before an action    | tool `before`, agent guardrails                              | `references/approvals-and-guardrails.md`   |
@@ -77,6 +77,7 @@ Follow the same order when teaching or when growing an agent step by step.
 | 15  | Agents reviewing each other over RPC | typed services per role                                      | `references/multi-agent.md`                |
 | 16  | Stream progress to subscribers       | `onProgress`, `context.progress`                             | `references/conversations-and-controls.md` |
 | 17  | Tools from an MCP server             | `mcpTools` (`/mcp`)                                          | `references/tools.md`                      |
+| 18  | Serve an agent to AG-UI clients      | `onProgress`, `onApproval` as AG-UI events and interrupts    | `references/conversations-and-controls.md` |
 
 **When teaching:** go one row at a time. Show the smallest code that adds
 the new concept to the previous step, run it with curl, and explain what

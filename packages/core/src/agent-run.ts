@@ -25,7 +25,7 @@ import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {summarizeContext, truncateContext} from "./context-compaction.js";
-import {estimateTokens} from "./context-size.js";
+import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
 import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
 import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
 import type {
@@ -103,6 +103,8 @@ class AgentRun<C, O> {
   private interrupt: Future<string> | undefined;
   /** Set once a summary failed; the run truncates from then on. */
   private compactionFailed = false;
+  /** The instructions of the last request, which a function may compute. */
+  private instructions: string | undefined;
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
   private readonly context: RunContext<C>;
@@ -236,19 +238,26 @@ class AgentRun<C, O> {
   private *compactContext(overflow = false): Operation<boolean> {
     const {compaction: settings, contextWindow, maxOutputTokens} = this.config;
     const retain = (limit: number) => Math.min(settings?.retainTokens ?? limit, limit);
+    const overhead = this.requestOverhead();
+    // Retained messages share a limit with instructions and tools; keeping
+    // them to half of what remains leaves room for the note and the next step,
+    // so the following step does not compact again.
+    const room = (limit: number) => Math.max(1, Math.floor((limit - overhead) / 2));
     let reason: "threshold" | "window" | "overflow";
     let retainTokens: number;
     if (overflow) {
       reason = "overflow";
       retainTokens = retain(Math.floor(estimateTokens(this.history.snapshot()) / 2));
     } else {
-      const tokens = this.history.viewTokens();
+      const tokens = this.history.viewTokens(overhead);
       if (settings && tokens > settings.maxTokens) {
         reason = "threshold";
-        retainTokens = settings.retainTokens;
+        retainTokens = Math.min(settings.retainTokens, room(settings.maxTokens));
       } else if (contextWindow && tokens + maxOutputTokens > contextWindow) {
         reason = "window";
-        retainTokens = retain(Math.floor(contextWindow / 4));
+        retainTokens = retain(
+          Math.min(Math.floor(contextWindow / 4), room(contextWindow - maxOutputTokens)),
+        );
       } else return false;
     }
     const pending = this.tools.pendingCalls();
@@ -275,6 +284,14 @@ class AgentRun<C, O> {
     if (!truncateContext(this.history, retainTokens, pending)) return false;
     yield* this.emit({type: "compaction", mode: "truncate", status: "applied", reason});
     return true;
+  }
+
+  /** Estimated tokens a request adds to its messages: instructions and tools.
+   * Instructions a function computes count once a request has used them. */
+  private requestOverhead(): number {
+    const {instructions} = this.active;
+    const text = typeof instructions === "string" ? instructions : (this.instructions ?? "");
+    return textTokens(text) + jsonTokens(JSON.stringify(this.catalog.visibleManifests()));
   }
 
   /** Tools that belong to the run rather than an agent, so they survive a handoff. */
@@ -329,6 +346,7 @@ class AgentRun<C, O> {
         .visibleManifests()
         .filter((manifest) => manifest.name !== READ_TOOL || this.history.hasPreviews()),
     };
+    this.instructions = request.instructions;
     // The root's policy applies to every step; a handoff target adds its own.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
       if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));
@@ -429,10 +447,7 @@ class AgentRun<C, O> {
     const update = steeringUpdate.safeParse(typeof value === "string" ? {message: value} : value);
     if (!update.success) throw new TypeError("Steering must be a nonempty message");
     const {message} = update.data;
-    this.history.append({
-      role: "user",
-      content: JSON.stringify({source: "agent-runtime", type: "steering", message}),
-    });
+    this.history.appendSteering(message);
     // A steering future only exists when its source does.
     this.steering = this.steeringSource!();
     return update.data;

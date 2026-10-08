@@ -16,7 +16,8 @@
     },
     "test:integration": {
       "dependsOn": ["^compile"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["DOCKER_*", "TESTCONTAINERS_*"]
     },
     "//#lint": {
       "dependsOn": ["@restate-agents/core#compile", "@restate-agents/examples#compile"],

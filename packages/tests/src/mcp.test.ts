@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
+import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {agent, searchToolsTool, type Message, type ModelResponse} from "@restate-agents/core";
 import {mcpTools} from "@restate-agents/core/mcp";
@@ -20,6 +20,8 @@ function fixture(
     toolError?: boolean;
     badSchema?: boolean;
     unavailable?: boolean;
+    tooMany?: boolean;
+    bigResult?: boolean;
     echo?: "result" | "error";
   } = {},
 ) {
@@ -95,13 +97,19 @@ function fixture(
                 },
               ]
             : []),
+          ...(config.tooMany
+            ? Array.from({length: 127}, (_, i) => ({
+                name: `extra${i}`,
+                description: "Filler",
+                inputSchema: {type: "object", properties: {}},
+              }))
+            : []),
         ],
       };
     else if (message.method === "tools/call") {
-      const found =
-        config.echo === "result"
-          ? `found with ${headers.get("authorization")}`
-          : `found ${message.params.arguments.id}`;
+      let found = `found ${message.params.arguments.id}`;
+      if (config.echo === "result") found = `found with ${headers.get("authorization")}`;
+      if (config.bigResult) found = "x".repeat(130000);
       result = {content: [{type: "text", text: found}]};
       if (config.toolError) result.isError = true;
       else result.structuredContent = {found: message.params.arguments.id};
@@ -173,6 +181,119 @@ for (const echo of ["result", "error"] as const) {
     assert.match(JSON.stringify(output), /\[redacted\]/);
   });
 }
+
+void test("MCP fails once, without retries, when its own checks reject a catalog", async () => {
+  const mock = fixture("stateless", {tooMany: true});
+  const {output} = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        try {
+          yield* mcpTools({
+            url: "https://fixture.test/mcp",
+            namespace: "remote",
+            protocol: "stateless",
+            fetch: mock.fetch,
+          });
+          return "loaded";
+        } catch (error) {
+          return error instanceof TerminalError ? error.message : "retryable";
+        }
+      })(),
+    ),
+  );
+  assert.equal(output, "MCP catalog exceeds 128 tools");
+  assert.equal(mock.seen.filter((x) => x.method === "tools/list").length, 1);
+});
+
+/** Runs one remote_lookup call and returns the result the model saw. */
+async function lookupResult(mock: ReturnType<typeof fixture>) {
+  const {output} = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        const mcp = yield* mcpTools({
+          url: "https://fixture.test/mcp",
+          namespace: "remote",
+          protocol: "stateless",
+          fetch: mock.fetch,
+          deferred: false,
+        });
+        let seen: unknown;
+        const a = agent({
+          tools: mcp.tools,
+          *model(req): r.Operation<ModelResponse> {
+            const result = req.messages.find((m) => m.role === "tool");
+            if (!result)
+              return {
+                type: "tool_calls",
+                calls: [{id: "lookup-1", name: "remote_lookup", input: {id: "42"}}],
+              };
+            seen = result.result;
+            return {type: "final", text: "done"};
+          },
+        });
+        yield* a.run("find it");
+        return seen;
+      })(),
+    ),
+  );
+  return output as {status: string; code: string; message: string};
+}
+
+void test("an MCP tool error reaches the model as a tool error, without retries", async () => {
+  const mock = fixture("stateless", {toolError: true});
+  const result = await lookupResult(mock);
+  assert.equal(result.status, "error");
+  assert.equal(result.code, "tool_error");
+  assert.match(result.message, /found 42/);
+  assert.equal(mock.seen.filter((x) => x.method === "tools/call").length, 1);
+});
+
+void test("an oversized MCP result reaches the model as an output-limit error", async () => {
+  const result = await lookupResult(fixture("stateless", {bigResult: true}));
+  assert.equal(result.status, "error");
+  assert.equal(result.code, "output_limit");
+});
+
+void test("MCP authorization fails terminally without a refresh, or when refreshing does not help", async () => {
+  for (const refresh of [false, true]) {
+    const mock = fixture("stateless", {unauthorized: true});
+    let refreshes = 0;
+    const {output} = await runHandler((ctx: Context) =>
+      r.execute(
+        ctx,
+        (function* () {
+          try {
+            yield* mcpTools({
+              url: "https://fixture.test/mcp",
+              namespace: "remote",
+              protocol: "stateless",
+              fetch: mock.fetch,
+              *token() {
+                return "old";
+              },
+              ...(refresh
+                ? {
+                    *onAuthorizationRequired() {
+                      refreshes++;
+                    },
+                  }
+                : {}),
+            });
+            return "loaded";
+          } catch (error) {
+            return error instanceof TerminalError ? error.message : "retryable";
+          }
+        })(),
+      ),
+    );
+    if (refresh) {
+      assert.equal(output, "MCP authorization failed after three attempts");
+      assert.equal(refreshes, 2);
+    } else assert.equal(output, "MCP authorization required");
+  }
+});
 
 void test("MCP tool calls use the configured retry policy", async () => {
   const mock = fixture("stateless", {unavailable: true});

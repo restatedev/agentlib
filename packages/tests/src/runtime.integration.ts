@@ -15,6 +15,7 @@ import {
   LazyStateConversation,
   sleepTool,
   tool,
+  type JsonValue,
   type ModelResponse,
   type ToolCall,
   type Conversation,
@@ -590,6 +591,34 @@ const refundService = r.implement(refundIface, {
     },
   },
 });
+// A keyed contract: one handler resolves its key from the input, one takes a scalar.
+const counterIface = r.iface.object("ServiceToolCounter", {
+  add: r.iface.schemas({
+    input: z.object({counter: z.string(), amount: z.number()}),
+    output: z.number(),
+  }),
+  bump: r.iface.schemas({input: z.number(), output: z.number()}),
+  total: r.iface.json<void, number>(),
+});
+function* addToTotal(amount: number) {
+  const total = ((yield* r.state().get<number>("total")) ?? 0) + amount;
+  r.state().set("total", total);
+  return total;
+}
+const counterService = r.implement(counterIface, {
+  handlers: {
+    *add({amount}) {
+      return yield* addToTotal(amount);
+    },
+    *bump(amount) {
+      return yield* addToTotal(amount);
+    },
+    *total() {
+      return (yield* r.state().get<number>("total")) ?? 0;
+    },
+  },
+});
+const counterOf = (input: JsonValue) => (input as {counter: string}).counter;
 const serviceToolHarness = r.service({
   name: "ServiceToolHarness",
   handlers: {
@@ -615,6 +644,34 @@ const serviceToolHarness = r.service({
       }).run("issue a refund");
       return {status: result.status, messages: result.messages};
     },
+    // Keys come from a resolver or a fixed string; a scalar input arrives unwrapped.
+    *keyed() {
+      const result = yield* agent({
+        maxSteps: 3,
+        tools: {
+          add: serviceTool({iface: counterIface, handler: "add", key: counterOf}),
+          bump: serviceTool({iface: counterIface, handler: "bump", key: "fixed"}),
+          counter: serviceTool({iface: counterIface, key: counterOf}),
+        },
+        *model(request): r.Operation<ModelResponse> {
+          if (request.step === 1)
+            return {
+              type: "tool_calls",
+              calls: [
+                {id: "a1", name: "add", input: {counter: "keyed-a", amount: 2}},
+                {id: "b1", name: "bump", input: {value: 3}},
+                {
+                  id: "c1",
+                  name: "counter",
+                  input: {handler: "add", input: {counter: "keyed-c", amount: 7}},
+                },
+              ],
+            };
+          return final;
+        },
+      }).run("count");
+      return {status: result.status, messages: result.messages};
+    },
     // A scoped tool for a single void-input handler (empty input -> no argument).
     *scoped() {
       const result = yield* agent({
@@ -634,7 +691,16 @@ let env: RestateTestEnvironment;
 before(
   async () => {
     env = await RestateTestEnvironment.start({
-      services: [runner, child, gateway, session, aiSession, refundService, serviceToolHarness],
+      services: [
+        runner,
+        child,
+        gateway,
+        session,
+        aiSession,
+        refundService,
+        counterService,
+        serviceToolHarness,
+      ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
   },
@@ -846,6 +912,19 @@ void test(
     assert.equal(result.status, "completed");
     // The refund handler's result flows back through the tool into the transcript.
     assert.match(JSON.stringify(result.messages), /re_O-1/);
+  },
+);
+void test(
+  "serviceTool resolves object keys and unwraps scalar inputs",
+  {timeout: 20000},
+  async () => {
+    const ingress = connect({url: env.baseUrl()});
+    const result = await ingress.client(serviceToolHarness).keyed();
+    assert.equal(result.status, "completed");
+    const totals = await Promise.all(
+      ["keyed-a", "fixed", "keyed-c"].map((key) => ingress.client(counterIface, key).total()),
+    );
+    assert.deepEqual(totals, [2, 3, 7]);
   },
 );
 void test(

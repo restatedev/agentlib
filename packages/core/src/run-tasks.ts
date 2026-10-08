@@ -7,6 +7,7 @@ import {
   type Operation,
   type Task,
 } from "@restatedev/restate-sdk-gen";
+import {ToolBudgetExceeded} from "./errors.js";
 
 export type FutureBranches = Record<string, Future<unknown>>;
 
@@ -24,8 +25,12 @@ export class RunTasks {
 
   *stop(reason: InterruptedError): Operation<void> {
     const results = yield* this.settle(reason);
+    // An exhausted tool budget stops the run, even when a nested call hit it
+    // inside a running tool; it is not a task failure.
     const failed = results.find(
-      (result) => result.status === "rejected" && !(result.reason instanceof InterruptedError),
+      (result) =>
+        result.status === "rejected" &&
+        !(result.reason instanceof InterruptedError || result.reason instanceof ToolBudgetExceeded),
     );
     if (failed?.status === "rejected") throw failed.reason;
   }

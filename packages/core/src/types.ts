@@ -241,8 +241,9 @@ export type AgentOptions<Context, Output = string> = {
   /** Summarizes this run's older messages when the model's view outgrows
    * `maxTokens` (default 100000). The size is the input tokens the model last
    * reported plus an estimate for messages added since, or an estimate of the
-   * messages alone before any report. The newest messages that fit
-   * `retainTokens` (default a quarter of maxTokens) stay verbatim. The saved
+   * messages, instructions and tools before any report. The newest messages
+   * that fit `retainTokens` (default a quarter of maxTokens, and at most half
+   * of what instructions and tools leave) stay verbatim. The saved
    * and returned transcript is unchanged. `model` defaults to the agent's. */
   compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
   /** The model's context window in tokens. Before each model call, a view that

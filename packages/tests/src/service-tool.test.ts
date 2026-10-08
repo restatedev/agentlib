@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {serviceTool} from "@restate-agents/core";
+import {serviceTool, ToolError} from "@restate-agents/core";
+import {testContext} from "./helpers.js";
 
 const refund = r.iface.service(
   "Refund",
@@ -38,6 +39,16 @@ void test("bare interface -> one multiplexed tool that selects any handler", () 
   assert.match(tool.description, /- process: Process a refund for an order/);
 });
 
+void test("a multiplexed tool rejects names that are not handlers", async () => {
+  const tool = serviceTool(refund);
+  for (const handler of ["toString", "constructor", "__proto__", "missing"]) {
+    await assert.rejects(
+      r.execute(testContext(), tool.execute({handler}, {} as Parameters<typeof tool.execute>[1])),
+      (error) => error instanceof ToolError && error.code === "invalid_input",
+    );
+  }
+});
+
 void test("scoped to one handler -> the handler's own description and schema", () => {
   const tool = serviceTool({iface: refund, handler: "process"});
   assert.equal(tool.description, "Process a refund for an order"); // handler description
@@ -68,6 +79,28 @@ void test("schemaless handler -> permissive open object; scalar handler -> wrapp
   };
   assert.equal(echo.type, "object");
   assert.deepEqual(echo.properties.value, refund._handlers.echo._inputSerde?.jsonSchema);
+});
+
+void test("a wrapped schema keeps its references resolvable", () => {
+  type Node = {name: string; children: Node[]};
+  const node: z.ZodType<Node> = z.lazy(() => z.object({name: z.string(), children: z.array(node)}));
+  const tree = r.iface.service("Tree", {
+    count: r.iface.schemas({input: z.array(node), output: z.number()}),
+  });
+  const schema = serviceTool({iface: tree, handler: "count"}).inputSchema;
+  const refs: string[] = [];
+  JSON.stringify(schema, (key, value: unknown) => {
+    if (key === "$ref" && typeof value === "string") refs.push(value);
+    return value;
+  });
+  assert.ok(refs.length > 0);
+  for (const ref of refs) {
+    const target = ref
+      .slice(2)
+      .split("/")
+      .reduce<unknown>((at, part) => (at as Record<string, unknown> | undefined)?.[part], schema);
+    assert.ok(target && typeof target === "object", `unresolved ${ref}`);
+  }
 });
 
 void test("inputSchema override replaces the derived schema", () => {

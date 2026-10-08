@@ -43,6 +43,8 @@ function modelTranscript(events: readonly Message[]): Message[] {
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
   private readonly provisional = new Set<Message>();
+  /** Steering notes and their messages, so a truncation can restate what it drops. */
+  private readonly steering = new WeakMap<Message, string>();
   /** Set by in-run compaction: the model sees `note` instead of the events before `from`. */
   private view: {from: number; note: NoteMessage} | undefined;
   /** Index of this run's input message among the events. */
@@ -139,11 +141,12 @@ export class RunHistory {
 
   /** The tokens the model's view takes: the last reported input plus an
    * estimate for the events added since, or an estimate of the whole view when
-   * no report applies, because there was none or compaction replaced the view. */
-  viewTokens(): number {
+   * no report applies, because there was none or compaction replaced the view.
+   * A report already counts `overhead`, what a request adds to its messages. */
+  viewTokens(overhead: number): number {
     const {measured} = this;
     if (!measured || measured.mark.from !== (this.view?.from ?? 0))
-      return estimateTokens(this.snapshot());
+      return overhead + estimateTokens(this.snapshot());
     return (
       measured.inputTokens + estimateTokens(this.shown(this.messages.slice(measured.mark.events)))
     );
@@ -173,6 +176,24 @@ export class RunHistory {
 
   append(...messages: Message[]): void {
     this.messages.push(...messages);
+  }
+
+  /** Records a steering update as a runtime note the model sees in order. */
+  appendSteering(message: string): void {
+    const note: Message = {
+      role: "user",
+      content: JSON.stringify({source: "agent-runtime", type: "steering", message}),
+    };
+    this.steering.set(note, message);
+    this.messages.push(note);
+  }
+
+  /** The steering messages among `events`, oldest first. */
+  steeringIn(events: readonly Message[]): string[] {
+    return events.flatMap((event) => {
+      const message = this.steering.get(event);
+      return message === undefined ? [] : [message];
+    });
   }
 
   /** Model-visible for the rest of the run, but never saved or returned. */

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import OpenAI from "openai";
 import type {ChatCompletionAssistantMessageParam} from "openai/resources/chat/completions";
-import {execute} from "@restatedev/restate-sdk-gen";
+import {execute, run, spawn} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {agent, tool, type ToolManifest} from "@restate-agents/core";
 import {openAIModel} from "@restate-agents/core/openai";
@@ -165,38 +165,117 @@ void test("permanent OpenAI errors fail once and replay without HTTP", async () 
   assert.equal(requests, 1);
 });
 
+void test("interrupting a run aborts the model request in flight", async () => {
+  let started!: () => void;
+  const requested = new Promise<void>((resolve) => (started = resolve));
+  let aborted = false;
+  const client = new OpenAI({
+    apiKey: "test-only",
+    maxRetries: 0,
+    fetch: (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        // Fail rather than hang when the request is never aborted.
+        const timer = setTimeout(() => reject(new Error("request was not aborted")), 2000);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          aborted = true;
+          reject(init.signal!.reason);
+        });
+        started();
+      }),
+  });
+  const a = agent({model: openAIModel({client, model: "test"}), finalize: false});
+  const {output} = await runHandler((ctx) =>
+    execute(
+      ctx,
+      (function* () {
+        // A journaled step stands in for the user: it interrupts once the request is out.
+        const interrupt = spawn(run(async () => (await requested, "Stop"), {name: "user"}));
+        const result = yield* a.run("hello", {controls: {interrupt}});
+        return result.status;
+      })(),
+    ),
+  );
+  assert.equal(output, "interrupted");
+  assert.equal(aborted, true);
+});
+
+void test("throttled, conflicting and server-side OpenAI errors stay retryable", async () => {
+  for (const status of [408, 409, 429, 500, 503]) {
+    let requests = 0;
+    const client = new OpenAI({
+      apiKey: "test-only",
+      // Restate owns retries; the client must not hide one.
+      maxRetries: 0,
+      fetch: async () => {
+        requests++;
+        return Response.json({error: {message: `failed with ${status}`}}, {status});
+      },
+    });
+    const a = agent({model: openAIModel({client, model: "test"})});
+    // The harness surfaces a retryable failure instead of retrying it.
+    await assert.rejects(
+      runHandler((ctx) => execute(ctx, a.run("hello"))),
+      new RegExp(`SDK failure.*failed with ${status}`),
+    );
+    assert.equal(requests, 1, `status ${status}`);
+  }
+});
+
 void test(
   "malformed or truncated model responses never execute a tool",
   {timeout: 5000},
   async () => {
     const validCall = {id: "one", type: "function", function: {name: "write", arguments: "{}"}};
-    const cases = [
-      {choices: []},
-      {
-        choices: [
-          {finish_reason: "length", message: {content: "Partial", tool_calls: [validCall]}},
-        ],
-      },
-      {choices: [{finish_reason: "content_filter", message: {content: "Partial"}}]},
-      {
-        choices: [
-          {
-            finish_reason: "tool_calls",
-            message: {tool_calls: [{...validCall, function: {name: "write", arguments: "{"}}]},
-          },
-        ],
-      },
-      {choices: [{finish_reason: "tool_calls", message: {tool_calls: []}}]},
-      {
-        choices: [
-          {finish_reason: "tool_calls", message: {tool_calls: [{type: "custom", id: "one"}]}},
-        ],
-      },
-      {choices: [{finish_reason: "stop", message: {refusal: "Cannot help"}}]},
-      {choices: [{finish_reason: "stop", message: {content: ""}}]},
+    // Each case fails its own protocol check, not some unrelated error.
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{choices: []}, /Incomplete model response: no choices/],
+      [
+        {
+          choices: [
+            {finish_reason: "length", message: {content: "Partial", tool_calls: [validCall]}},
+          ],
+        },
+        /Incomplete model response: length/,
+      ],
+      [
+        {choices: [{finish_reason: "content_filter", message: {content: "Partial"}}]},
+        /Incomplete model response: content_filter/,
+      ],
+      [
+        {
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {tool_calls: [{...validCall, function: {name: "write", arguments: "{"}}]},
+            },
+          ],
+        },
+        /Invalid JSON arguments for tool write/,
+      ],
+      [
+        {choices: [{finish_reason: "tool_calls", message: {tool_calls: []}}]},
+        /Model indicated tool calls but returned none/,
+      ],
+      [
+        {
+          choices: [
+            {finish_reason: "tool_calls", message: {tool_calls: [{type: "custom", id: "one"}]}},
+          ],
+        },
+        /Unsupported model tool-call type/,
+      ],
+      [
+        {choices: [{finish_reason: "stop", message: {refusal: "Cannot help"}}]},
+        /Model refused the request: Cannot help/,
+      ],
+      [
+        {choices: [{finish_reason: "stop", message: {content: ""}}]},
+        /Model returned an invalid response/,
+      ],
     ];
     let writes = 0;
-    for (const response of cases) {
+    for (const [response, expected] of cases) {
       let requests = 0;
       const client = new OpenAI({
         apiKey: "test-only",
@@ -232,7 +311,7 @@ void test(
         }
       };
       const live = await runHandler(handler);
-      assert.equal(typeof live.output.error, "string");
+      assert.match(live.output.error, expected);
       assert.equal(
         requests,
         1,

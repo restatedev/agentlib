@@ -7,6 +7,7 @@ import {
   type ServiceDescriptor,
   type WorkflowDescriptor,
 } from "@restatedev/restate-sdk-gen";
+import {nestedSchema} from "./nested-schema.js";
 import {awaitChild, buildTool} from "./tool.js";
 import type {JsonValue, Tool} from "./types.js";
 
@@ -119,7 +120,7 @@ function buildSingleHandlerTool<C>(
   const inputSchema = wrap
     ? {
         type: "object",
-        properties: {value: base},
+        properties: {value: nestedSchema(base, "value")},
         required: ["value"],
         additionalProperties: false,
       }
@@ -194,7 +195,7 @@ function buildMultiplexedTool<C>(
     provider: overrides.provider,
     parseInput(raw) {
       const obj = (raw ?? {}) as {handler?: unknown; input?: JsonValue};
-      if (typeof obj.handler !== "string" || !(obj.handler in descriptor._handlers))
+      if (typeof obj.handler !== "string" || !Object.hasOwn(descriptor._handlers, obj.handler))
         return {
           ok: false,
           error: `Unknown handler ${JSON.stringify(obj.handler)}; expected one of: ${names.join(", ")}.`,

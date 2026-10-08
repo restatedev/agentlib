@@ -730,6 +730,128 @@ void test("a spent tool-call budget stops the run with a summary instead of fail
   assert.equal(JSON.stringify(result.messages).includes('"c"'), false);
 });
 
+for (const phase of ["tool-start", "tool-end"] as const) {
+  void test(`cancelling a background call while ${phase} is reported settles it`, async () => {
+    let step = 0;
+    let executed = false;
+    const a = agent({
+      tools: {
+        wait: tool({
+          ...base,
+          background: true,
+          *execute() {
+            executed = true;
+            return 42;
+          },
+        }),
+        cancel: cancelOperationTool(),
+      },
+      *model() {
+        if (++step === 1) return batch(call("wait"));
+        if (step === 2) return batch(call("cancel", "cancel", {operationId: "wait", reason: null}));
+        return done;
+      },
+    });
+    const result = await r.execute(
+      ctx(),
+      a.run("go", {
+        *onProgress(event) {
+          // A progress handler that waits, for example on a journaled step.
+          if (event.type === phase && event.callId === "wait") yield* r.channel().receive;
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    history(result.messages);
+    const cancel = result.messages.find((m) => m.role === "tool" && m.callId === "cancel");
+    const reported = result.messages.find(
+      (m) => m.role === "user" && m.content.includes("background-tool-result"),
+    );
+    const {result: waited} = JSON.parse((reported as {content: string}).content);
+    if (phase === "tool-start") {
+      // Cancelled before it ran.
+      assert.equal(executed, false);
+      assert.equal(waited.status, "cancelled");
+      assert.deepEqual(cancel?.role === "tool" && cancel.result, {
+        status: "success",
+        output: {cancelled: true},
+      });
+    } else {
+      // Its effect already happened, so it keeps its result.
+      assert.deepEqual(waited, {status: "success", output: 42});
+      assert.deepEqual(cancel?.role === "tool" && cancel.result, {
+        status: "success",
+        output: {cancelled: false},
+      });
+    }
+  });
+}
+
+void test("approval shows the model's input when the schema transforms it into non-JSON", async () => {
+  let step = 0;
+  let approved: unknown;
+  let received: unknown;
+  const a = agent({
+    tools: {
+      schedule: tool({
+        description: "Schedule a job",
+        input: z.object({at: z.string().pipe(z.coerce.date())}),
+        needsApproval: true,
+        *execute({at}) {
+          received = at;
+          return at.toISOString();
+        },
+      }),
+    },
+    *onHumanApproval(request) {
+      approved = request.call.input;
+      return true;
+    },
+    *model() {
+      if (++step === 1) return batch(call("schedule", "schedule", {at: "2026-01-02T03:04:05Z"}));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status, "completed");
+  assert.deepEqual(approved, {at: "2026-01-02T03:04:05Z"});
+  assert.ok(received instanceof Date);
+});
+
+void test("a nested call that spends the tool-call budget stops the run instead of failing it", async () => {
+  let step = 0;
+  const a = agent({
+    maxToolCalls: 2,
+    finalize: function* () {
+      return {type: "final", text: "Stopped early."};
+    },
+    tools: {
+      leaf: tool({
+        ...base,
+        *execute() {
+          return "ok";
+        },
+      }),
+      parent: tool({
+        ...base,
+        *execute(_input, context) {
+          yield* context.callTool("leaf", {});
+          return yield* context.callTool("leaf", {});
+        },
+      }),
+    },
+    *model() {
+      if (++step === 1) return batch(call("parent"));
+      return done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.equal(result.status === "stopped" && result.reason, "max_tool_calls");
+  assert.equal(result.output, "Stopped early.");
+  const parent = result.messages.find((m) => m.role === "tool" && m.callId === "parent");
+  assert.equal(parent?.role === "tool" && parent.result.status, "cancelled");
+});
+
 void test("a tool fails the whole run with RunFailedError", async () => {
   const a = agent({
     tools: {

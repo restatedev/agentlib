@@ -123,8 +123,10 @@ yield* restate.client(refundIface).issueRefund({orderId: "O-1", amountCents: 500
   only. `restate.implement` does not carry the flag over, so the handler
   runs exclusive unless the implementation also sets
   `options: {handlers: {name: {shared: true}}}`.
-- A handler's description belongs in its options
-  (`options: {handlers: {name: {description}}}`), not in the schemas.
+- A handler's description goes in `restate.iface.schemas({..., description})`.
+  `restate.implement` carries it to the deployed handler, and `serviceTool`
+  shows it to the model. Plain `restate.schemas` has no `description`; there
+  it belongs in the options (`options: {handlers: {name: {description}}}`).
 
 ## Scopes
 
