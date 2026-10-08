@@ -1,5 +1,10 @@
 import {CancelledError, TerminalError} from "@restatedev/restate-sdk";
-import {run as journal, signal, type Operation} from "@restatedev/restate-sdk-gen";
+import {
+  InterruptedError,
+  run as journal,
+  signal,
+  type Operation,
+} from "@restatedev/restate-sdk-gen";
 import {
   AgentLimitError,
   denial,
@@ -65,15 +70,28 @@ export function createToolExecutor<C>({
     const definition = registry.registry.get(call.name);
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
-    yield* progress({
-      type: "tool-start",
-      callId: call.id,
-      name: call.name,
-      input: call.input,
-      ...(definition.info ? {info: structuredClone(definition.info)} : {}),
-    });
-    const {result, info} = yield* runCall(call, callStep, owner, registry, definition, depth);
-    yield* progress({type: "tool-end", callId: call.id, name: call.name, result, info});
+    // A progress handler can wait, so cancellation can land while it reports.
+    let outcome: {result: ToolResult; info: ToolInfo};
+    try {
+      yield* progress({
+        type: "tool-start",
+        callId: call.id,
+        name: call.name,
+        input: call.input,
+        ...(definition.info ? {info: structuredClone(definition.info)} : {}),
+      });
+      outcome = yield* runCall(call, callStep, owner, registry, definition, depth);
+    } catch (error) {
+      // Reporting the start was interrupted; failedResult rethrows anything else.
+      outcome = {result: failedResult(error), info: {name: call.name, details: call.input}};
+    }
+    const {result, info} = outcome;
+    try {
+      yield* progress({type: "tool-end", callId: call.id, name: call.name, result, info});
+    } catch (error) {
+      // The call has settled; interrupting its report does not undo its effects.
+      if (!(error instanceof InterruptedError)) throw error;
+    }
     return result;
   }
 

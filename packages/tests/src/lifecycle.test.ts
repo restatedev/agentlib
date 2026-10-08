@@ -730,6 +730,63 @@ void test("a spent tool-call budget stops the run with a summary instead of fail
   assert.equal(JSON.stringify(result.messages).includes('"c"'), false);
 });
 
+for (const phase of ["tool-start", "tool-end"] as const) {
+  void test(`cancelling a background call while ${phase} is reported settles it`, async () => {
+    let step = 0;
+    let executed = false;
+    const a = agent({
+      tools: {
+        wait: tool({
+          ...base,
+          background: true,
+          *execute() {
+            executed = true;
+            return 42;
+          },
+        }),
+        cancel: cancelOperationTool(),
+      },
+      *model() {
+        if (++step === 1) return batch(call("wait"));
+        if (step === 2) return batch(call("cancel", "cancel", {operationId: "wait", reason: null}));
+        return done;
+      },
+    });
+    const result = await r.execute(
+      ctx(),
+      a.run("go", {
+        *onProgress(event) {
+          // A progress handler that waits, for example on a journaled step.
+          if (event.type === phase && event.callId === "wait") yield* r.channel().receive;
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    history(result.messages);
+    const cancel = result.messages.find((m) => m.role === "tool" && m.callId === "cancel");
+    const reported = result.messages.find(
+      (m) => m.role === "user" && m.content.includes("background-tool-result"),
+    );
+    const {result: waited} = JSON.parse((reported as {content: string}).content);
+    if (phase === "tool-start") {
+      // Cancelled before it ran.
+      assert.equal(executed, false);
+      assert.equal(waited.status, "cancelled");
+      assert.deepEqual(cancel?.role === "tool" && cancel.result, {
+        status: "success",
+        output: {cancelled: true},
+      });
+    } else {
+      // Its effect already happened, so it keeps its result.
+      assert.deepEqual(waited, {status: "success", output: 42});
+      assert.deepEqual(cancel?.role === "tool" && cancel.result, {
+        status: "success",
+        output: {cancelled: false},
+      });
+    }
+  });
+}
+
 void test("a nested call that spends the tool-call budget stops the run instead of failing it", async () => {
   let step = 0;
   const a = agent({
