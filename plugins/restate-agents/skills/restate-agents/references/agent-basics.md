@@ -111,6 +111,42 @@ When the agent declares a context type, `run` requires `context`. The same
 value reaches every tool and guardrail, but never the model's tool schemas.
 This makes it the place for trusted data.
 
+## Skills
+
+A skill is instructions for one kind of task. Give an agent a `SkillSource`;
+the model sees each skill's name and description after the instructions and
+loads a skill with `load_skill` when a task needs it:
+
+```ts
+import {agent, skills} from "@restate-agents/core";
+
+const writer = agent({
+  model,
+  instructions: "You write for a software team.",
+  skills: skills([
+    {
+      name: "release-notes", // lowercase letters, digits and hyphens
+      description: "Write release notes from a list of changes.",
+      instructions: "Group the changes into Added, Changed and Fixed. Lay them out as in template.md.",
+      files: {"template.md": "## <version>\n### Added\n..."},
+    },
+  ]),
+});
+```
+
+- A source is `{list, load, read?, retry?}`: plain async functions, each run
+  journaled, so they can read files, a repository or a database. `list` runs
+  once per run and its result holds for the run, which keeps the cached
+  prefix stable. `read` adds `read_skill_file`; the SDK rejects absolute paths
+  and `..` before calling it.
+- A listed skill may carry a `location` (a folder, a URL at a commit). It is
+  journaled with the list and passed back to `load` and `read`, so a source
+  over something that changes, such as a branch, pins it per run. The model
+  never sees it.
+- Skills belong to the run: they survive a handoff. Names must be unique and
+  must not clash with run tools; an invalid list fails the run.
+- Lesson 19 shows a source over a folder of `SKILL.md` files. Skill scripts need a shell, which the SDK does not provide.
+
 ## Limits
 
 `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, and

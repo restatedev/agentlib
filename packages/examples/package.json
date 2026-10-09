@@ -75,6 +75,10 @@
     "./ag-ui": {
       "types": "./dist/lessons/18_ag_ui.d.ts",
       "import": "./dist/lessons/18_ag_ui.js"
+    },
+    "./skills": {
+      "types": "./dist/lessons/19_skills.d.ts",
+      "import": "./dist/lessons/19_skills.js"
     }
   },
   "scripts": {

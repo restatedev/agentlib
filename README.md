@@ -151,6 +151,7 @@ repeat a completed model call.
 | AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
 | Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
+| Skills                       | `agent({skills})` with any `SkillSource`, `skills([...])`                  | [19](packages/examples/src/lessons/19_skills.ts)            |
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
 | Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |

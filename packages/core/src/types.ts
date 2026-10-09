@@ -268,6 +268,35 @@ export type AgentOptions<Context, Output = string> = {
    * loaded history. The saved and returned transcript keeps every result whole.
    * `false` shows every result in full. */
   toolResults?: false | {maxTokens?: number; previewTokens?: number};
+  /** Skills the model can load when a task needs them. The run lists them once
+   * at its start, after the instructions, and adds `load_skill` (and
+   * `read_skill_file` when the source can read files). They belong to the
+   * run, so they survive a handoff. */
+  skills?: SkillSource;
+};
+/** A skill as the model first sees it: picked by its description, loaded by name. */
+export type SkillSummary = {
+  name: string;
+  description: string;
+  /** Where the source finds the skill, such as a folder or a URL pinned to a
+   * commit. It is journaled with the list, so every load and read of a run
+   * sees the same location, also after a replay. Never shown to the model. */
+  location?: string;
+};
+/**
+ * Where an agent's skills come from: files, a repository, state, or code.
+ * Each call runs journaled, like an `asyncTool`, so a source can do plain I/O
+ * and a replay reads the journal instead of calling it again.
+ */
+export type SkillSource = {
+  /** The skills to offer. Called once per run; the list holds for the run. */
+  list(options: {signal: AbortSignal}): Promise<SkillSummary[]>;
+  /** A skill's instructions, such as the body of its SKILL.md. */
+  load(skill: SkillSummary, options: {signal: AbortSignal}): Promise<string>;
+  /** A file a skill's instructions refer to, by a path relative to the skill. */
+  read?(skill: SkillSummary, path: string, options: {signal: AbortSignal}): Promise<string>;
+  /** Retries for each call. Default: three attempts. */
+  retry?: RetryOptions;
 };
 export type RunArguments<Context> = undefined extends Context
   ? [options?: RunOptions<Context>]

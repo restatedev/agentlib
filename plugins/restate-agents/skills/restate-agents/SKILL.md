@@ -79,6 +79,7 @@ Follow the same order when teaching or when growing an agent step by step.
 | 16  | Stream progress to subscribers       | `onProgress`, `context.progress`                             | `references/conversations-and-controls.md` |
 | 17  | Tools from an MCP server             | `mcpTools` (`/mcp`)                                          | `references/tools.md`                      |
 | 18  | Serve an agent to AG-UI clients      | `onProgress`, `onApproval`, client-run tools as AG-UI events | `references/conversations-and-controls.md` |
+| 19  | Skills from a folder                 | `agent({skills})`, a `SkillSource` over files                | `references/agent-basics.md`               |
 
 **When teaching:** go one row at a time. Show the smallest code that adds
 the new concept to the previous step, run it with curl, and explain what
@@ -102,6 +103,7 @@ Restate journals. Move on only when the learner is ready.
 | Independent, separately retried agents                         | one Restate service per agent, called with `restate.client`                               |
 | A long run outgrows the model's context                        | `toolResults` (on by default), `compaction`, `contextWindow`                              |
 | Tools that depend on the request, such as a UI's own tools     | `run(input, {tools})`                                                                     |
+| Many task-specific instructions, loaded only when needed       | `agent({skills})` with a `SkillSource`, or `skills([...])` for skills in code             |
 
 ## Rules to check before finishing
 

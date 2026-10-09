@@ -1,4 +1,6 @@
 export {agent} from "./agent.js";
+export {skills} from "./skills.js";
+export type {SkillDefinition} from "./skills.js";
 export {tool, asyncTool, handlerTool, awaitChild, handoff, agentTool} from "./tool.js";
 export type {AgentToolOptions} from "./tool.js";
 export {serviceTool} from "./service-tool.js";
@@ -26,6 +28,8 @@ export type {
   ModelFinalResponse,
   ModelToolCallsResponse,
   ModelUsage,
+  SkillSource,
+  SkillSummary,
   OutputCandidate,
   OutputDecision,
   RunOptions,

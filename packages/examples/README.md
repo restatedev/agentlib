@@ -33,6 +33,7 @@ the request body required; object fields use `.default(...)`.
 | 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
 | 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
 | 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
+| 19     | Give an agent skills from a folder    | [19_skills.ts](src/lessons/19_skills.ts)                           |
 
 If you have a specific goal, start here:
 
@@ -50,6 +51,7 @@ If you have a specific goal, start here:
 | Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
 | Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
 | Connect a UI such as CopilotKit      | [18](src/lessons/18_ag_ui.ts)           |
+| Teach an agent task-specific skills  | [19](src/lessons/19_skills.ts)          |
 
 ## Start
 
@@ -495,6 +497,28 @@ resolves the signal the turn waits on.
 
 The handler polls the object's state, which keeps the lesson small. It ignores
 the client's `context` and `state`: the object holds the conversation.
+
+## 19 — Give an agent skills from a folder
+
+A skill is instructions for one kind of task, such as writing release notes.
+`agent({skills})` takes a `SkillSource`: the run lists its skills once, puts
+each name and description after the agent's instructions, and gives the model
+`load_skill` to load one when a task needs it, and `read_skill_file` for the
+files a skill refers to. Every source call is journaled, and the list holds
+for the whole run, so the cached prompt prefix does too.
+
+The SDK does not read files itself. This lesson's `folderSkills` reads
+[skills/](skills), laid out like Anthropic's Agent Skills: one folder per
+skill, with a `SKILL.md` whose frontmatter gives its `name` and `description`.
+Skills defined in code need no folder: use `skills([{name, description,
+instructions, files}])` from `@restate-agents/core`.
+
+```sh
+curl "$RESTATE_CALL_URL/SkilledWriter/write" --json '"Release notes for 2.4.0: added CSV export, fixed the login redirect loop, bumped lodash."'
+```
+
+A skill's scripts are out of scope: the SDK offers no shell to run them. An
+agent with a sandbox, as in lesson 11, can copy a skill in and run them.
 
 ## Model configuration
 
