@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {serviceTool, ToolError} from "@restate-agents/core";
+import {serviceTool, ToolError} from "@restatedev/agentlib";
 import {testContext} from "./helpers.js";
 
 const refund = r.iface.service(

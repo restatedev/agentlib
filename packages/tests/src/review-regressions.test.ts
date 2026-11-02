@@ -10,7 +10,7 @@ import {
   ModelProtocolError,
   tool,
   type ModelResponse,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {testContext, memoryStore} from "./helpers.js";
 
 const context = () => testContext("review");

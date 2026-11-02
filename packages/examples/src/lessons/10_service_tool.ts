@@ -1,6 +1,6 @@
 // 10: Expose a whole Restate service to the agent as one tool, from its `iface` contract.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, serviceTool} from "@restate-agents/core";
+import {agent, serviceTool} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

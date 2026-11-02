@@ -1,6 +1,6 @@
 // 02: Give the agent one tool, with validated arguments and a journaled result.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool} from "@restate-agents/core";
+import {agent, asyncTool} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

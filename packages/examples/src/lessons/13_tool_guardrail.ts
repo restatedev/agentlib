@@ -1,6 +1,6 @@
 // 13: Enforce an application budget before a model-requested action runs.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool} from "@restate-agents/core";
+import {agent, asyncTool} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

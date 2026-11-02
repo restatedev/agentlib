@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
-import {agent, searchToolsTool, type Message, type ModelResponse} from "@restate-agents/core";
-import {mcpTools} from "@restate-agents/core/mcp";
+import {agent, searchToolsTool, type Message, type ModelResponse} from "@restatedev/agentlib";
+import {mcpTools} from "@restatedev/agentlib/mcp";
 import {runHandler} from "./replay-harness.mjs";
 
 type Seen = {

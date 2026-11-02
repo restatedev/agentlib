@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import {execute, run} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {agent, journaledModel, tool, type ModelResponse} from "@restate-agents/core";
+import {agent, journaledModel, tool, type ModelResponse} from "@restatedev/agentlib";
 import {runHandler} from "./replay-harness.mjs";
 
 void test("model and tool effects are reused on journal replay", {timeout: 5000}, async () => {

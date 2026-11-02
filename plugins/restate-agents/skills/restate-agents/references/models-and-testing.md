@@ -7,7 +7,7 @@ policy. Constructing an adapter needs no credentials, so importing
 services stays side-effect free.
 
 ```ts
-import {openAIModel} from "@restate-agents/core/openai";
+import {openAIModel} from "@restatedev/agentlib/openai";
 
 export const model = openAIModel({
   model: "gpt-5.6-luna",
@@ -25,7 +25,7 @@ Any [AI SDK](https://ai-sdk.dev) provider works through `aiModel`:
 
 ```ts
 import {anthropic} from "@ai-sdk/anthropic";
-import {aiModel} from "@restate-agents/core/provider";
+import {aiModel} from "@restatedev/agentlib/provider";
 
 export const model = aiModel({model: anthropic("claude-sonnet-5-5"), retry: {maxAttempts: 3}});
 ```
@@ -54,7 +54,7 @@ they are.
 to centralize keys, quotas, or routing in one service:
 
 ```ts
-import {modelGateway} from "@restate-agents/core/provider";
+import {modelGateway} from "@restatedev/agentlib/provider";
 
 const viaGateway = modelGateway((request) => restate.client(gateway).generate(request));
 ```
@@ -68,7 +68,7 @@ Give the agents a fixture model and run the services in a real Restate
 container with forced replay:
 
 ```ts
-import {journaledModel, type ModelResponse} from "@restate-agents/core";
+import {journaledModel, type ModelResponse} from "@restatedev/agentlib";
 
 const fixtureModel = journaledModel(async (request): Promise<ModelResponse> => {
   if (request.tools.length > 0 && request.step === 1)

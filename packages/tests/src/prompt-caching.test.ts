@@ -3,8 +3,8 @@ import {test} from "node:test";
 import * as r from "@restatedev/restate-sdk-gen";
 import {createAmazonBedrock} from "@ai-sdk/amazon-bedrock";
 import {createAnthropic} from "@ai-sdk/anthropic";
-import {agent, tool, type ModelUsage} from "@restate-agents/core";
-import {aiModel} from "@restate-agents/core/provider";
+import {agent, tool, type ModelUsage} from "@restatedev/agentlib";
+import {aiModel} from "@restatedev/agentlib/provider";
 import {z} from "zod";
 import {runHandler} from "./replay-harness.mjs";
 

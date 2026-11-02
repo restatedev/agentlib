@@ -16,9 +16,9 @@ import {
   type ModelRequest,
   type ModelResponse,
   type ProgressEvent,
-} from "@restate-agents/core";
-import {openAIModel} from "@restate-agents/core/openai";
-import {aiModel} from "@restate-agents/core/provider";
+} from "@restatedev/agentlib";
+import {openAIModel} from "@restatedev/agentlib/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
 import {z} from "zod";
 import {estimateTokens} from "../../core/src/context-size.js";
 import {runHandler} from "./replay-harness.mjs";

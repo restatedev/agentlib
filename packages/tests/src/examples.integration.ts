@@ -10,7 +10,7 @@ import {
   type Model,
   type ModelRequest,
   type ModelResponse,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 
 const sources = [
   {
@@ -335,7 +335,7 @@ function skillsModel(request: ModelRequest): ModelResponse {
 }
 
 // Replace only the external model. Import the same service instances the app serves.
-mock.module("@restate-agents/core/openai", {
+mock.module("@restatedev/agentlib/openai", {
   namedExports: {openAIModel: () => fixtureModel},
 });
 const [
@@ -354,20 +354,20 @@ const [
   {progressFeed, inventoryAudit},
   {skilledWriter},
 ] = await Promise.all([
-  import("@restate-agents/examples/hello"),
-  import("@restate-agents/examples/tools"),
-  import("@restate-agents/examples/conversation"),
-  import("@restate-agents/examples/structured-output"),
-  import("@restate-agents/examples/research-report"),
-  import("@restate-agents/examples/evaluator-optimizer"),
-  import("@restate-agents/examples/racing-agents"),
-  import("@restate-agents/examples/support-session"),
-  import("@restate-agents/examples/human-approval"),
-  import("@restate-agents/examples/routing"),
-  import("@restate-agents/examples/tool-guardrail"),
-  import("@restate-agents/examples/peer-review-rpc"),
-  import("@restate-agents/examples/progress-feed"),
-  import("@restate-agents/examples/skills"),
+  import("@restatedev/agentlib-examples/hello"),
+  import("@restatedev/agentlib-examples/tools"),
+  import("@restatedev/agentlib-examples/conversation"),
+  import("@restatedev/agentlib-examples/structured-output"),
+  import("@restatedev/agentlib-examples/research-report"),
+  import("@restatedev/agentlib-examples/evaluator-optimizer"),
+  import("@restatedev/agentlib-examples/racing-agents"),
+  import("@restatedev/agentlib-examples/support-session"),
+  import("@restatedev/agentlib-examples/human-approval"),
+  import("@restatedev/agentlib-examples/routing"),
+  import("@restatedev/agentlib-examples/tool-guardrail"),
+  import("@restatedev/agentlib-examples/peer-review-rpc"),
+  import("@restatedev/agentlib-examples/progress-feed"),
+  import("@restatedev/agentlib-examples/skills"),
 ]);
 
 let env: RestateTestEnvironment;

@@ -1,6 +1,6 @@
 // 09: Keep a conversation in a keyed object and control its running turn.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool, LazyStateConversation, type ApprovalRequest} from "@restate-agents/core";
+import {agent, asyncTool, LazyStateConversation, type ApprovalRequest} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

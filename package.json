@@ -1,6 +1,11 @@
 {
   "name": "restate-agents-workspace",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/restatedev/agentsdk.git"
+  },
   "type": "module",
   "scripts": {
     "preinstall": "node scripts/require-pnpm.mjs",
@@ -13,8 +18,8 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "check": "pnpm build && pnpm test && pnpm test:integration",
-    "dev": "turbo run compile --filter=@restate-agents/examples^... && pnpm --filter @restate-agents/examples dev",
-    "start": "pnpm --filter @restate-agents/examples start"
+    "dev": "turbo run compile --filter=@restatedev/agentlib-examples^... && pnpm --filter @restatedev/agentlib-examples dev",
+    "start": "pnpm --filter @restatedev/agentlib-examples start"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

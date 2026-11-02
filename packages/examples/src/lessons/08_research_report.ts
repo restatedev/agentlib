@@ -3,7 +3,7 @@
 // Source links and the differences are documented in ../../README.md.
 import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, GuardrailError, tool, ToolError} from "@restate-agents/core";
+import {agent, GuardrailError, tool, ToolError} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

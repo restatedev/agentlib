@@ -1,8 +1,8 @@
 import {createAmazonBedrock} from "@ai-sdk/amazon-bedrock";
 import {createAnthropic} from "@ai-sdk/anthropic";
-import type {Model} from "@restate-agents/core";
-import {openAIModel} from "@restate-agents/core/openai";
-import {aiModel} from "@restate-agents/core/provider";
+import type {Model} from "@restatedev/agentlib";
+import {openAIModel} from "@restatedev/agentlib/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
 
 const retry = {
   maxAttempts: 3,

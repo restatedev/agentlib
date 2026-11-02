@@ -14,7 +14,7 @@ schemas; the SDK validates the model's arguments before `execute` runs.
 ## asyncTool: an ordinary async call
 
 ```ts
-import {asyncTool, ToolError} from "@restate-agents/core";
+import {asyncTool, ToolError} from "@restatedev/agentlib";
 
 lookupTicket: asyncTool({
   description: "Look up a ticket's status.",
@@ -47,7 +47,7 @@ The result is journaled once `execute` succeeds. It must be JSON: cast
 RPC, `restate.run`, sleeps, signals, and state.
 
 ```ts
-import {tool} from "@restate-agents/core";
+import {tool} from "@restatedev/agentlib";
 
 reserve: tool({
   description: "Reserve stock for an order.",
@@ -66,7 +66,7 @@ Code in the generator body re-runs on replay. Put external I/O in
 ## Restate handlers as tools
 
 ```ts
-import {handlerTool, serviceTool} from "@restate-agents/core";
+import {handlerTool, serviceTool} from "@restatedev/agentlib";
 
 // One handler, with the arguments you choose:
 sendEmail: handlerTool({
@@ -86,7 +86,7 @@ and a failed handler is reported to the model as a tool error. Pass
 Objects and workflows also take a `key`. Configure retries with
 `retryPolicy` on the called handler.
 
-`yield* restateTools({adminUrl, allow})` from `@restate-agents/core/discovery`
+`yield* restateTools({adminUrl, allow})` from `@restatedev/agentlib/discovery`
 runs inside a handler and builds tools from every registered handler
 annotated with the metadata key `restate.dev/agent`. Filter them with
 `allow(target, name)`; `token` supplies the admin API's bearer token. The result's `targets`
@@ -127,8 +127,8 @@ const readFile: Tool<Ctx> = asyncTool({
 ## Remote and built-in tools
 
 ```ts
-import {mcpTools} from "@restate-agents/core/mcp";
-import {webSearch} from "@restate-agents/core/web-search";
+import {mcpTools} from "@restatedev/agentlib/mcp";
+import {webSearch} from "@restatedev/agentlib/web-search";
 
 // Inside a handler: the catalog is fetched once and journaled.
 const docs = yield* mcpTools({

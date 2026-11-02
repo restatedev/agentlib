@@ -1,11 +1,11 @@
 ---
 name: restate-agents
 description: >
-  Build durable AI agents with the Restate agent SDK (@restate-agents/core):
+  Build durable AI agents with the Restate agent SDK (@restatedev/agentlib):
   an agent runs inside a Restate generator handler, and every model call, tool
   result, approval, and sub-agent step is journaled, so work survives crashes,
   deploys, and long waits. Use when the user wants to build, extend, or debug
-  an AI agent on Restate; mentions @restate-agents/core, agent(), asyncTool,
+  an AI agent on Restate; mentions @restatedev/agentlib, agent(), asyncTool,
   handoff, agentTool, serviceTool, mcpTools, needsApproval, steering, or
   interrupting an agent; or wants multi-agent workflows (routing, racing,
   orchestrator-workers, evaluator-optimizer, peer review) composed from Restate
@@ -22,8 +22,8 @@ results replay from the journal instead of repeating.
 
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
-import {openAIModel} from "@restate-agents/core/openai";
+import {agent} from "@restatedev/agentlib";
+import {openAIModel} from "@restatedev/agentlib/openai";
 
 const assistant = agent({model: openAIModel({model: "gpt-5.6-luna"})});
 
@@ -44,7 +44,7 @@ apply to agent handlers and tools too.
 
 ## Setup
 
-- Dependencies: `@restate-agents/core`, `@restatedev/restate-sdk`,
+- Dependencies: `@restatedev/agentlib`, `@restatedev/restate-sdk`,
   `@restatedev/restate-sdk-gen`, and `zod`. The agent SDK lives in
   https://github.com/restatedev/agentsdk.
 - A model adapter: `openAIModel` (`/openai`, reads `OPENAI_API_KEY`) or any AI

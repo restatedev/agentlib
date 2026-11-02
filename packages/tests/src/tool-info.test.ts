@@ -3,7 +3,7 @@ import {test} from "node:test";
 import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {agent, asyncTool} from "@restate-agents/core";
+import {agent, asyncTool} from "@restatedev/agentlib";
 import {runHandler} from "./replay-harness.mjs";
 
 void test("tool descriptions expose selected parameters without changing execution or replay", async () => {

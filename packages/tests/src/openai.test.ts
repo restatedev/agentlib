@@ -4,8 +4,8 @@ import OpenAI from "openai";
 import type {ChatCompletionAssistantMessageParam} from "openai/resources/chat/completions";
 import {execute, run, spawn} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {agent, tool, type ToolManifest} from "@restate-agents/core";
-import {openAIModel} from "@restate-agents/core/openai";
+import {agent, tool, type ToolManifest} from "@restatedev/agentlib";
+import {openAIModel} from "@restatedev/agentlib/openai";
 import {runHandler} from "./replay-harness.mjs";
 
 void test(

@@ -10,7 +10,7 @@ import {
   type ModelRequest,
   type ModelResponse,
   type SkillSource,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {runHandler} from "./replay-harness.mjs";
 
 const forms = {

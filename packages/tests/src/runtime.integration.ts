@@ -19,11 +19,11 @@ import {
   type ModelResponse,
   type ToolCall,
   type Conversation,
-} from "@restate-agents/core";
-import {programTool} from "@restate-agents/core/program";
-import {restateTools} from "@restate-agents/core/discovery";
-import {modelGateway} from "@restate-agents/core/provider";
-import {aiSession} from "@restate-agents/examples/support-session";
+} from "@restatedev/agentlib";
+import {programTool} from "@restatedev/agentlib/program";
+import {restateTools} from "@restatedev/agentlib/discovery";
+import {modelGateway} from "@restatedev/agentlib/provider";
+import {aiSession} from "@restatedev/agentlib-examples/support-session";
 const final: ModelResponse = {type: "final", text: "done"};
 const base = {description: "fixture", input: z.object({})};
 const effects = new Map<string, number>();

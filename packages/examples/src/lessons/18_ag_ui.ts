@@ -21,7 +21,7 @@ import {
   type Message,
   type ProgressEvent,
   type Tool,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

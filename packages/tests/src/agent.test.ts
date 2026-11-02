@@ -23,7 +23,7 @@ import {
   type Model,
   type ModelResponse,
   type ToolContext,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {testContext} from "./helpers.js";
 
 const context = () => testContext("test-run");

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
-import {agent, type ModelResponse} from "@restate-agents/core";
-import {restateTools} from "@restate-agents/core/discovery";
-import {webSearch} from "@restate-agents/core/web-search";
+import {agent, type ModelResponse} from "@restatedev/agentlib";
+import {restateTools} from "@restatedev/agentlib/discovery";
+import {webSearch} from "@restatedev/agentlib/web-search";
 import {runHandler} from "./replay-harness.mjs";
 const final: ModelResponse = {type: "final", text: "done"};
 

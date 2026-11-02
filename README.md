@@ -14,6 +14,7 @@ starting the work over.
 - **Bring the tools you need.** Use async functions, Restate services, MCP,
   tool search, background work, and programmatic tool calling.
 
+[Start from the template](https://github.com/restatedev/agentlib-template) ·
 [Run the tutorial](#try-it) · [Explore the capabilities](#capabilities) ·
 [Browse the numbered examples](packages/examples/README.md)
 
@@ -33,12 +34,18 @@ flowchart LR
   Journal -. replay .-> Agent
 ```
 
-Start with one agent and one handler:
+Install the SDK next to the Restate SDKs it builds on, or clone the
+[project template](https://github.com/restatedev/agentlib-template), then start
+with one agent and one handler:
+
+```sh
+npm install @restatedev/agentlib @restatedev/restate-sdk @restatedev/restate-sdk-gen
+```
 
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
-import {openAIModel} from "@restate-agents/core/openai";
+import {agent} from "@restatedev/agentlib";
+import {openAIModel} from "@restatedev/agentlib/openai";
 
 const assistant = agent({model: openAIModel({model: "gpt-5.6-luna"})});
 
@@ -87,7 +94,7 @@ TypeScript callers can use Restate's typed client instead, as the
 
 ```ts
 import {connect} from "@restatedev/restate-sdk-clients";
-import {hello} from "@restate-agents/examples/hello";
+import {hello} from "@restatedev/agentlib-examples/hello";
 
 const answer = await connect({url: "http://localhost:8080"})
   .client(hello)
@@ -158,13 +165,11 @@ repeat a completed model call.
 | Custom model adapters        | `journaledModel`                                                           | —                                                           |
 | Models                       | `openAIModel` (`/openai`), `aiModel`, `modelGateway` (`/provider`)         | [shared.ts](packages/examples/src/shared.ts)                |
 
-Subpaths are imports from `@restate-agents/core`, such as
-`@restate-agents/core/mcp`. `aiModel` accepts an OpenTelemetry `tracer`, and
+Subpaths are imports from `@restatedev/agentlib`, such as
+`@restatedev/agentlib/mcp`. `aiModel` accepts an OpenTelemetry `tracer`, and
 marks prompt-cache points for Anthropic and Bedrock unless `caching: false`.
 
-Agents run inside Restate's generator SDK. A promise-based entry point existed
-earlier and was removed; [PROMISE_SDK.md](PROMISE_SDK.md) explains how to bring
-it back.
+Agents run inside Restate's generator SDK.
 
 ## Skills for coding agents
 
@@ -196,11 +201,11 @@ instead. To try local changes in Claude Code, run
 
 ## Workspace
 
-| Package                                         | Purpose                                                              |
-| ----------------------------------------------- | -------------------------------------------------------------------- |
-| [`@restate-agents/core`](packages/core)         | The agent SDK, plus the optional subpaths listed above               |
-| [`@restate-agents/examples`](packages/examples) | Numbered tutorials, from a first run to multi-agent workflows        |
-| [`@restate-agents/tests`](packages/tests)       | Unit, replay, and type tests, plus integration tests against Restate |
+| Package                                              | Purpose                                                              |
+| ---------------------------------------------------- | -------------------------------------------------------------------- |
+| [`@restatedev/agentlib`](packages/core)              | The agent SDK, published to npm, plus the optional subpaths above    |
+| [`@restatedev/agentlib-examples`](packages/examples) | Numbered tutorials, from a first run to multi-agent workflows        |
+| [`@restatedev/agentlib-tests`](packages/tests)       | Unit, replay, and type tests, plus integration tests against Restate |
 
 The [domain glossary](CONTEXT.md) defines runs, steps, sessions, conversations,
 and lifecycle controls.
@@ -218,3 +223,18 @@ pnpm test:integration  # a real Restate server with forced replay, via Testconta
 `pnpm check` runs all three. `pnpm lint:fix` and `pnpm format:fix` apply fixes.
 [CI](.github/workflows/ci.yml) runs the same checks on every pull request and
 push to `main`. Provider and MCP fixtures need no paid credentials.
+
+## Release
+
+To cut a release of `@restatedev/agentlib`, bump the version, commit, and tag
+with one command, then push both:
+
+```sh
+./scripts/prepare-release.sh 0.1.0        # or 0.2.0-rc.1 for a pre-release
+git push --atomic origin HEAD:main v0.1.0
+```
+
+The [release workflow](.github/workflows/release.yml) runs CI on the tagged
+commit, publishes the package to npm, and creates the GitHub release.
+Pre-releases are published under their identifier as dist-tag (`rc`, `beta`),
+never as `latest`.

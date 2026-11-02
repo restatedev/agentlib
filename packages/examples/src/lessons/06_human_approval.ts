@@ -1,6 +1,6 @@
 // 06: Pause a tool for a human decision, then resume the same agent run.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool, type ApprovalRequest} from "@restate-agents/core";
+import {agent, asyncTool, type ApprovalRequest} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

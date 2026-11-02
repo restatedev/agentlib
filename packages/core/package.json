@@ -1,10 +1,27 @@
 {
-  "name": "@restate-agents/core",
+  "name": "@restatedev/agentlib",
   "version": "0.0.1",
-  "private": true,
-  "description": "Embeddable agents native to Restate coroutines",
+  "description": "Embeddable AI agents native to Restate coroutines",
+  "keywords": [
+    "agents",
+    "ai",
+    "durable-execution",
+    "restate",
+    "workflow"
+  ],
+  "homepage": "https://github.com/restatedev/agentsdk#readme",
+  "bugs": {
+    "url": "https://github.com/restatedev/agentsdk/issues"
+  },
+  "license": "MIT",
+  "author": "Restate Developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/restatedev/agentsdk.git"
+  },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "type": "module",
   "exports": {
@@ -35,7 +52,11 @@
     "./discovery": {
       "types": "./dist/discovery.d.ts",
       "import": "./dist/discovery.js"
-    }
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "compile": "rm -rf dist && tsc -p tsconfig.json",
@@ -43,7 +64,7 @@
   },
   "dependencies": {
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
-    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/client": "2.3.0",
     "@opentelemetry/api": "1.9.0",
     "ai": "7.0.26",
     "minisearch": "7.2.0",
@@ -52,11 +73,12 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@restatedev/restate-sdk": "^1.17.2",
-    "@restatedev/restate-sdk-gen": "1.17.2"
+    "@restatedev/restate-sdk": "^1.18.2",
+    "@restatedev/restate-sdk-gen": "^1.18.2"
   },
   "peerDependencies": {
-    "@restatedev/restate-sdk": "^1.17.2",
-    "@restatedev/restate-sdk-gen": "1.17.2"
-  }
+    "@restatedev/restate-sdk": "^1.18.2",
+    "@restatedev/restate-sdk-gen": "^1.18.2"
+  },
+  "email": "code@restate.dev"
 }

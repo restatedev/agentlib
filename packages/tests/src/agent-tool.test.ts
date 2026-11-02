@@ -4,7 +4,7 @@ import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {channel, execute, gen, type Channel} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {agent, agentTool, tool, type Message, type ModelResponse} from "@restate-agents/core";
+import {agent, agentTool, tool, type Message, type ModelResponse} from "@restatedev/agentlib";
 import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";
 

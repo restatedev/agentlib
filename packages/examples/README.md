@@ -511,7 +511,7 @@ The SDK does not read files itself. This lesson's `folderSkills` reads
 [skills/](skills), laid out like Anthropic's Agent Skills: one folder per
 skill, with a `SKILL.md` whose frontmatter gives its `name` and `description`.
 Skills defined in code need no folder: use `skills([{name, description,
-instructions, files}])` from `@restate-agents/core`.
+instructions, files}])` from `@restatedev/agentlib`.
 
 ```sh
 curl "$RESTATE_CALL_URL/SkilledWriter/write" --json '"Release notes for 2.4.0: added CSV export, fixed the login redirect loop, bumped lodash."'

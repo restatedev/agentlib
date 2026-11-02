@@ -1,7 +1,7 @@
 // 14: Give an agent current public information through a journaled search tool.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
-import {webSearch} from "@restate-agents/core/web-search";
+import {agent} from "@restatedev/agentlib";
+import {webSearch} from "@restatedev/agentlib/web-search";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

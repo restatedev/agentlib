@@ -1,6 +1,6 @@
 // 16: Publish an agent's progress to subscribers while it works.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, tool, type ProgressEvent} from "@restate-agents/core";
+import {agent, tool, type ProgressEvent} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

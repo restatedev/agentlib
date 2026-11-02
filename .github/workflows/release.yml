@@ -1,0 +1,101 @@
+name: Release
+
+# Push of a v* tag (created with scripts/prepare-release.sh): run CI on the tagged commit,
+# then build, publish to npm and create the GitHub release. Re-run the failed jobs, or
+# dispatch this workflow on the tag, to retry.
+#
+# NOTE: npm trusted publishing is bound to this file name, don't rename it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE: "@restatedev/agentlib"
+
+jobs:
+  ci:
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check version and compute npm dist-tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          PKG_VERSION=$(jq -r '.version' packages/core/package.json)
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::packages/core/package.json has version $PKG_VERSION, expected $VERSION. Create the release tag with scripts/prepare-release.sh"
+            exit 1
+          fi
+
+          if [[ "$VERSION" == *-* ]]; then
+            # Pre-release versions (e.g. 1.2.3-rc.1, 1.2.3-alpha.0) MUST NOT be published
+            # with the latest npm dist-tag (omitting --tag defaults to latest), otherwise
+            # users would get the pre-release on a plain install.
+            # We use the pre-release identifier (rc, alpha, beta, ...) as the dist-tag.
+            PRERELEASE_ID="${VERSION#*-}"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=${PRERELEASE_ID%%.*}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+
+          # Releasing an older line (e.g. a backport) must not move the latest dist-tag backwards.
+          # The package has no latest dist-tag before its first release.
+          LATEST=$(npm view "$PACKAGE" dist-tags.latest 2>/dev/null || true)
+          if [ -z "$LATEST" ] || [ "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -n1)" = "$VERSION" ]; then
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+            echo "npm_tag=release-$MAJOR_MINOR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm turbo run compile --filter="$PACKAGE"
+
+      # An already published version is skipped, so this is safe to re-run.
+      - name: Publish to npm
+        run: pnpm --filter "$PACKAGE" publish --tag "${{ steps.version.outputs.npm_tag }}" --access public --no-git-checks --provenance
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+            exit 0
+          fi
+          EXTRA_FLAGS=()
+          if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
+            EXTRA_FLAGS+=(--prerelease)
+          fi
+          if [ "${{ steps.version.outputs.npm_tag }}" != "latest" ]; then
+            EXTRA_FLAGS+=(--latest=false)
+          fi
+          gh release create "$TAG" --title "Release $TAG" --generate-notes --verify-tag "${EXTRA_FLAGS[@]}"

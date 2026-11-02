@@ -20,7 +20,7 @@
       "passThroughEnv": ["DOCKER_*", "TESTCONTAINERS_*"]
     },
     "//#lint": {
-      "dependsOn": ["@restate-agents/core#compile", "@restate-agents/examples#compile"],
+      "dependsOn": ["@restatedev/agentlib#compile", "@restatedev/agentlib-examples#compile"],
       "cache": false
     },
     "//#format": {

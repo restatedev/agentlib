@@ -5,7 +5,7 @@ description: >
   generator-based TypeScript SDK (@restatedev/restate-sdk-gen): handlers written
   as function* with yield*, durable RPC, fan-out, races, state, timers, signals,
   and awakeables. Use when a project depends on @restatedev/restate-sdk-gen or
-  @restate-agents/core, when code uses restate.service / restate.object /
+  @restatedev/agentlib, when code uses restate.service / restate.object /
   restate.workflow with generator handlers, or when the user wants to compose a
   larger durable application out of small Restate handlers. Prefer this over
   guidance for the promise-based SDK (ctx.run, ctx.serviceClient) in such projects.
@@ -45,7 +45,7 @@ invocation themselves. Do not mix in promise-SDK idioms such as
 1. `package.json` has `@restatedev/restate-sdk-gen` → this skill applies.
    `@restatedev/restate-sdk` is still needed as a peer (for `serve`,
    `TerminalError`, `Opts`, `SendOpts`).
-2. `@restate-agents/core` is present → also load the `restate-agents` skill.
+2. `@restatedev/agentlib` is present → also load the `restate-agents` skill.
 3. Grep for `restate.service(`, `restate.object(`, `restate.workflow(` to find
    existing building blocks before adding new ones.
 

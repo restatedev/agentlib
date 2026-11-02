@@ -8,7 +8,7 @@ import {
   type Model,
   type ModelRequest,
   type ModelResponse,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {z} from "zod";
 import {testContext} from "./helpers.js";
 

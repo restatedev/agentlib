@@ -7,7 +7,7 @@ import {after, before, mock, test} from "node:test";
 import {promisify} from "node:util";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
-import type {Message, Model} from "@restate-agents/core";
+import type {Message, Model} from "@restatedev/agentlib";
 
 // The coding lesson against a real Restate server, with Modal replaced by a local directory.
 const root = await mkdtemp(join(tmpdir(), "coding-agent-"));
@@ -89,8 +89,8 @@ const coder: Model = function* (request) {
   const {stdout} = last.result.output as {stdout: string};
   return {type: "final", text: stdout.trim()};
 };
-mock.module("@restate-agents/core/openai", {namedExports: {openAIModel: () => coder}});
-const {codingAgent} = await import("@restate-agents/examples/coding-agent");
+mock.module("@restatedev/agentlib/openai", {namedExports: {openAIModel: () => coder}});
+const {codingAgent} = await import("@restatedev/agentlib-examples/coding-agent");
 
 let env: RestateTestEnvironment;
 before(

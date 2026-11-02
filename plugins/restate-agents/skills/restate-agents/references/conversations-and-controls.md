@@ -11,7 +11,7 @@ A conversation belongs to a key, so keep it in a virtual object. Load the
 messages, pass them in, and save `result.messages`:
 
 ```ts
-import {agent, type Message} from "@restate-agents/core";
+import {agent, type Message} from "@restatedev/agentlib";
 
 export const chatSession = restate.object({
   name: "ChatSession",

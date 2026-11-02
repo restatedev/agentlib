@@ -8,7 +8,7 @@ Lessons:
 
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
+import {agent} from "@restatedev/agentlib";
 import {z} from "zod";
 
 const assistant = agent({
@@ -118,7 +118,7 @@ the model sees each skill's name and description after the instructions and
 loads a skill with `load_skill` when a task needs it:
 
 ```ts
-import {agent, skills} from "@restate-agents/core";
+import {agent, skills} from "@restatedev/agentlib";
 
 const writer = agent({
   model,

@@ -10,7 +10,7 @@ import {
   type ModelRequest,
   type ModelResponse,
   type ProgressEvent,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {z} from "zod";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";

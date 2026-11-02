@@ -1,7 +1,7 @@
 // 12: Use a structured decision to route a request to one specialist.
 import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
+import {agent} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

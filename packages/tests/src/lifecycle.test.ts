@@ -14,7 +14,7 @@ import {
   tool,
   ToolError,
   type ModelResponse,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";

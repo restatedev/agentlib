@@ -1,5 +1,5 @@
 {
-  "name": "@restate-agents/examples",
+  "name": "@restatedev/agentlib-examples",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -91,10 +91,10 @@
     "@ag-ui/core": "1.0.0",
     "@ai-sdk/amazon-bedrock": "5.0.20",
     "@ai-sdk/anthropic": "4.0.14",
-    "@restate-agents/core": "workspace:*",
-    "@restatedev/restate-sdk": "^1.17.2",
-    "@restatedev/restate-sdk-clients": "1.17.2",
-    "@restatedev/restate-sdk-gen": "1.17.2",
+    "@restatedev/agentlib": "workspace:*",
+    "@restatedev/restate-sdk": "^1.18.2",
+    "@restatedev/restate-sdk-clients": "^1.18.2",
+    "@restatedev/restate-sdk-gen": "^1.18.2",
     "modal": "0.10.1",
     "zod": "^4.6.5"
   }

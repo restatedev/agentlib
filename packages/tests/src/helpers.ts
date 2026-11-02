@@ -1,5 +1,5 @@
 import type {Context} from "@restatedev/restate-sdk";
-import type {ConversationStore} from "@restate-agents/core";
+import type {ConversationStore} from "@restatedev/agentlib";
 
 /** A handler context for the in-process scheduler; these tests need no Restate server. */
 export function testContext(id = "test"): Context {

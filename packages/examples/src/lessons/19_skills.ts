@@ -16,7 +16,7 @@ import {readdir, readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, type SkillSource} from "@restate-agents/core";
+import {agent, type SkillSource} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

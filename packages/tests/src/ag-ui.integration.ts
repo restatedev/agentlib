@@ -9,7 +9,7 @@ import type {AddressInfo} from "node:net";
 import {after, before, mock, test} from "node:test";
 import {HttpAgent} from "@ag-ui/client";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
-import type {Model, ModelResponse} from "@restate-agents/core";
+import type {Model, ModelResponse} from "@restatedev/agentlib";
 
 // Status questions look the order up, highlighting runs the client's tool,
 // and anything else cancels the order.
@@ -29,8 +29,8 @@ const orders: Model = function* (request): Generator<never, ModelResponse> {
   const turn = request.messages.filter((message) => message.role === "user").length;
   return {type: "tool_calls", calls: [{id: `${name}-${turn}`, name, input: {orderId: "O-7"}}]};
 };
-mock.module("@restate-agents/core/openai", {namedExports: {openAIModel: () => orders}});
-const {agUiThread, agUiHandler} = await import("@restate-agents/examples/ag-ui");
+mock.module("@restatedev/agentlib/openai", {namedExports: {openAIModel: () => orders}});
+const {agUiThread, agUiHandler} = await import("@restatedev/agentlib-examples/ag-ui");
 
 let env: RestateTestEnvironment;
 let server: Server;

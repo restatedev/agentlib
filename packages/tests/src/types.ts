@@ -5,7 +5,7 @@ import {
   type ToolContext,
   type Model,
   type OutputDecision,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {z} from "zod";
 import * as r from "@restatedev/restate-sdk-gen";
 

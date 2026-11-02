@@ -10,7 +10,7 @@ import {
   tool,
   type ModelResponse,
   type ProgressEvent,
-} from "@restate-agents/core";
+} from "@restatedev/agentlib";
 import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";
 const ctx = () => testContext("progress");

@@ -1,7 +1,7 @@
 // 11: A coding agent whose tools work in a Modal sandbox for the length of one request.
 import * as restate from "@restatedev/restate-sdk-gen";
 import {ModalClient, Sandbox, SandboxFilesystemNotFoundError} from "modal";
-import {agent, asyncTool, ToolError} from "@restate-agents/core";
+import {agent, asyncTool, ToolError} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

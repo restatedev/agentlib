@@ -1,7 +1,7 @@
 // 17: Give an agent the tools of a remote MCP server.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
-import {mcpTools} from "@restate-agents/core/mcp";
+import {agent} from "@restatedev/agentlib";
+import {mcpTools} from "@restatedev/agentlib/mcp";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

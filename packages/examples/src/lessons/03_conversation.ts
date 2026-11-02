@@ -1,6 +1,6 @@
 // 03: Keep conversation history between requests to the same object key.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, type Message} from "@restate-agents/core";
+import {agent, type Message} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 

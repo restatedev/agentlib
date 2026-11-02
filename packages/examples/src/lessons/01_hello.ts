@@ -1,6 +1,6 @@
 // 01: Run an agent inside a Restate handler. Each request starts a fresh conversation.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restate-agents/core";
+import {agent} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 
