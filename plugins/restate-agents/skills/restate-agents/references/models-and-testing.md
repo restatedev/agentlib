@@ -6,6 +6,17 @@ Every adapter journals each model call as one step with its own retry
 policy. Constructing an adapter needs no credentials, so importing
 services stays side-effect free.
 
+Which adapter to use:
+
+| Model                                                                            | Adapter                                                               |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| OpenAI, or an OpenAI-compatible server (DeepSeek, xAI, OpenRouter, Ollama, vLLM) | `openAIModel` from `@restatedev/agentlib/openai`                      |
+| Anything else: Anthropic, Bedrock, Google, Mistral, Groq, ...                    | `aiModel` from `@restatedev/agentlib/provider` with an AI SDK provider |
+| A model served by another Restate handler                                        | `modelGateway` from `@restatedev/agentlib/provider`                   |
+| A client of your own, or a test fixture                                          | `journaledModel` from `@restatedev/agentlib`                          |
+
+### OpenAI: `openAIModel`
+
 ```ts
 import {openAIModel} from "@restatedev/agentlib/openai";
 
@@ -16,12 +27,22 @@ export const model = openAIModel({
 ```
 
 `openAIModel` speaks Chat Completions and reads `OPENAI_API_KEY` and
-`OPENAI_BASE_URL`, so it also reaches compatible servers (DeepSeek, xAI,
-OpenRouter, Ollama, vLLM); pass `client` for an `OpenAI` client of your own
-and `settings` for request settings. For `gpt-5.6` models, tool requests
-default to `reasoning_effort: "none"` unless `settings` says otherwise.
+`OPENAI_BASE_URL`, so it also reaches compatible servers; pass `client` for
+an `OpenAI` client of your own and `settings` for request settings. For
+`gpt-5.6` models, tool requests default to `reasoning_effort: "none"` unless
+`settings` says otherwise.
 
-Any [AI SDK](https://ai-sdk.dev) provider works through `aiModel`:
+### Any other provider: the AI SDK and `aiModel`
+
+Non-OpenAI models come through the [Vercel AI SDK](https://ai-sdk.dev). The
+SDK supplies the provider protocol only; Restate still owns the loop, tools,
+retries, and journaling (`aiModel` sets the SDK's own retries to zero).
+
+1. Install the provider package, for example `@ai-sdk/anthropic`,
+   `@ai-sdk/amazon-bedrock`, `@ai-sdk/google`, `@ai-sdk/mistral`, or
+   `@openrouter/ai-sdk-provider`. The `ai` package itself ships with
+   `@restatedev/agentlib`.
+2. Create the provider's model object and wrap it with `aiModel`.
 
 ```ts
 import {anthropic} from "@ai-sdk/anthropic";
@@ -30,9 +51,23 @@ import {aiModel} from "@restatedev/agentlib/provider";
 export const model = aiModel({model: anthropic("claude-sonnet-5-5"), retry: {maxAttempts: 3}});
 ```
 
-`aiModel` also accepts `providerOptions`, an OpenTelemetry `tracer`, and
-`onChunk` for streaming text to a UI. Different agents can use different
-models: set `model` on each agent.
+The provider reads its credentials (`ANTHROPIC_API_KEY`, AWS credentials,
+`GOOGLE_GENERATIVE_AI_API_KEY`, ...) when the first call is made. Use the
+provider's `create*` factory to pass a key, base URL, or custom fetch instead:
+
+```ts
+import {createAmazonBedrock} from "@ai-sdk/amazon-bedrock";
+
+const bedrock = createAmazonBedrock({region: "us-east-1"});
+
+export const model = aiModel({model: bedrock("<bedrock model id>")});
+```
+
+`aiModel` also accepts `providerOptions` (passed through to the provider), an
+OpenTelemetry `tracer`, and `onChunk` for streaming text to a UI. Different
+agents can use different models: set `model` on each agent. The repository's
+[shared.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/shared.ts)
+picks an adapter from an `AGENT_MODEL` string such as `anthropic:claude-sonnet-5-5`.
 
 Prompt caching is on by default. `aiModel` marks the instructions (which
 follow the tools), the newest message, and the message before the newest

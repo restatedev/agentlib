@@ -47,8 +47,12 @@ apply to agent handlers and tools too.
 - Dependencies: `@restatedev/agentlib`, `@restatedev/restate-sdk`,
   `@restatedev/restate-sdk-gen`, and `zod`. The agent SDK lives in
   https://github.com/restatedev/agentlib.
-- A model adapter: `openAIModel` (`/openai`, reads `OPENAI_API_KEY`) or any AI
-  SDK provider through `aiModel` (`/provider`). See `references/models-and-testing.md`.
+- A model adapter. OpenAI models (and OpenAI-compatible servers) use
+  `openAIModel` from `@restatedev/agentlib/openai`. Every other model
+  (Anthropic, Bedrock, Google, Mistral, OpenRouter, ...) goes through the
+  [Vercel AI SDK](https://ai-sdk.dev): install that provider's `@ai-sdk/*`
+  package and wrap its model with `aiModel` from `@restatedev/agentlib/provider`.
+  See `references/models-and-testing.md`.
 - Serve the handlers with `serve({services, port: 9080})` from
   `@restatedev/restate-sdk` and register them, as in the `restate-gen-sdk`
   skill.
