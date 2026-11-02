@@ -1,4 +1,4 @@
-# Restate agent SDK
+# Restate agentlib
 
 An application embeds agents in its durable work. Agents use models and tools to
 complete tasks while the application owns sessions and access to host capabilities.

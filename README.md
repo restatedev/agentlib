@@ -180,7 +180,7 @@ two skills:
 - **`restate-gen-sdk`** covers Restate's generator SDK: services, objects,
   workflows, durable RPC, fan-out, signals, and patterns for composing small
   handlers into larger applications.
-- **`restate-agents`** covers the agent SDK: tools, conversations,
+- **`restate-agents`** covers the agent lib: tools, conversations,
   approvals, guardrails, live controls, and multi-agent workflows.
 
 The plugin also connects the Restate docs MCP server.
@@ -203,7 +203,7 @@ instead. To try local changes in Claude Code, run
 
 | Package                                              | Purpose                                                              |
 | ---------------------------------------------------- | -------------------------------------------------------------------- |
-| [`@restatedev/agentlib`](packages/core)              | The agent SDK, published to npm, plus the optional subpaths above    |
+| [`@restatedev/agentlib`](packages/core)              | The agent lib, published to npm, plus the optional subpaths above    |
 | [`@restatedev/agentlib-examples`](packages/examples) | Numbered tutorials, from a first run to multi-agent workflows        |
 | [`@restatedev/agentlib-tests`](packages/tests)       | Unit, replay, and type tests, plus integration tests against Restate |
 

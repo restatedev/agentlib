@@ -1,7 +1,7 @@
 ---
 name: restate-agents
 description: >
-  Build durable AI agents with the Restate agent SDK (@restatedev/agentlib):
+  Build durable AI agents with the Restate agentlib (@restatedev/agentlib):
   an agent runs inside a Restate generator handler, and every model call, tool
   result, approval, and sub-agent step is journaled, so work survives crashes,
   deploys, and long waits. Use when the user wants to build, extend, or debug
@@ -45,7 +45,7 @@ apply to agent handlers and tools too.
 ## Setup
 
 - Dependencies: `@restatedev/agentlib`, `@restatedev/restate-sdk`,
-  `@restatedev/restate-sdk-gen`, and `zod`. The agent SDK lives in
+  `@restatedev/restate-sdk-gen`, and `zod`. The agentlib lives in
   https://github.com/restatedev/agentlib.
 - A model adapter. OpenAI models (and OpenAI-compatible servers) use
   `openAIModel` from `@restatedev/agentlib/openai`. Every other model
