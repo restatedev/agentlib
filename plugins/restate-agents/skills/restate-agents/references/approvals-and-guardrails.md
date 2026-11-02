@@ -1,9 +1,9 @@
 # Approvals and guardrails
 
 Lessons:
-[06_human_approval.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/06_human_approval.ts),
-[13_tool_guardrail.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/13_tool_guardrail.ts),
-[08_research_report.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/08_research_report.ts) (`afterRun`)
+[06_human_approval.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/06_human_approval.ts),
+[13_tool_guardrail.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/13_tool_guardrail.ts),
+[08_research_report.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/08_research_report.ts) (`afterRun`)
 
 ## Human approval before a tool runs
 

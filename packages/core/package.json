@@ -9,15 +9,15 @@
     "restate",
     "workflow"
   ],
-  "homepage": "https://github.com/restatedev/agentsdk#readme",
+  "homepage": "https://github.com/restatedev/agentlib#readme",
   "bugs": {
-    "url": "https://github.com/restatedev/agentsdk/issues"
+    "url": "https://github.com/restatedev/agentlib/issues"
   },
   "license": "MIT",
   "author": "Restate Developers",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/restatedev/agentsdk.git"
+    "url": "git+https://github.com/restatedev/agentlib.git"
   },
   "files": [
     "dist",

@@ -30,9 +30,9 @@ export const hello = restate.service({
 });
 ```
 
-The [repository README](https://github.com/restatedev/agentsdk#readme) walks
+The [repository README](https://github.com/restatedev/agentlib#readme) walks
 through the capabilities, and the
-[numbered examples](https://github.com/restatedev/agentsdk/tree/main/packages/examples)
+[numbered examples](https://github.com/restatedev/agentlib/tree/main/packages/examples)
 go from a first run to multi-agent workflows.
 
 ## Subpaths

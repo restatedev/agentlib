@@ -4,7 +4,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/restatedev/agentsdk.git"
+    "url": "git+https://github.com/restatedev/agentlib.git"
   },
   "type": "module",
   "scripts": {

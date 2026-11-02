@@ -46,7 +46,7 @@ apply to agent handlers and tools too.
 
 - Dependencies: `@restatedev/agentlib`, `@restatedev/restate-sdk`,
   `@restatedev/restate-sdk-gen`, and `zod`. The agent SDK lives in
-  https://github.com/restatedev/agentsdk.
+  https://github.com/restatedev/agentlib.
 - A model adapter: `openAIModel` (`/openai`, reads `OPENAI_API_KEY`) or any AI
   SDK provider through `aiModel` (`/provider`). See `references/models-and-testing.md`.
 - Serve the handlers with `serve({services, port: 9080})` from
@@ -56,7 +56,7 @@ apply to agent handlers and tools too.
 ## Learning path
 
 The numbered lessons in the repository introduce one concept at a time:
-https://github.com/restatedev/agentsdk/tree/main/packages/examples/src/lessons.
+https://github.com/restatedev/agentlib/tree/main/packages/examples/src/lessons.
 Follow the same order when teaching or when growing an agent step by step.
 
 | #   | Concept                              | API                                                          | Reference                                  |

@@ -92,5 +92,5 @@ const fixtureModel = journaledModel(async (request): Promise<ModelResponse> => {
   approvals block until resolved, and a race loser is cleaned up.
 
 The repository's
-[examples.integration.ts](https://github.com/restatedev/agentsdk/blob/main/packages/tests/src/examples.integration.ts)
+[examples.integration.ts](https://github.com/restatedev/agentlib/blob/main/packages/tests/src/examples.integration.ts)
 tests the lessons this way.

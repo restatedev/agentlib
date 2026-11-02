@@ -1,8 +1,8 @@
 # Agent basics
 
 Lessons:
-[01_hello.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/01_hello.ts),
-[04_structured_output.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/04_structured_output.ts)
+[01_hello.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/01_hello.ts),
+[04_structured_output.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/04_structured_output.ts)
 
 ## Define once, run in a handler
 

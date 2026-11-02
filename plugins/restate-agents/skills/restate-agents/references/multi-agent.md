@@ -1,11 +1,11 @@
 # Multiple agents
 
 Lessons:
-[05_evaluator_optimizer.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/05_evaluator_optimizer.ts),
-[07_racing_agents.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/07_racing_agents.ts),
-[08_research_report.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/08_research_report.ts),
-[12_routing.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/12_routing.ts),
-[15_peer_review_rpc.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/15_peer_review_rpc.ts)
+[05_evaluator_optimizer.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/05_evaluator_optimizer.ts),
+[07_racing_agents.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/07_racing_agents.ts),
+[08_research_report.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/08_research_report.ts),
+[12_routing.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/12_routing.ts),
+[15_peer_review_rpc.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/15_peer_review_rpc.ts)
 
 Multi-agent systems are ordinary Restate composition. The handler decides
 the control flow in plain code. Agents are steps that return typed output.

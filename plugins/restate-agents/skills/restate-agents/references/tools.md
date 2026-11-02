@@ -1,11 +1,11 @@
 # Tools
 
 Lessons:
-[02_tools.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/02_tools.ts),
-[10_service_tool.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/10_service_tool.ts),
-[11_coding_agent.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/11_coding_agent.ts),
-[14_web_search.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/14_web_search.ts),
-[17_mcp_tools.ts](https://github.com/restatedev/agentsdk/blob/main/packages/examples/src/lessons/17_mcp_tools.ts)
+[02_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/02_tools.ts),
+[10_service_tool.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/10_service_tool.ts),
+[11_coding_agent.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/11_coding_agent.ts),
+[14_web_search.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/14_web_search.ts),
+[17_mcp_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/17_mcp_tools.ts)
 
 Tools are a map on the agent (`tools: {name: tool}`) or on a single run
 (`run(input, {tools})`). The key is the name the model sees. Inputs are Zod

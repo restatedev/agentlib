@@ -187,15 +187,15 @@ The plugin also connects the Restate docs MCP server.
 
 ```sh
 # Claude Code
-/plugin marketplace add restatedev/agentsdk
+/plugin marketplace add restatedev/agentlib
 /plugin install restate-agents@restate-agents
 # Codex
-codex plugin marketplace add restatedev/agentsdk
+codex plugin marketplace add restatedev/agentlib
 # Cursor, Copilot, Gemini CLI, and others
-npx skills add restatedev/agentsdk
+npx skills add restatedev/agentlib
 ```
 
-In Cursor, add `https://github.com/restatedev/agentsdk` as a marketplace
+In Cursor, add `https://github.com/restatedev/agentlib` as a marketplace
 instead. To try local changes in Claude Code, run
 `claude --plugin-dir plugins/restate-agents`.
 

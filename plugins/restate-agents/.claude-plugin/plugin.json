@@ -6,7 +6,7 @@
     "name": "Restate"
   },
   "homepage": "https://restate.dev",
-  "repository": "https://github.com/restatedev/agentsdk",
+  "repository": "https://github.com/restatedev/agentlib",
   "license": "MIT",
   "keywords": ["restate", "durable-execution", "ai-agents", "workflows", "generators"],
   "mcpServers": "./.mcp.json",

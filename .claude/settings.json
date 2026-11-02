@@ -3,7 +3,7 @@
     "restate-agents": {
       "source": {
         "source": "github",
-        "repo": "restatedev/agentsdk"
+        "repo": "restatedev/agentlib"
       }
     }
   },
