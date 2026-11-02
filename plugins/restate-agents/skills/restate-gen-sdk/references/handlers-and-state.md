@@ -112,10 +112,13 @@ export const onboarding = restate.workflow({
 `inactivityTimeout`. `options.handlers` sets per-handler options:
 
 - for services and objects: `retryPolicy`, timeouts, `description`,
-  `metadata`, `ingressPrivate`, and for objects `shared` and
-  `enableLazyState`;
-- for workflows: only `enableLazyState`. Set a workflow's retry policy and
-  timeouts at the service level.
+  `metadata`, `ingressPrivate`, and for objects `shared` and `state`;
+- for workflows: only `state`. Set a workflow's retry policy and timeouts at
+  the service level.
+
+`state: {preload}` chooses which state keys are loaded eagerly when the
+handler starts: `true` for all, `false` for none, or a list of key names.
+`enableLazyState: true` is deprecated and equals `state: {preload: false}`.
 
 Use `retryPolicy` with `onMaxAttempts: "kill"` or `"pause"` to decide what
 happens to an invocation after its retries are exhausted.
