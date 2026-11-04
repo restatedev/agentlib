@@ -1,4 +1,4 @@
-// 15: Exchange drafts and feedback between agents through typed Restate RPCs.
+// 14: Exchange drafts and feedback between agents through typed Restate RPCs.
 import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restatedev/agentlib";

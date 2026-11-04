@@ -12,12 +12,11 @@ import {refundAgent, refundService} from "./10_service_tool.js";
 import {codingAgent} from "./11_coding_agent.js";
 import {supportRouter} from "./12_routing.js";
 import {guardedBooking} from "./13_tool_guardrail.js";
-import {webResearch} from "./14_web_search.js";
-import {peerAuthor, peerReview, peerReviewer} from "./15_peer_review_rpc.js";
-import {inventoryAudit, progressFeed} from "./16_progress_feed.js";
-import {docsGuide} from "./17_mcp_tools.js";
-import {agUiThread} from "./18_ag_ui.js";
-import {skilledWriter} from "./19_skills.js";
+import {peerAuthor, peerReview, peerReviewer} from "./14_peer_review_rpc.js";
+import {inventoryAudit, progressFeed} from "./15_progress_feed.js";
+import {docsGuide} from "./16_mcp_tools.js";
+import {agUiThread} from "./17_ag_ui.js";
+import {skilledWriter} from "./18_skills.js";
 
 export const services = [
   hello,
@@ -35,7 +34,6 @@ export const services = [
   codingAgent,
   supportRouter,
   guardedBooking,
-  webResearch,
   peerAuthor,
   peerReviewer,
   peerReview,

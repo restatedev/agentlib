@@ -1,4 +1,4 @@
-// 18: Serve an agent to AG-UI clients, such as CopilotKit.
+// 17: Serve an agent to AG-UI clients, such as CopilotKit.
 //
 // AG-UI (https://docs.ag-ui.com) streams an agent run to a UI as server-sent
 // events. Here the agent runs in a Restate object, one per AG-UI thread, and

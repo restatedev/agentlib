@@ -45,10 +45,6 @@
       "types": "./dist/provider.d.ts",
       "import": "./dist/provider.js"
     },
-    "./web-search": {
-      "types": "./dist/web-search.d.ts",
-      "import": "./dist/web-search.js"
-    },
     "./discovery": {
       "types": "./dist/discovery.d.ts",
       "import": "./dist/discovery.js"

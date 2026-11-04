@@ -4,8 +4,7 @@ Lessons:
 [02_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/02_tools.ts),
 [10_service_tool.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/10_service_tool.ts),
 [11_coding_agent.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/11_coding_agent.ts),
-[14_web_search.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/14_web_search.ts),
-[17_mcp_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/17_mcp_tools.ts)
+[16_mcp_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/16_mcp_tools.ts)
 
 Tools are a map on the agent (`tools: {name: tool}`) or on a single run
 (`run(input, {tools})`). The key is the name the model sees. Inputs are Zod
@@ -128,7 +127,6 @@ const readFile: Tool<Ctx> = asyncTool({
 
 ```ts
 import {mcpTools} from "@restatedev/agentlib/mcp";
-import {webSearch} from "@restatedev/agentlib/web-search";
 
 // Inside a handler: the catalog is fetched once and journaled.
 const docs = yield* mcpTools({
@@ -139,10 +137,6 @@ const docs = yield* mcpTools({
   allow: (name) => name !== "submit_feedback",
 });
 const result = yield* guide.run(question, {tools: docs.tools});
-
-// Web search through Tavily; results are journaled. Pass {apiKey}; without one
-// it uses Tavily's free, rate-limited keyless access.
-const researcher = agent({model, tools: {searchWeb: webSearch()}});
 ```
 
 `mcpTools` also takes `token` (a generator returning a bearer token),
@@ -155,7 +149,7 @@ is replaced with `[redacted]` before any result or error is journaled. Call
 digits, `_` or `-`; anything else is a terminal error.
 
 Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
-`searchToolsTool`, `programTool`, `webSearch`) accepts `description` and
+`searchToolsTool`, `programTool`) accepts `description` and
 `describe` to replace its model-facing description and its display info.
 
 ## Large catalogs and advanced tool calling

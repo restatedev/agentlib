@@ -3,7 +3,7 @@
 Lessons:
 [03_conversation.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/03_conversation.ts),
 [09_support_session.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/09_support_session.ts),
-[16_progress_feed.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/16_progress_feed.ts)
+[15_progress_feed.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/15_progress_feed.ts)
 
 ## Remember earlier requests
 
@@ -184,7 +184,7 @@ const result = yield* auditor.run(request, {
 });
 ```
 
-Lesson 16 pairs this with a pub/sub object (see `restate-gen-sdk`'s
+Lesson 15 pairs this with a pub/sub object (see `restate-gen-sdk`'s
 `patterns.md`), so clients can `subscribe` and receive each next event.
 Sub-agents started with `agentTool` report their events as progress of the
 parent's tool call.
@@ -193,8 +193,8 @@ parent's tool call.
 
 `run(input, {tools})` adds tools to that run only, next to the agent's own.
 They belong to the run, so they survive a handoff. Use them for tools that
-depend on the request: lesson 17 passes the tools of an MCP server, and
-[lesson 18](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/18_ag_ui.ts)
+depend on the request: lesson 16 passes the tools of an MCP server, and
+[lesson 17](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/17_ag_ui.ts)
 turns the tools an AG-UI client sends into tools that wait on a durable
 signal until the client returns their result. The name `read_tool_result` is
 reserved while `toolResults` is on.
