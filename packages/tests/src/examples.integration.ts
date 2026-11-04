@@ -303,7 +303,7 @@ const fixtureModel: Model = function* (request) {
   throw new Error(`Unexpected example instructions: ${instructions}`);
 };
 
-// Lesson 18: load the release-notes skill, read its template, answer from it.
+// Lesson 19: load the release-notes skill, read its template, answer from it.
 function skillsModel(request: ModelRequest): ModelResponse {
   assert.match(request.instructions!, /- release-notes: Write release notes/);
   assert.match(request.instructions!, /- incident-summary: Summarize a production incident/);

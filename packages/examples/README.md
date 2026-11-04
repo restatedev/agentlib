@@ -28,11 +28,12 @@ the request body required; object fields use `.default(...)`.
 | 11     | A coding agent in a Modal sandbox     | [11_coding_agent.ts](src/lessons/11_coding_agent.ts)               |
 | 12     | Route to a specialist                 | [12_routing.ts](src/lessons/12_routing.ts)                         |
 | 13     | Enforce a tool policy                 | [13_tool_guardrail.ts](src/lessons/13_tool_guardrail.ts)           |
-| 14     | Exchange feedback over durable RPC    | [14_peer_review_rpc.ts](src/lessons/14_peer_review_rpc.ts)         |
-| 15     | Follow an agent's progress            | [15_progress_feed.ts](src/lessons/15_progress_feed.ts)             |
-| 16     | Tools from a remote MCP server        | [16_mcp_tools.ts](src/lessons/16_mcp_tools.ts)                     |
-| 17     | Serve an AG-UI client                 | [17_ag_ui.ts](src/lessons/17_ag_ui.ts)                             |
-| 18     | Give an agent skills from a folder    | [18_skills.ts](src/lessons/18_skills.ts)                           |
+| 14     | Search the public web                 | [14_web_search.ts](src/lessons/14_web_search.ts)                   |
+| 15     | Exchange feedback over durable RPC    | [15_peer_review_rpc.ts](src/lessons/15_peer_review_rpc.ts)         |
+| 16     | Follow an agent's progress            | [16_progress_feed.ts](src/lessons/16_progress_feed.ts)             |
+| 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
+| 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
+| 19     | Give an agent skills from a folder    | [19_skills.ts](src/lessons/19_skills.ts)                           |
 
 If you have a specific goal, start here:
 
@@ -45,11 +46,12 @@ If you have a specific goal, start here:
 | Steer or interrupt a running agent   | [09](src/lessons/09_support_session.ts) |
 | Route a request by its meaning       | [12](src/lessons/12_routing.ts)         |
 | Enforce a budget before an action    | [13](src/lessons/13_tool_guardrail.ts)  |
-| Let agents review each other\'s work | [14](src/lessons/14_peer_review_rpc.ts) |
-| Show progress while an agent works   | [15](src/lessons/15_progress_feed.ts)   |
-| Use tools from an MCP server         | [16](src/lessons/16_mcp_tools.ts)       |
-| Connect a UI such as CopilotKit      | [17](src/lessons/17_ag_ui.ts)           |
-| Teach an agent task-specific skills  | [18](src/lessons/18_skills.ts)          |
+| Answer with public sources           | [14](src/lessons/14_web_search.ts)      |
+| Let agents review each other\'s work | [15](src/lessons/15_peer_review_rpc.ts) |
+| Show progress while an agent works   | [16](src/lessons/16_progress_feed.ts)   |
+| Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
+| Connect a UI such as CopilotKit      | [18](src/lessons/18_ag_ui.ts)           |
+| Teach an agent task-specific skills  | [19](src/lessons/19_skills.ts)          |
 
 ## Start
 
@@ -379,7 +381,25 @@ Raise `maxTotalCents` to `15000` to see the allowed path. The reservation is a
 demo result; connect a real booking API only after obtaining the quote from your
 own trusted service.
 
-## 14 — Let agents exchange feedback over RPC
+## 14 — Search the web with a custom tool
+
+[14_web_search.ts](src/lessons/14_web_search.ts) defines `searchWeb` locally with
+`asyncTool`. Its `execute` function calls the [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
+using `fetch`, validates the response, and returns up to five bounded snippets.
+`asyncTool` journals the result, so replay does not repeat a completed search.
+This is an example of integrating an API, not a built-in library tool.
+
+Set `TAVILY_API_KEY` in the example server's environment before starting it.
+The key is read inside `execute` and is never included in the model's tool arguments.
+Keep private data out of queries; the agent treats snippets as untrusted evidence
+and cites the returned URLs.
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/WebResearch/answer" \
+  --json '"Find the Restate TypeScript SDK docs and cite their URLs."'
+```
+
+## 15 — Let agents exchange feedback over RPC
 
 `PeerReview` asks `PeerAuthor` for a draft, sends that draft to two
 `PeerReviewer` invocations in parallel, and sends their labeled feedback back
@@ -413,7 +433,7 @@ The caller receives only the revised answer. Restate journals each RPC, so a
 replay does not repeat completed author or reviewer calls. There is no shared
 mailbox or bespoke agent-to-agent protocol.
 
-## 15 — Follow an agent's progress
+## 16 — Follow an agent's progress
 
 The agent's `onProgress` handler sends each event to a `ProgressFeed` object.
 Its shared `subscribe` handler waits for the next event.
@@ -423,7 +443,7 @@ curl --globoff --request POST "$RESTATE_CALL_URL/ProgressFeed/audit-1/subscribe"
 curl --globoff "$RESTATE_CALL_URL/InventoryAudit/audit" --json '{"job":"audit-1"}'
 ```
 
-## 16 — Use tools from an MCP server
+## 17 — Use tools from an MCP server
 
 `mcpTools` lists a remote server's tools once, journals the catalog, and turns
 each tool into a journaled step. The lesson gives an agent the tools of the
@@ -433,7 +453,7 @@ Restate docs server at `https://docs.restate.dev/mcp`.
 curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '"What is a virtual object?"'
 ```
 
-## 17 — Serve an AG-UI client
+## 18 — Serve an AG-UI client
 
 [AG-UI](https://docs.ag-ui.com) is an open protocol between agents and user
 interfaces; CopilotKit is one client. An `AgUiThread` object, one per AG-UI
@@ -472,7 +492,7 @@ resolves the signal the turn waits on.
 The handler polls the object's state, which keeps the lesson small. It ignores
 the client's `context` and `state`: the object holds the conversation.
 
-## 18 — Give an agent skills from a folder
+## 19 — Give an agent skills from a folder
 
 A skill is instructions for one kind of task, such as writing release notes.
 `agent({skills})` takes a `SkillSource`: the run lists its skills once, puts
@@ -577,7 +597,7 @@ and [OpenAI's tool guardrails](https://openai.github.io/openai-agents-python/gua
 They use this library's Restate handlers and tools rather than copying another
 framework's control flow.
 
-Lesson 14 applies Restate's
+Lesson 15 applies Restate's
 [service-to-service calls](https://docs.restate.dev/ai/patterns/multi-agent) to a
 bounded author-reviewer exchange. It combines durable RPC, parallel feedback,
 and one explicit revision without extra messaging infrastructure.

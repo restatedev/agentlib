@@ -1,4 +1,4 @@
-// 18: Give an agent skills from a folder.
+// 19: Give an agent skills from a folder.
 //
 // A skill is instructions for one kind of task. The model sees each skill's
 // name and description, and loads a skill only when a task needs it, so an

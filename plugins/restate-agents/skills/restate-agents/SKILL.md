@@ -78,11 +78,12 @@ Follow the same order when teaching or when growing an agent step by step.
 | 11  | Tools backed by a sandbox            | run `context`, `asyncTool`                                   | `references/tools.md`                      |
 | 12  | Route to a specialist                | structured-output router                                     | `references/multi-agent.md`                |
 | 13  | Enforce a policy before an action    | tool `before`, agent guardrails                              | `references/approvals-and-guardrails.md`   |
-| 14  | Agents reviewing each other over RPC | typed services per role                                      | `references/multi-agent.md`                |
-| 15  | Stream progress to subscribers       | `onProgress`, `context.progress`                             | `references/conversations-and-controls.md` |
-| 16  | Tools from an MCP server             | `mcpTools` (`/mcp`)                                          | `references/tools.md`                      |
-| 17  | Serve an agent to AG-UI clients      | `onProgress`, `onApproval`, client-run tools as AG-UI events | `references/conversations-and-controls.md` |
-| 18  | Skills from a folder                 | `agent({skills})`, a `SkillSource` over files                | `references/agent-basics.md`               |
+| 14  | Web search with a custom tool       | example-local `asyncTool` calling Tavily                       | `references/tools.md`                      |
+| 15  | Agents reviewing each other over RPC | typed services per role                                      | `references/multi-agent.md`                |
+| 16  | Stream progress to subscribers       | `onProgress`, `context.progress`                             | `references/conversations-and-controls.md` |
+| 17  | Tools from an MCP server             | `mcpTools` (`/mcp`)                                          | `references/tools.md`                      |
+| 18  | Serve an agent to AG-UI clients      | `onProgress`, `onApproval`, client-run tools as AG-UI events | `references/conversations-and-controls.md` |
+| 19  | Skills from a folder                 | `agent({skills})`, a `SkillSource` over files                | `references/agent-basics.md`               |
 
 **When teaching:** go one row at a time. Show the smallest code that adds
 the new concept to the previous step, run it with curl, and explain what

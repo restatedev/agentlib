@@ -5,7 +5,7 @@ Lessons:
 [07_racing_agents.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/07_racing_agents.ts),
 [08_research_report.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/08_research_report.ts),
 [12_routing.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/12_routing.ts),
-[14_peer_review_rpc.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/14_peer_review_rpc.ts)
+[15_peer_review_rpc.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/15_peer_review_rpc.ts)
 
 Multi-agent systems are ordinary Restate composition. The handler decides
 the control flow in plain code. Agents are steps that return typed output.
@@ -112,7 +112,7 @@ return report.output;
 
 ## Agents exchanging messages
 
-Lesson 14 has an author service and a reviewer service, plus a lead that
+Lesson 15 has an author service and a reviewer service, plus a lead that
 passes drafts and feedback between them as typed request and response
 bodies. No mailbox or agent-to-agent protocol is needed: durable RPC is the
 channel, and a replay never repeats a completed exchange.

@@ -1,4 +1,4 @@
-// 16: Give an agent the tools of a remote MCP server.
+// 17: Give an agent the tools of a remote MCP server.
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restatedev/agentlib";
 import {mcpTools} from "@restatedev/agentlib/mcp";

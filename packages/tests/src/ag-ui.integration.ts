@@ -1,4 +1,4 @@
-// Runs lesson 17 under the real AG-UI client, which verifies every event
+// Runs lesson 18 under the real AG-UI client, which verifies every event
 // sequence it receives, against a Restate server. The integration suite runs
 // on Node's own type stripping, not tsx: under tsx, @ag-ui/client's
 // fast-json-patch dependency resolves to the TypeScript source it ships and

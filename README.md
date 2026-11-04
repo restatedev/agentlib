@@ -117,7 +117,7 @@ console.log(answer);
 - **Agents working together over RPC.** Fan out typed Restate RPCs and
   synthesize the results, or have agents review each other's drafts.
   [See the research report](packages/examples/src/lessons/08_research_report.ts)
-  and [the peer review](packages/examples/src/lessons/14_peer_review_rpc.ts).
+  and [the peer review](packages/examples/src/lessons/15_peer_review_rpc.ts).
 - **Coding in a Modal sandbox.** Give an agent file and shell tools backed by a
   [Modal](https://modal.com) sandbox (needs Modal credentials).
   [See the coding agent](packages/examples/src/lessons/11_coding_agent.ts).
@@ -147,17 +147,18 @@ repeat a completed model call.
 | Typed output                 | `agent({output})`                                                          | [04](packages/examples/src/lessons/04_structured_output.ts) |
 | Human approval               | `needsApproval`, `onApproval`, `humanApprovalTool`                         | [06](packages/examples/src/lessons/06_human_approval.ts)    |
 | Steering and interruption    | `run(input, {steeringSignal, interruptSignal})` or `{controls}`            | [09](packages/examples/src/lessons/09_support_session.ts)   |
-| Progress events              | `run(input, {onProgress})`, `context.progress`                             | [15](packages/examples/src/lessons/15_progress_feed.ts)     |
+| Progress events              | `run(input, {onProgress})`, `context.progress`                             | [16](packages/examples/src/lessons/16_progress_feed.ts)     |
 | Handoffs                     | `handoff`                                                                  | —                                                           |
 | Sub-agents as tools          | `agentTool`                                                                | —                                                           |
 | Restate services as tools    | `serviceTool`, `handlerTool`, `restateTools` (`/discovery`)                | [10](packages/examples/src/lessons/10_service_tool.ts)      |
 | Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | —                                                           |
 | Tool search                  | `searchToolsTool`, `deferred: true`                                        | —                                                           |
 | Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
-| MCP                          | `mcpTools` (`/mcp`), passed as `run(input, {tools})`                       | [16](packages/examples/src/lessons/16_mcp_tools.ts)         |
-| AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [17](packages/examples/src/lessons/17_ag_ui.ts)             |
+| MCP                          | `mcpTools` (`/mcp`), passed as `run(input, {tools})`                       | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
+| AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
-| Skills                       | `agent({skills})` with any `SkillSource`, `skills([...])`                  | [18](packages/examples/src/lessons/18_skills.ts)            |
+| Web search                   | Example-local `asyncTool` calling Tavily                                   | [14](packages/examples/src/lessons/14_web_search.ts)        |
+| Skills                       | `agent({skills})` with any `SkillSource`, `skills([...])`                  | [19](packages/examples/src/lessons/19_skills.ts)            |
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
 | Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |

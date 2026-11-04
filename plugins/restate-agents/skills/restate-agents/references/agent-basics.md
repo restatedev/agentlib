@@ -145,7 +145,7 @@ const writer = agent({
   never sees it.
 - Skills belong to the run: they survive a handoff. Names must be unique and
   must not clash with run tools; an invalid list fails the run.
-- Lesson 18 shows a source over a folder of `SKILL.md` files. Skill scripts need a shell, which the SDK does not provide.
+- Lesson 19 shows a source over a folder of `SKILL.md` files. Skill scripts need a shell, which the SDK does not provide.
 
 ## Limits
 

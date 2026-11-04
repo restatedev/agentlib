@@ -4,7 +4,8 @@ Lessons:
 [02_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/02_tools.ts),
 [10_service_tool.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/10_service_tool.ts),
 [11_coding_agent.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/11_coding_agent.ts),
-[16_mcp_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/16_mcp_tools.ts)
+[14_web_search.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/14_web_search.ts),
+[17_mcp_tools.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/17_mcp_tools.ts)
 
 Tools are a map on the agent (`tools: {name: tool}`) or on a single run
 (`run(input, {tools})`). The key is the name the model sees. Inputs are Zod
@@ -122,6 +123,9 @@ const readFile: Tool<Ctx> = asyncTool({
   execute: ({path}, {context}) => context.sandbox.filesystem.readText(path),
 });
 ```
+
+Lesson 14 defines a Tavily search tool locally with `asyncTool` and `fetch`.
+Set `TAVILY_API_KEY` on the example server. There is no library web-search adapter.
 
 ## Remote and built-in tools
 
