@@ -93,13 +93,15 @@ export const codingAgent = restate.service({
   handlers: {
     ask: restate.schemas(
       {
-        input: z
-          .string()
-          .min(1)
-          .meta({default: "Write primes.js that prints the first 10 primes, then run it."}),
+        input: z.object({
+          task: z
+            .string()
+
+            .default("Write primes.js that prints the first 10 primes, then run it."),
+        }),
         output: z.string(),
       },
-      function* (task) {
+      function* ({task}) {
         const sandbox = yield* connect();
         try {
           const result = yield* coder.run(task, {context: {sandbox}});

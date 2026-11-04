@@ -84,13 +84,17 @@ export const skilledWriter = restate.service({
   handlers: {
     write: restate.schemas(
       {
-        input: z.string().min(1).meta({
-          default:
-            "Release notes for 2.4.0: added CSV export, fixed the login redirect loop, bumped lodash.",
+        input: z.object({
+          request: z
+            .string()
+
+            .default(
+              "Release notes for 2.4.0: added CSV export, fixed the login redirect loop, bumped lodash.",
+            ),
         }),
         output: z.string(),
       },
-      function* (request) {
+      function* ({request}) {
         const result = yield* writer.run(request);
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;

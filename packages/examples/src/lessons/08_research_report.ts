@@ -9,12 +9,12 @@ import {exampleModel as model} from "../shared.js";
 
 const sourceSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
-  title: z.string().min(1).max(200),
-  text: z.string().min(1).max(12000),
+  title: z.string().max(200),
+  text: z.string().max(12000),
 });
 const sourcesSchema = z
   .array(sourceSchema)
-  .min(1)
+
   .max(8)
   .refine(
     (sources) => new Set(sources.map((source) => source.id)).size === sources.length,
@@ -33,7 +33,7 @@ const exampleSources = [
   },
 ];
 const findingSchema = z.object({
-  answer: z.string().min(1).max(12000),
+  answer: z.string().max(12000),
   sourceIds: z.array(z.string()).max(8),
 });
 type Finding = z.infer<typeof findingSchema>;
@@ -45,7 +45,7 @@ const planner = agent({
   maxSteps: 3,
   instructions:
     "Research planner. Break the topic into 2–4 distinct questions answerable from the supplied source titles.",
-  output: z.object({questions: z.array(z.string().min(1).max(500)).min(2).max(4)}),
+  output: z.object({questions: z.array(z.string().max(500)).min(2).max(4)}),
 });
 const researcher = agent<ResearchContext, Finding>({
   name: "research-worker",
@@ -93,7 +93,7 @@ export const researchWorker = restate.service({
         input: z.object({
           question: z
             .string()
-            .min(1)
+
             .max(500)
             .default("How do replay and idempotency make external effects reliable?"),
           sources: sourcesSchema.default(exampleSources),
@@ -119,7 +119,7 @@ export const researchReport = restate.service({
         input: z.object({
           topic: z
             .string()
-            .min(1)
+
             .max(2000)
             .default("Explain how replay and idempotency make external effects reliable."),
           sources: sourcesSchema.default(exampleSources),

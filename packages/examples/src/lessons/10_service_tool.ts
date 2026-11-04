@@ -47,13 +47,15 @@ export const refundAgent = restate.service({
   handlers: {
     ask: restate.schemas(
       {
-        input: z
-          .string()
-          .min(1)
-          .meta({default: "Refund order O-99 for $12.50 and tell me the refund policy."}),
+        input: z.object({
+          message: z
+            .string()
+
+            .default("Refund order O-99 for $12.50 and tell me the refund policy."),
+        }),
         output: z.string(),
       },
-      function* (message) {
+      function* ({message}) {
         const result = yield* support.run(message);
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;

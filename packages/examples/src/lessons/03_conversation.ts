@@ -14,13 +14,15 @@ export const chatSession = restate.object({
   handlers: {
     ask: restate.schemas(
       {
-        input: z
-          .string()
-          .min(1)
-          .meta({default: "My name is Bob. Remember it for our next conversation."}),
+        input: z.object({
+          message: z
+            .string()
+
+            .default("My name is Bob. Remember it for our next conversation."),
+        }),
         output: z.string(),
       },
-      function* (message) {
+      function* ({message}) {
         const messages = (yield* restate.state().get<Message[]>("messages")) ?? [];
         const result = yield* assistant.run(message, {messages});
         restate.state().set("messages", result.messages);

@@ -110,7 +110,7 @@ after(async () => {
 void test("the coding agent works in one sandbox and releases it", async () => {
   const result = await connect({url: env.baseUrl()})
     .client(codingAgent)
-    .ask("Write primes.js and run it.");
+    .ask({task: "Write primes.js and run it."});
   assert.equal(result, "2,3,5,7");
   // Replayed on every suspension, yet created and released exactly once.
   assert.deepEqual(calls, {create: 1, terminate: 1});

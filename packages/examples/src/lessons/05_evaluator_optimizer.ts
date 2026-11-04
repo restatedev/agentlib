@@ -7,7 +7,7 @@ import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 
 const MAX_ITERATIONS = 3;
-const evaluationSchema = z.object({approved: z.boolean(), feedback: z.string().min(1).max(4000)});
+const evaluationSchema = z.object({approved: z.boolean(), feedback: z.string().max(4000)});
 
 const generator = agent({
   name: "code-writer",
@@ -15,7 +15,7 @@ const generator = agent({
   maxSteps: 3,
   instructions:
     "Code writer. Write a small, self-contained TypeScript solution to the task. When a previous draft and feedback are supplied, correct that draft. Return code as data; nothing is executed.",
-  output: z.object({code: z.string().min(1).max(24000)}),
+  output: z.object({code: z.string().max(24000)}),
 });
 const evaluator = agent({
   name: "code-reviewer",
@@ -33,7 +33,7 @@ export const codeReview = restate.service({
         input: z.object({
           task: z
             .string()
-            .min(1)
+
             .max(4000)
             .default(
               "Write a TypeScript function that returns the first item of an array, or undefined when it is empty.",

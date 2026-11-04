@@ -14,7 +14,7 @@ const bookingAgent = agent<BookingContext>({
   tools: {
     bookHotel: asyncTool({
       description: "Book the quoted demo hotel. The application supplies the authoritative price.",
-      input: z.object({hotelId: z.string().min(1)}),
+      input: z.object({hotelId: z.string()}),
       *before({hotelId}, {context}) {
         if (hotelId !== context.hotelId) return "Only the quoted hotel can be booked";
         if (context.quotedTotalCents > context.maxTotalCents) return "The quote exceeds the budget";
@@ -32,7 +32,7 @@ export const guardedBooking = restate.service({
     ask: restate.schemas(
       {
         input: z.object({
-          hotelId: z.string().min(1).default("H-42"),
+          hotelId: z.string().default("H-42"),
           quotedTotalCents: z.number().int().positive().default(12500),
           maxTotalCents: z.number().int().positive().default(10000),
         }),

@@ -33,7 +33,7 @@ const auditor = agent({
   tools: {
     countStock: tool({
       description: "Count stock in demo warehouses.",
-      input: z.object({warehouses: z.array(z.string().min(1)).min(1).max(10)}),
+      input: z.object({warehouses: z.array(z.string()).max(10)}),
       *execute({warehouses}, context) {
         const counts: Record<string, number> = {};
         for (const warehouse of warehouses) {
@@ -52,8 +52,8 @@ export const inventoryAudit = restate.service({
     audit: restate.schemas(
       {
         input: z.object({
-          job: z.string().min(1).default("audit-1"),
-          request: z.string().min(1).default("Count stock in Berlin, Lisbon, and Oslo."),
+          job: z.string().default("audit-1"),
+          request: z.string().default("Count stock in Berlin, Lisbon, and Oslo."),
         }),
         output: z.string(),
       },

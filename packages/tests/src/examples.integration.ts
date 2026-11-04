@@ -407,36 +407,46 @@ after(async () => {
 const ingress = () => connect({url: env.baseUrl()});
 
 void test("01: each request starts a fresh run", async () => {
-  assert.equal(await ingress().client(hello).ask("Hello"), "Hello");
-  assert.equal(await ingress().client(hello).ask("Another request"), "Another request");
+  assert.equal(await ingress().client(hello).ask({message: "Hello"}), "Hello");
+  assert.equal(await ingress().client(hello).ask({message: "Another request"}), "Another request");
+});
+
+void test("01: an object request applies the UI prompt default", async () => {
+  const response = await fetch(`${env.baseUrl()}/Hello/ask`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: "{}",
+  });
+  assert.equal(response.status, 200);
+  assert.equal(await response.json(), "Say hello in one sentence.");
 });
 
 void test("02: the model receives the executed tool's result", async () => {
-  const result = await ingress().client(ticketLookup).ask("Look up ticket T-42");
+  const result = await ingress().client(ticketLookup).ask({message: "Look up ticket T-42"});
   assert.equal(result, "Ticket T-42 is open.");
 });
 
 void test("03: history persists between requests and is isolated by key", async () => {
   const bob = ingress().client(chatSession, "bob");
-  assert.equal(await bob.ask("My name is Bob."), "My name is Bob.");
-  assert.equal(await bob.ask("What is my name?"), "My name is Bob. | What is my name?");
+  assert.equal(await bob.ask({message: "My name is Bob."}), "My name is Bob.");
+  assert.equal(await bob.ask({message: "What is my name?"}), "My name is Bob. | What is my name?");
   const alice = ingress().client(chatSession, "alice");
-  assert.equal(await alice.ask("What is my name?"), "What is my name?");
+  assert.equal(await alice.ask({message: "What is my name?"}), "What is my name?");
 });
 
 void test("04: structured output reaches the caller as an object", async () => {
-  const result = await ingress().client(ticketTriage).classify("I was charged twice.");
+  const result = await ingress().client(ticketTriage).classify({message: "I was charged twice."});
   assert.deepEqual(result, {category: "billing", summary: "Duplicate subscription charge."});
 });
 
 void test("routing chooses a specialist and gives it a fresh run", async () => {
   const client = connect({url: env.baseUrl()}).client(supportRouter);
   assert.equal(
-    await client.answer("I cannot log into my account."),
+    await client.answer({question: "I cannot log into my account."}),
     "Use the account recovery flow.",
   );
   assert.equal(
-    await client.answer("How does this feature work?"),
+    await client.answer({question: "How does this feature work?"}),
     "Here is how the feature works.",
   );
 });
@@ -460,7 +470,7 @@ void test(
     const before = new Set(peerEffects.keys());
     const result = await ingress()
       .client(peerReview)
-      .answer("Write a two-sentence release note about retries and journal replay.");
+      .answer({brief: "Write a two-sentence release note about retries and journal replay."});
     assert.equal(result, "Revised answer.");
     // Two drafts and two reviews, each run exactly once despite forced replay.
     const added = [...peerEffects].filter(([key]) => !before.has(key));
@@ -495,7 +505,7 @@ for (const {approved, expected} of approvalDecisions) {
     async () => {
       const client = approvalClient(`decision-${approved}`);
       const [reply] = await Promise.all([
-        client.ask("Close ticket T-42 after I approve it."),
+        client.ask({message: "Close ticket T-42 after I approve it."}),
         (async () => {
           const request = await waitForApproval(client);
           assert.equal(request.call.name, "closeTicket");
@@ -519,7 +529,7 @@ void test(
   async () => {
     const client = approvalClient("stale-approval");
     const [, previous] = await Promise.all([
-      client.ask("Close ticket T-42 after I approve it."),
+      client.ask({message: "Close ticket T-42 after I approve it."}),
       (async () => {
         const request = await waitForApproval(client);
         await client.approve({
@@ -531,7 +541,7 @@ void test(
       })(),
     ]);
     const [reply] = await Promise.all([
-      client.ask("Close ticket T-42 after I approve it."),
+      client.ask({message: "Close ticket T-42 after I approve it."}),
       (async () => {
         const request = await waitForApproval(client);
         assert.equal(request.signalName, previous.signalName);
@@ -672,6 +682,6 @@ void test(
 );
 
 void test("19: the agent loads a skill from the folder and reads its file", async () => {
-  const notes = await ingress().client(skilledWriter).write("Release notes for 2.4.0");
+  const notes = await ingress().client(skilledWriter).write({request: "Release notes for 2.4.0"});
   assert.equal(notes, "## <version> — <date>");
 });

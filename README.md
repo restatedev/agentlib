@@ -86,7 +86,7 @@ In another terminal:
 
 ```sh
 pnpm dlx @restatedev/restate deployments register http://localhost:9080
-curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
+curl localhost:8080/Hello/ask --json '{"message":"Say hello in one sentence."}'
 ```
 
 TypeScript callers can use Restate's typed client instead, as the
@@ -98,7 +98,7 @@ import {hello} from "@restatedev/agentlib-examples/hello";
 
 const answer = await connect({url: "http://localhost:8080"})
   .client(hello)
-  .ask("Say hello in one sentence.");
+  .ask({message: "Say hello in one sentence."});
 console.log(answer);
 ```
 
@@ -157,7 +157,7 @@ repeat a completed model call.
 | MCP                          | `mcpTools` (`/mcp`), passed as `run(input, {tools})`                       | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
 | AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |
-| Web search                   | `webSearch` (`/web-search`)                                                | [14](packages/examples/src/lessons/14_web_search.ts)        |
+| Web search                   | Example-local `asyncTool` calling Tavily                                   | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Skills                       | `agent({skills})` with any `SkillSource`, `skills([...])`                  | [19](packages/examples/src/lessons/19_skills.ts)            |
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
 | Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
