@@ -32,14 +32,14 @@ const assistant = agent({
   tools: {
     lookupOrder: asyncTool({
       description: "Look up a demo order.",
-      input: z.object({orderId: z.string().min(1)}),
+      input: z.object({orderId: z.string()}),
       async execute({orderId}) {
         return {orderId, status: "shipped"};
       },
     }),
     cancelOrder: asyncTool({
       description: "Cancel a demo order after a person approves. No real order changes.",
-      input: z.object({orderId: z.string().min(1)}),
+      input: z.object({orderId: z.string()}),
       needsApproval: true,
       async execute({orderId}) {
         return {orderId, status: "cancelled"};
@@ -102,8 +102,8 @@ export const agUiThread = restate.object({
     turn: restate.schemas(
       {
         input: z.object({
-          messageId: z.string().min(1).default("m1"),
-          message: z.string().min(1).default("Cancel order O-7."),
+          messageId: z.string().default("m1"),
+          message: z.string().default("Cancel order O-7."),
           tools: z.array(clientTool).default([]),
         }),
         output: z.void(),

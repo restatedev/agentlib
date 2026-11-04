@@ -10,8 +10,8 @@ the services in tutorial order, [app.ts](src/app.ts) serves them, and
 Each prompt handler declares a Zod input schema with a scenario-specific
 default for the request editor. The research example also supplies demo sources. Rediscover
 the endpoint after changing a schema so Restate receives the updated defaults.
-String bodies use `.meta({default: ...})` to prefill the editor while keeping
-the request body required; object fields use `.default(...)`.
+Prompt inputs use JSON objects with `.default(...)` on their fields. This keeps
+string values correctly quoted in the Restate UI request editor, ready to send.
 
 | Lesson | New concept                           | Source                                                             |
 | ------ | ------------------------------------- | ------------------------------------------------------------------ |
@@ -86,7 +86,7 @@ to the agent and returns its answer as a JSON string. Each call starts with no
 conversation history.
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/Hello/ask" --json '"Say hello in one sentence."'
+curl --globoff "$RESTATE_CALL_URL/Hello/ask" --json '{"message":"Say hello in one sentence."}'
 ```
 
 The response is just the answer, such as `"Hello!"`. A run that stopped or was
@@ -105,7 +105,7 @@ result in its answer.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/TicketLookup/ask" \
-  --json '"What is the status of ticket T-42?"'
+  --json '{"message":"What is the status of ticket T-42?"}'
 ```
 
 The lesson uses `asyncTool` with an ordinary `async execute(...)` callback.
@@ -127,8 +127,8 @@ messages. Pass them to the agent, then save `result.messages` afterward. Return
 only the reply; the history stays in object state.
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '"My name is Bob."'
-curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '"What is my name?"'
+curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '{"message":"My name is Bob."}'
+curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '{"message":"What is my name?"}'
 ```
 
 Both requests use `bob`, so the second sees the first exchange. A different key gets
@@ -142,7 +142,7 @@ answer and gives the caller the typed object directly.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/TicketTriage/classify" \
-  --json '"I was charged twice for my subscription."'
+  --json '{"message":"I was charged twice for my subscription."}'
 ```
 
 A successful response is an object such as
@@ -180,7 +180,7 @@ Start a request in one terminal:
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/TicketApproval/bob/ask" \
-  --json '"Close ticket T-42 after I approve it."'
+  --json '{"message":"Close ticket T-42 after I approve it."}'
 ```
 
 This request waits. Before executing the tool, the SDK calls `onApproval(request)`
@@ -293,7 +293,7 @@ to one handler instead. Virtual objects and workflows also take a `key`.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/RefundAgent/ask" \
-  --json '"Refund order O-99 for $12.50 and tell me the refund policy."'
+  --json '{"message":"Refund order O-99 for $12.50 and tell me the refund policy."}'
 ```
 
 Each call is a durable child invocation. Interrupting the run cancels an
@@ -331,7 +331,7 @@ Authenticate with `modal token new`, or set `MODAL_TOKEN_ID` and
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/CodingAgent/ask" \
-  --json '"Write primes.js that prints the first 10 primes, then run it."'
+  --json '{"task":"Write primes.js that prints the first 10 primes, then run it."}'
 ```
 
 ## 12 — Route a request to a specialist
@@ -351,7 +351,7 @@ function* (question) {
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/SupportRouter/answer" \
-  --json '"I cannot log into my account. How can I regain access?"'
+  --json '{"question":"I cannot log into my account. How can I regain access?"}'
 ```
 
 The specialist starts a fresh run with only the question. Use `handoff` when
@@ -396,7 +396,7 @@ and cites the returned URLs.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/WebResearch/answer" \
-  --json '"Find the Restate TypeScript SDK docs and cite their URLs."'
+  --json '{"question":"Find the Restate TypeScript SDK docs and cite their URLs."}'
 ```
 
 ## 15 — Let agents exchange feedback over RPC
@@ -426,7 +426,7 @@ sequenceDiagram
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/PeerReview/answer" \
-  --json '"Write a two-sentence release note for a feature that retries transient failures and resumes completed steps from a journal."'
+  --json '{"brief":"Write a two-sentence release note for a feature that retries transient failures and resumes completed steps from a journal."}'
 ```
 
 The caller receives only the revised answer. Restate journals each RPC, so a
@@ -450,7 +450,7 @@ each tool into a journaled step. The lesson gives an agent the tools of the
 Restate docs server at `https://docs.restate.dev/mcp`.
 
 ```sh
-curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '"What is a virtual object?"'
+curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '{"question":"What is a virtual object?"}'
 ```
 
 ## 18 — Serve an AG-UI client
@@ -508,7 +508,7 @@ Skills defined in code need no folder: use `skills([{name, description,
 instructions, files}])` from `@restatedev/agentlib`.
 
 ```sh
-curl "$RESTATE_CALL_URL/SkilledWriter/write" --json '"Release notes for 2.4.0: added CSV export, fixed the login redirect loop, bumped lodash."'
+curl "$RESTATE_CALL_URL/SkilledWriter/write" --json '{"request":"Release notes for 2.4.0: added CSV export, fixed the login redirect loop, bumped lodash."}'
 ```
 
 A skill's scripts are out of scope: the SDK offers no shell to run them. An

@@ -16,10 +16,10 @@ export const docsGuide = restate.service({
   handlers: {
     ask: restate.schemas(
       {
-        input: z.string().min(1).meta({default: "What is a virtual object?"}),
+        input: z.object({question: z.string().default("What is a virtual object?")}),
         output: z.string(),
       },
-      function* (question) {
+      function* ({question}) {
         // The catalog is fetched once and journaled; each tool call is a journaled step.
         const docs = yield* mcpTools({
           url: "https://docs.restate.dev/mcp",

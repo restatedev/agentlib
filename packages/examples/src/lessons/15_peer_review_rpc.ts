@@ -5,8 +5,8 @@ import {agent} from "@restatedev/agentlib";
 import {z} from "zod";
 import {exampleModel as model} from "../shared.js";
 
-const brief = z.string().min(1).max(4000);
-const draft = z.string().min(1).max(12000);
+const brief = z.string().max(4000);
+const draft = z.string().max(12000);
 const reviewFocuses = ["requirements", "clarity"] as const;
 const focus = z.enum(reviewFocuses);
 
@@ -31,7 +31,7 @@ export const peerAuthor = restate.service({
         input: z.object({
           brief,
           draft: draft.optional(),
-          feedback: z.array(z.string().min(1).max(2000)).max(2),
+          feedback: z.array(z.string().max(2000)).max(2),
         }),
         output: draft,
       },
@@ -50,7 +50,7 @@ export const peerReviewer = restate.service({
   name: "PeerReviewer",
   handlers: {
     review: restate.schemas(
-      {input: z.object({brief, draft, focus}), output: z.string().min(1).max(2000)},
+      {input: z.object({brief, draft, focus}), output: z.string().max(2000)},
       function* (request) {
         const result = yield* reviewer.run(JSON.stringify(request), {
           name: `review-${request.focus}`,
@@ -68,13 +68,14 @@ export const peerReview = restate.service({
   handlers: {
     answer: restate.schemas(
       {
-        input: brief.meta({
-          default:
+        input: z.object({
+          brief: brief.default(
             "Write a two-sentence release note for a feature that retries transient failures and resumes completed steps from a journal.",
+          ),
         }),
         output: draft,
       },
-      function* (request) {
+      function* ({brief: request}) {
         const firstDraft = yield* restate.client(peerAuthor).write({brief: request, feedback: []});
         const comments = yield* restate.all(
           reviewFocuses.map((focus) =>

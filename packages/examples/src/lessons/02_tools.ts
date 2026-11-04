@@ -31,10 +31,10 @@ export const ticketLookup = restate.service({
   handlers: {
     ask: restate.schemas(
       {
-        input: z.string().min(1).meta({default: "What is the status of ticket T-42?"}),
+        input: z.object({message: z.string().default("What is the status of ticket T-42?")}),
         output: z.string(),
       },
-      function* (message) {
+      function* ({message}) {
         const result = yield* support.run(message);
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;

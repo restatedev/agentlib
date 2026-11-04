@@ -14,14 +14,14 @@ const support = agent({
   tools: {
     lookupTicket: asyncTool({
       description: "Look up a demo support ticket. No ticketing system is called.",
-      input: z.object({ticket: z.string().min(1)}),
+      input: z.object({ticket: z.string()}),
       async execute({ticket}) {
         return {ticket, status: "open"};
       },
     }),
     closeTicket: asyncTool({
       description: "Close a demo ticket after human approval. No external ticket is changed.",
-      input: z.object({ticket: z.string().min(1)}),
+      input: z.object({ticket: z.string()}),
       needsApproval: true,
       async execute({ticket}) {
         return {ticket, status: "closed"};
@@ -39,7 +39,7 @@ export const aiSession = restate.object({
         input: z.object({
           message: z
             .string()
-            .min(1)
+
             .default("Look up ticket T-42, then close it after my approval."),
         }),
         output: z.string(),
@@ -78,27 +78,31 @@ export const aiSession = restate.object({
     },
     steer: restate.schemas(
       {
-        input: z.string().min(1).meta({default: "Only look up the ticket; do not close it."}),
+        input: z.object({
+          message: z.string().default("Only look up the ticket; do not close it."),
+        }),
         output: z.boolean(),
       },
-      function* (message) {
+      function* ({message}) {
         return yield* signalActiveTurn("steering", message);
       },
     ),
     interrupt: restate.schemas(
       {
-        input: z.string().min(1).meta({default: "Stop this task; I no longer need the result."}),
+        input: z.object({
+          reason: z.string().default("Stop this task; I no longer need the result."),
+        }),
         output: z.boolean(),
       },
-      function* (reason) {
+      function* ({reason}) {
         return yield* signalActiveTurn("interrupt", reason);
       },
     ),
     approve: restate.schemas(
       {
         input: z.object({
-          invocationId: z.string().min(1).describe("Copy invocationId from status().approval."),
-          signalName: z.string().min(1).describe("Copy signalName from the same approval request."),
+          invocationId: z.string().describe("Copy invocationId from status().approval."),
+          signalName: z.string().describe("Copy signalName from the same approval request."),
           approved: z.boolean().default(false),
         }),
         output: z.boolean(),

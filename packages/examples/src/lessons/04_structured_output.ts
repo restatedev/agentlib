@@ -21,13 +21,15 @@ export const ticketTriage = restate.service({
   handlers: {
     classify: restate.schemas(
       {
-        input: z
-          .string()
-          .min(1)
-          .meta({default: "I was charged twice for my subscription. Please help me get a refund."}),
+        input: z.object({
+          message: z
+            .string()
+
+            .default("I was charged twice for my subscription. Please help me get a refund."),
+        }),
         output: classificationSchema,
       },
-      function* (message) {
+      function* ({message}) {
         const result = yield* triage.run(message);
         if (result.status !== "completed")
           throw new TerminalError(`Triage ${result.status}: ${result.reason}`);

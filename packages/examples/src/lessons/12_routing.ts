@@ -34,13 +34,15 @@ export const supportRouter = restate.service({
   handlers: {
     answer: restate.schemas(
       {
-        input: z
-          .string()
-          .min(1)
-          .meta({default: "I can't log into my account. How can I regain access?"}),
+        input: z.object({
+          question: z
+            .string()
+
+            .default("I can't log into my account. How can I regain access?"),
+        }),
         output: z.string(),
       },
-      function* (question) {
+      function* ({question}) {
         const routed = yield* route.run(question);
         if (routed.status !== "completed")
           throw new TerminalError(`Router ${routed.status}: ${routed.reason}`);

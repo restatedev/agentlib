@@ -40,7 +40,7 @@ export const racingAgents = restate.service({
         input: z.object({
           question: z
             .string()
-            .min(1)
+
             .max(4000)
             .default("How should a durable workflow handle external side effects?"),
         }),

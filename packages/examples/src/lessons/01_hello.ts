@@ -10,8 +10,11 @@ export const hello = restate.service({
   name: "Hello",
   handlers: {
     ask: restate.schemas(
-      {input: z.string().min(1).meta({default: "Say hello in one sentence."}), output: z.string()},
-      function* (message) {
+      {
+        input: z.object({message: z.string().default("Say hello in one sentence.")}),
+        output: z.string(),
+      },
+      function* ({message}) {
         const result = yield* assistant.run(message);
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;

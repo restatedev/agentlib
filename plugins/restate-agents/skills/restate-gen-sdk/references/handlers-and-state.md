@@ -24,7 +24,8 @@ Call it over HTTP at `POST <ingress>/Pricing/quote` with a JSON body.
 
 Wrap a handler in `restate.schemas` to validate with any Standard Schema
 library (Zod, Valibot, ArkType). The schemas also appear in Restate's UI and
-discovery. `.meta({default})` prefills the request editor.
+discovery. Use an object input with field defaults so the request editor
+prefills valid JSON, including quotes around string values.
 
 ```ts
 import {z} from "zod";
@@ -34,10 +35,10 @@ export const triage = restate.service({
   handlers: {
     classify: restate.schemas(
       {
-        input: z.string().min(1).meta({default: "I was charged twice."}),
+        input: z.object({message: z.string().default("I was charged twice.")}),
         output: z.object({category: z.enum(["billing", "other"])}),
       },
-      function* (message) {
+      function* ({message}) {
         return {category: message.includes("charged") ? "billing" : "other"} as const;
       },
     ),

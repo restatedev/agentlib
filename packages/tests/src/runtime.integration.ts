@@ -827,8 +827,8 @@ void test("the embeddable session example exposes shared controls without model 
   const status = await client.status();
   assert.equal(status.approval, null);
   assert.deepEqual(await client.history(), {messages: [], next: 0});
-  assert.equal(await client.steer("new note"), false);
-  assert.equal(await client.interrupt("stop"), false);
+  assert.equal(await client.steer({message: "new note"}), false);
+  assert.equal(await client.interrupt({reason: "stop"}), false);
 });
 
 void test(

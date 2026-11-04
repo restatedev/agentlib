@@ -86,7 +86,7 @@ In another terminal:
 
 ```sh
 pnpm dlx @restatedev/restate deployments register http://localhost:9080
-curl localhost:8080/Hello/ask --json '"Say hello in one sentence."'
+curl localhost:8080/Hello/ask --json '{"message":"Say hello in one sentence."}'
 ```
 
 TypeScript callers can use Restate's typed client instead, as the
@@ -98,7 +98,7 @@ import {hello} from "@restatedev/agentlib-examples/hello";
 
 const answer = await connect({url: "http://localhost:8080"})
   .client(hello)
-  .ask("Say hello in one sentence.");
+  .ask({message: "Say hello in one sentence."});
 console.log(answer);
 ```
 

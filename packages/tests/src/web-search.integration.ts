@@ -62,7 +62,9 @@ void test("the local Tavily tool bounds results and does not repeat HTTP on repl
   });
   try {
     assert.equal(
-      await connect({url: env.baseUrl()}).client(webResearch).answer("Find Restate docs"),
+      await connect({url: env.baseUrl()})
+        .client(webResearch)
+        .answer({question: "Find Restate docs"}),
       "https://docs.restate.dev/",
     );
     assert.equal(requests, 1);
