@@ -54,6 +54,19 @@ function finished(reason: string | undefined) {
   if (reason !== "stop" && reason !== "tool-calls")
     throw new ModelProtocolError(`Incomplete model response: ${reason ?? "unknown"}`);
 }
+
+function contextOverflow(error: APICallError): boolean {
+  if (error.statusCode === 413) return true;
+  const data: unknown = error.data;
+  if (!data || typeof data !== "object" || !("error" in data)) return false;
+  const detail = data.error;
+  return (
+    !!detail &&
+    typeof detail === "object" &&
+    "code" in detail &&
+    detail.code === "context_length_exceeded"
+  );
+}
 // Namespaced: each provider reads its own key, so no provider detection is needed.
 const CACHE_POINT = {
   anthropic: {cacheControl: {type: "ephemeral"}},
@@ -253,9 +266,9 @@ export function aiModel(options: ProviderOptions): Model {
       // throttling and transient provider failures stay retryable.
       if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
         throw new TerminalError(error.message);
-      // Providers word an overflow differently and give it no code of its own,
-      // so only a 413 counts here; contextWindow avoids the rest up front.
-      if (APICallError.isInstance(error) && error.statusCode === 413)
+      // Use the SDK's parsed error code or HTTP 413, never provider-specific
+      // message text. contextWindow avoids uncoded overflows up front.
+      if (APICallError.isInstance(error) && contextOverflow(error))
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});

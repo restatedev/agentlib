@@ -18,7 +18,18 @@ import {fileURLToPath} from "node:url";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, type SkillSource} from "@restatedev/agentlib";
 import {z} from "zod";
-import {exampleModel as model} from "../shared.js";
+import {openai} from "@ai-sdk/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
+
+const model = aiModel({
+  model: openai("gpt-5.6-luna"),
+  retry: {
+    maxAttempts: 3,
+    initialInterval: {milliseconds: 500},
+    exponentiationFactor: 2,
+    maxInterval: {seconds: 5},
+  },
+});
 
 /**
  * A SKILL.md's frontmatter fields and its body. Enough YAML for skills:

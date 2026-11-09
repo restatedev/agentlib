@@ -39,15 +39,16 @@ Install the SDK next to the Restate SDKs it builds on, or clone the
 with one agent and one handler:
 
 ```sh
-npm install @restatedev/agentlib @restatedev/restate-sdk @restatedev/restate-sdk-gen
+npm install @restatedev/agentlib @restatedev/restate-sdk @restatedev/restate-sdk-gen @ai-sdk/openai
 ```
 
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restatedev/agentlib";
-import {openAIModel} from "@restatedev/agentlib/openai";
+import {openai} from "@ai-sdk/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
 
-const assistant = agent({model: openAIModel({model: "gpt-5.6-luna"})});
+const assistant = agent({model: aiModel({model: openai("gpt-5.6-luna")})});
 
 export const hello = restate.service({
   name: "Hello",
@@ -76,9 +77,8 @@ with live controls. Start a Restate server, for example with
 ```sh
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
-# Optional: export AGENT_MODEL=...  An OpenAI model (with OPENAI_BASE_URL, one on
-# any Chat Completions server), or anthropic:<model> or bedrock:<model> with that
-# provider's credentials. Lessons that need other keys say so.
+# Each lesson defines its model locally; edit that definition to change providers.
+# Lessons that need other keys say so.
 pnpm dev
 ```
 
@@ -163,7 +163,7 @@ repeat a completed model call.
 | Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |
 | Custom model adapters        | `journaledModel`                                                           | —                                                           |
-| Models                       | `openAIModel` (`/openai`), `aiModel`, `modelGateway` (`/provider`)         | [shared.ts](packages/examples/src/shared.ts)                |
+| Models                       | `aiModel`, `modelGateway` (`/provider`)                                    | [01_hello.ts](packages/examples/src/lessons/01_hello.ts)    |
 
 Subpaths are imports from `@restatedev/agentlib`, such as
 `@restatedev/agentlib/mcp`. `aiModel` accepts an OpenTelemetry `tracer`, and

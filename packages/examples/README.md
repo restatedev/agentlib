@@ -61,8 +61,7 @@ from the workspace root:
 ```sh
 pnpm install --frozen-lockfile
 export OPENAI_API_KEY=...
-# Optional: export AGENT_MODEL=...  For example anthropic:claude-sonnet-5-5,
-# with ANTHROPIC_API_KEY; see "Model configuration" below.
+# To change providers, edit the model in the lesson; see "Model configuration" below.
 pnpm dev
 ```
 
@@ -516,28 +515,44 @@ agent with a sandbox, as in lesson 11, can copy a skill in and run them.
 
 ## Model configuration
 
-[shared.ts](src/shared.ts) configures the example model from `AGENT_MODEL`:
-`anthropic:<model>` (reads `ANTHROPIC_API_KEY`), `bedrock:<model>` (reads the
-AWS credentials), or an OpenAI model, optionally as `openai:<model>`. The
-OpenAI adapter speaks Chat Completions, so with `OPENAI_BASE_URL` it reaches
-compatible servers such as DeepSeek, xAI, OpenRouter, Ollama or vLLM.
-`openAIModel` defaults
-GPT-5.6 function-tool requests to `reasoning_effort: "none"` to avoid the default
-Luna model's Chat Completions tool/reasoning compatibility error. Explicit model
-settings are preserved. Change an agent's `model` field to use another adapter
-or gateway.
+Each lesson defines its own model with `aiModel`, so the provider and retry
+policy are visible alongside the agent. The examples use OpenAI Responses
+and read `OPENAI_API_KEY` when the first call is made; importing a lesson
+requires no credentials.
+
+To choose another model or provider, edit that lesson's definition. For
+example, use Anthropic with `ANTHROPIC_API_KEY`:
+
+```ts
+import {anthropic} from "@ai-sdk/anthropic";
+import {aiModel} from "@restatedev/agentlib/provider";
+
+const model = aiModel({
+  model: anthropic("claude-sonnet-5-5"),
+  retry: {maxAttempts: 3},
+});
+```
+
+For Bedrock, use `createAmazonBedrock({region: "us-east-1"})("<model id>")`
+from `@ai-sdk/amazon-bedrock` with AWS credentials. For a Chat Completions-compatible
+server, use `createOpenAI({baseURL: "https://your-server/v1", apiKey: "..."}).chat("<model id>")`
+from `@ai-sdk/openai`. Pass provider-specific settings through
+`aiModel({providerOptions, ...})`.
+
+There is no shared `AGENT_MODEL` selector; each example's model configuration
+is independent.
 
 ## Retry policies
 
 Configure retries at the operation that can fail; there is no agent-wide retry
 default. `maxSteps` limits the model/tool loop, not retries.
 
-| Operation           | Where to configure it                                  | Example                                |
-| ------------------- | ------------------------------------------------------ | -------------------------------------- |
-| Ordinary async tool | `asyncTool({retry, ...})`                              | [02_tools.ts](src/lessons/02_tools.ts) |
-| Model call          | `openAIModel({retry, ...})` or `aiModel({retry, ...})` | [shared.ts](src/shared.ts)             |
-| Individual action   | `restate.run(action, {name, retry})`                   | Below                                  |
-| Handler-backed tool | `retryPolicy` on the called service or handler         | —                                      |
+| Operation           | Where to configure it                          | Example                                |
+| ------------------- | ---------------------------------------------- | -------------------------------------- |
+| Ordinary async tool | `asyncTool({retry, ...})`                      | [02_tools.ts](src/lessons/02_tools.ts) |
+| Model call          | `aiModel({retry, ...})`                        | [01_hello.ts](src/lessons/01_hello.ts) |
+| Individual action   | `restate.run(action, {name, retry})`           | Below                                  |
+| Handler-backed tool | `retryPolicy` on the called service or handler | —                                      |
 
 Lesson 02 uses this policy; the same shape works for model adapters and
 individual actions:

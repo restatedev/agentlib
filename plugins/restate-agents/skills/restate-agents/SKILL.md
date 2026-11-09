@@ -23,9 +23,10 @@ results replay from the journal instead of repeating.
 ```ts
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent} from "@restatedev/agentlib";
-import {openAIModel} from "@restatedev/agentlib/openai";
+import {openai} from "@ai-sdk/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
 
-const assistant = agent({model: openAIModel({model: "gpt-5.6-luna"})});
+const assistant = agent({model: aiModel({model: openai("gpt-5.6-luna")})});
 
 export const hello = restate.service({
   name: "Hello",
@@ -47,12 +48,10 @@ apply to agent handlers and tools too.
 - Dependencies: `@restatedev/agentlib`, `@restatedev/restate-sdk`,
   `@restatedev/restate-sdk-gen`, and `zod`. The agentlib lives in
   https://github.com/restatedev/agentlib.
-- A model adapter. OpenAI models (and OpenAI-compatible servers) use
-  `openAIModel` from `@restatedev/agentlib/openai`. Every other model
-  (Anthropic, Bedrock, Google, Mistral, OpenRouter, ...) goes through the
-  [Vercel AI SDK](https://ai-sdk.dev): install that provider's `@ai-sdk/*`
-  package and wrap its model with `aiModel` from `@restatedev/agentlib/provider`.
-  See `references/models-and-testing.md`.
+- A model adapter. All providers, including OpenAI, go through the
+  [Vercel AI SDK](https://ai-sdk.dev): install the provider package (for example
+  `@ai-sdk/openai`) and wrap its model with `aiModel` from
+  `@restatedev/agentlib/provider`. See `references/models-and-testing.md`.
 - Serve the handlers with `serve({services, port: 9080})` from
   `@restatedev/restate-sdk` and register them, as in the `restate-gen-sdk`
   skill.

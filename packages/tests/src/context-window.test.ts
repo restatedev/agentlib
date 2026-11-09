@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
-import OpenAI from "openai";
+import {createOpenAI} from "@ai-sdk/openai";
 import {APICallError} from "ai";
 import {MockLanguageModelV4} from "ai/test";
 import {
@@ -17,7 +17,6 @@ import {
   type ModelResponse,
   type ProgressEvent,
 } from "@restatedev/agentlib";
-import {openAIModel} from "@restatedev/agentlib/openai";
 import {aiModel} from "@restatedev/agentlib/provider";
 import {z} from "zod";
 import {estimateTokens} from "../../core/src/context-size.js";
@@ -399,12 +398,12 @@ void test("previews and usage replay from the journal", async () => {
   assert.equal(fetches, 1);
 });
 
-void test("the adapters report usage", async () => {
-  const client = new OpenAI({
+void test("AI SDK reports usage for OpenAI and other providers", async () => {
+  const client = createOpenAI({
     apiKey: "test-only",
     fetch: async () =>
       Response.json({
-        choices: [{finish_reason: "stop", message: {content: "hi"}}],
+        choices: [{index: 0, finish_reason: "stop", message: {content: "hi"}}],
         usage: {
           prompt_tokens: 120,
           completion_tokens: 7,
@@ -426,7 +425,7 @@ void test("the adapters report usage", async () => {
   });
   const request: ModelRequest = {messages: [{role: "user", content: "hi"}], tools: []};
   const ask = (model: Model) => runHandler((ctx) => r.execute(ctx, model(request)));
-  const openai = await ask(openAIModel({client, model: "test-model"}));
+  const openai = await ask(aiModel({model: client.chat("test-model")}));
   assert.deepEqual(openai.output.usage, {
     inputTokens: 120,
     outputTokens: 7,
@@ -584,7 +583,7 @@ void test("overflow recovery replays from the journal", async () => {
   assert.equal(calls, live);
 });
 
-void test("the adapters classify an overflow by its code, never its message", async () => {
+void test("AI SDK classifies overflow codes and HTTP 413, never matching error messages", async () => {
   const request: ModelRequest = {messages: [{role: "user", content: "hi"}], tools: []};
   const failure = (model: Model) =>
     runHandler((ctx) =>
@@ -601,13 +600,11 @@ void test("the adapters classify an overflow by its code, never its message", as
       ),
     );
   const openai = (status: number, error: Record<string, unknown>) =>
-    openAIModel({
-      model: "test-model",
-      client: new OpenAI({
+    aiModel({
+      model: createOpenAI({
         apiKey: "test-only",
-        maxRetries: 0,
         fetch: async () => Response.json({error}, {status}),
-      }),
+      }).chat("test-model"),
     });
   assert.equal(
     (

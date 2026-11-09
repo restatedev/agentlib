@@ -29,7 +29,7 @@ const orders: Model = function* (request): Generator<never, ModelResponse> {
   const turn = request.messages.filter((message) => message.role === "user").length;
   return {type: "tool_calls", calls: [{id: `${name}-${turn}`, name, input: {orderId: "O-7"}}]};
 };
-mock.module("@restatedev/agentlib/openai", {namedExports: {openAIModel: () => orders}});
+mock.module("@restatedev/agentlib/provider", {namedExports: {aiModel: () => orders}});
 const {agUiThread, agUiHandler} = await import("@restatedev/agentlib-examples/ag-ui");
 
 let env: RestateTestEnvironment;
