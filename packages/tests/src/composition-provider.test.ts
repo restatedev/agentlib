@@ -16,6 +16,96 @@ const usage = {
 };
 const done: ModelResponse = {type: "final", text: "done"};
 
+for (const streaming of [false, true]) {
+  void test(`invalid tool input is repaired without repeating valid calls (${streaming ? "stream" : "generate"})`, async () => {
+    let requests = 0;
+    const writes: string[] = [];
+    const calls = () =>
+      (requests === 1
+        ? [
+            {id: "valid", input: '"valid"'},
+            {id: "invalid", input: "{"},
+          ]
+        : [{id: "repaired", input: '"fixed"'}]
+      ).map(({id, input}) => ({
+        type: "tool-call" as const,
+        toolCallId: id,
+        toolName: "write",
+        input,
+      }));
+    const finishReason = () =>
+      requests < 3
+        ? {unified: "tool-calls" as const, raw: "tool_calls"}
+        : {unified: "stop" as const, raw: "stop"};
+    const provider = new MockLanguageModelV4({
+      doGenerate: async () => {
+        requests++;
+        return {
+          content: requests < 3 ? calls() : [{type: "text", text: "done"}],
+          finishReason: finishReason(),
+          usage,
+          warnings: [],
+        };
+      },
+      doStream: async () => {
+        requests++;
+        return {
+          stream: simulateReadableStream({
+            initialDelayInMs: null,
+            chunkDelayInMs: null,
+            chunks: [
+              {type: "stream-start", warnings: []},
+              ...(requests < 3
+                ? calls()
+                : [
+                    {type: "text-start" as const, id: "text"},
+                    {type: "text-delta" as const, id: "text", delta: "done"},
+                    {type: "text-end" as const, id: "text"},
+                  ]),
+              {type: "finish", finishReason: finishReason(), usage},
+            ],
+          }),
+        };
+      },
+    });
+    const a = agent({
+      maxSteps: 3,
+      model: aiModel({model: provider, ...(streaming ? {onChunk: async () => {}} : {})}),
+      tools: {
+        write: tool({
+          description: "Write a string",
+          // A raw malformed argument is also a string, so schema validation alone cannot protect this tool.
+          input: z.string(),
+          *execute(value) {
+            return yield* r.run(async function write() {
+              writes.push(value);
+              return value;
+            });
+          },
+        }),
+      },
+    });
+    const handler = (context: Context) => r.execute(context, a.run("write"));
+    const live = await runHandler(handler);
+    assert.equal(live.output.output, "done");
+    assert.deepEqual(writes, ["valid", "fixed"]);
+    const failed = live.output.messages.find(
+      (message: {role: string; callId?: string}) =>
+        message.role === "tool" && message.callId === "invalid",
+    );
+    assert.equal(failed.result.status, "error");
+    assert.equal(failed.result.code, "invalid_input");
+    const nextPrompt = streaming
+      ? provider.doStreamCalls[1]!.prompt
+      : provider.doGenerateCalls[1]!.prompt;
+    assert.match(JSON.stringify(nextPrompt), /invalid_input/);
+    const replay = await runHandler(handler, {replay: live.journal});
+    assert.deepEqual(replay.output, live.output);
+    assert.deepEqual(writes, ["valid", "fixed"]);
+    assert.equal(requests, 3);
+  });
+}
+
 void test("a failed tool-free finalizer preserves an honest stopped result", async () => {
   const a = agent({
     maxSteps: 1,

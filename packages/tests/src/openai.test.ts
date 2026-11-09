@@ -7,6 +7,84 @@ import {agent, tool, type ModelUsage} from "@restatedev/agentlib";
 import {aiModel} from "@restatedev/agentlib/provider";
 import {runHandler} from "./replay-harness.mjs";
 
+for (const api of ["chat", "responses"] as const) {
+  void test(`OpenAI ${api} output strictness follows the schema and preserves explicit options`, async () => {
+    const cases: {
+      schema: z.ZodType;
+      output: Record<string, unknown>;
+      strict: boolean;
+      override?: boolean;
+    }[] = [
+      {schema: z.object({answer: z.string().optional()}), output: {}, strict: false},
+      {
+        schema: z.object({labels: z.record(z.string(), z.string())}),
+        output: {labels: {key: "value"}},
+        strict: false,
+      },
+      {schema: z.object({answer: z.string().nullable()}), output: {answer: null}, strict: true},
+      {
+        schema: z.object({answer: z.string()}),
+        output: {answer: "yes"},
+        strict: false,
+        override: false,
+      },
+    ];
+    for (const fixture of cases) {
+      const bodies: Record<string, any>[] = [];
+      const openai = createOpenAI({
+        apiKey: "test-only",
+        fetch: async (_url, init) => {
+          bodies.push(JSON.parse(init!.body as string));
+          const text = JSON.stringify(fixture.output);
+          return Response.json(
+            api === "chat"
+              ? {
+                  choices: [
+                    {index: 0, finish_reason: "stop", message: {role: "assistant", content: text}},
+                  ],
+                }
+              : {
+                  output: [
+                    {
+                      id: "message",
+                      type: "message",
+                      role: "assistant",
+                      content: [{type: "output_text", text, annotations: []}],
+                    },
+                  ],
+                },
+          );
+        },
+      });
+      const a = agent({
+        model: aiModel({
+          model: openai[api]("test-model"),
+          providerOptions: {
+            openai: {
+              store: false,
+              ...(fixture.override === undefined ? {} : {strictJsonSchema: fixture.override}),
+            },
+          },
+        }),
+        output: fixture.schema,
+      });
+      const handler = (ctx: Parameters<typeof execute>[0]) => execute(ctx, a.run("Answer"));
+      const live = await runHandler(handler);
+      assert.deepEqual(live.output.output, fixture.output);
+      assert.equal(bodies.length, 1);
+      const format =
+        api === "chat" ? bodies[0]!.response_format.json_schema : bodies[0]!.text.format;
+      assert.equal(format.strict, fixture.strict);
+      assert.equal(bodies[0]!.store, false);
+      if (!fixture.strict && fixture.override === undefined)
+        assert.deepEqual(format.schema, z.toJSONSchema(fixture.schema));
+      const replay = await runHandler(handler, {replay: live.journal});
+      assert.deepEqual(replay.output, live.output);
+      assert.equal(bodies.length, 1);
+    }
+  });
+}
+
 void test("AI SDK OpenAI Responses handles tools, structured output and replay", async () => {
   const requests: Record<string, any>[] = [];
   const usages: (ModelUsage | undefined)[] = [];

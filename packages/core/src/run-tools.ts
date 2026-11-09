@@ -86,7 +86,9 @@ export class RunTools<C> {
     owner: AgentRuntime<C>,
     catalog: ToolCatalog<C>,
   ): FutureBranches {
-    const transfers = action.calls.filter((call) => catalog.registry.get(call.name)?.handoff);
+    const transfers = action.calls.filter(
+      (call) => !call.validationError && catalog.registry.get(call.name)?.handoff,
+    );
     if (transfers.length > 1) throw new ModelProtocolError("Only one handoff is allowed per batch");
     this.executor.assertCapacity(action.calls.length);
     for (const call of action.calls) {
@@ -111,8 +113,8 @@ export class RunTools<C> {
       const definition = catalog.registry.get(call.name);
       const entry: Entry = {
         call,
-        program: definition?.program ?? false,
-        background: definition?.background ?? false,
+        program: !call.validationError && (definition?.program ?? false),
+        background: !call.validationError && (definition?.background ?? false),
       };
       // The launching agent, catalog, and step stay fixed even if the run later hands off.
       entry.task = this.tasks.spawn(this.invoke(entry, step, owner, catalog));

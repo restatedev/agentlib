@@ -122,13 +122,22 @@ function toolCalls(
     toolCallId: string;
     toolName: string;
     input: unknown;
+    invalid?: boolean;
+    error?: unknown;
     providerExecuted?: boolean;
   }[],
 ): ToolCall[] {
   return calls.map((call) => {
     if (call.providerExecuted)
       throw new ModelProtocolError("Provider-executed tools are not supported by this executor");
-    return {id: call.toolCallId, name: call.toolName, input: jsonSchema.parse(call.input)};
+    return {
+      id: call.toolCallId,
+      name: call.toolName,
+      input: jsonSchema.parse(call.input),
+      ...(call.invalid
+        ? {validationError: call.error instanceof Error ? call.error.message : "Invalid tool input"}
+        : {}),
+    };
   });
 }
 type Generation = {
@@ -146,6 +155,7 @@ function settingsFor(
   signal: AbortSignal,
 ): GenerateSettings {
   const caching = options.caching ?? true;
+  const strictOutput = request.outputSchema ? strictSchema(request.outputSchema) : undefined;
   const tools: ToolSet = Object.fromEntries(
     request.tools.map((t) => {
       const strict = strictSchema(t.inputSchema);
@@ -171,10 +181,18 @@ function settingsFor(
     maxOutputTokens: request.maxOutputTokens,
     maxRetries: 0,
     abortSignal: signal,
-    providerOptions: options.providerOptions,
+    providerOptions: request.outputSchema
+      ? {
+          ...options.providerOptions,
+          openai: {
+            strictJsonSchema: strictOutput !== undefined,
+            ...options.providerOptions?.openai,
+          },
+        }
+      : options.providerOptions,
     experimental_telemetry: options.telemetry,
     ...(request.outputSchema
-      ? {output: Output.object({schema: aiSchema(request.outputSchema)})}
+      ? {output: Output.object({schema: aiSchema(strictOutput ?? request.outputSchema)})}
       : {}),
   };
 }
