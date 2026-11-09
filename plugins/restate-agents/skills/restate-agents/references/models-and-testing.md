@@ -10,35 +10,17 @@ Which adapter to use:
 
 | Model                                                                            | Adapter                                                               |
 | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| OpenAI, or an OpenAI-compatible server (DeepSeek, xAI, OpenRouter, Ollama, vLLM) | `openAIModel` from `@restatedev/agentlib/openai`                      |
-| Anything else: Anthropic, Bedrock, Google, Mistral, Groq, ...                    | `aiModel` from `@restatedev/agentlib/provider` with an AI SDK provider |
+| OpenAI, Anthropic, Bedrock, Google, compatible servers, ... | `aiModel` from `@restatedev/agentlib/provider` with an AI SDK provider |
 | A model served by another Restate handler                                        | `modelGateway` from `@restatedev/agentlib/provider`                   |
 | A client of your own, or a test fixture                                          | `journaledModel` from `@restatedev/agentlib`                          |
 
-### OpenAI: `openAIModel`
+### All providers: the AI SDK and `aiModel`
 
-```ts
-import {openAIModel} from "@restatedev/agentlib/openai";
-
-export const model = openAIModel({
-  model: "gpt-5.6-luna",
-  retry: {maxAttempts: 3, initialInterval: {milliseconds: 500}, exponentiationFactor: 2},
-});
-```
-
-`openAIModel` speaks Chat Completions and reads `OPENAI_API_KEY` and
-`OPENAI_BASE_URL`, so it also reaches compatible servers; pass `client` for
-an `OpenAI` client of your own and `settings` for request settings. For
-`gpt-5.6` models, tool requests default to `reasoning_effort: "none"` unless
-`settings` says otherwise.
-
-### Any other provider: the AI SDK and `aiModel`
-
-Non-OpenAI models come through the [Vercel AI SDK](https://ai-sdk.dev). The
+All providers come through the [Vercel AI SDK](https://ai-sdk.dev). The
 SDK supplies the provider protocol only; Restate still owns the loop, tools,
 retries, and journaling (`aiModel` sets the SDK's own retries to zero).
 
-1. Install the provider package, for example `@ai-sdk/anthropic`,
+1. Install the provider package, for example `@ai-sdk/openai`, `@ai-sdk/anthropic`,
    `@ai-sdk/amazon-bedrock`, `@ai-sdk/google`, `@ai-sdk/mistral`, or
    `@openrouter/ai-sdk-provider`. The `ai` package itself ships with
    `@restatedev/agentlib`.
@@ -51,7 +33,19 @@ import {aiModel} from "@restatedev/agentlib/provider";
 export const model = aiModel({model: anthropic("claude-sonnet-5-5"), retry: {maxAttempts: 3}});
 ```
 
-The provider reads its credentials (`ANTHROPIC_API_KEY`, AWS credentials,
+For OpenAI, install `@ai-sdk/openai` and use:
+
+```ts
+import {openai} from "@ai-sdk/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
+
+export const model = aiModel({model: openai("gpt-5.6-luna"), retry: {maxAttempts: 3}});
+```
+
+The default OpenAI model uses Responses. For a Chat Completions-compatible
+server, use `createOpenAI({baseURL, apiKey}).chat(modelId)` instead.
+
+The provider reads its credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, AWS credentials,
 `GOOGLE_GENERATIVE_AI_API_KEY`, ...) when the first call is made. Use the
 provider's `create*` factory to pass a key, base URL, or custom fetch instead:
 
@@ -64,10 +58,8 @@ export const model = aiModel({model: bedrock("<bedrock model id>")});
 ```
 
 `aiModel` also accepts `providerOptions` (passed through to the provider), an
-OpenTelemetry `tracer`, and `onChunk` for streaming text to a UI. Different
-agents can use different models: set `model` on each agent. The repository's
-[shared.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/shared.ts)
-picks an adapter from an `AGENT_MODEL` string such as `anthropic:claude-sonnet-5-5`.
+OpenTelemetry `tracer`, and `onChunk` for streaming text to a UI.
+
 
 Prompt caching is on by default. `aiModel` marks the instructions (which
 follow the tools), the newest message, and the message before the newest
@@ -75,15 +67,15 @@ model reply (where the previous request ended) as cache points for Anthropic
 and Bedrock, so each step reads the previous step's prefix from the cache; other
 providers cache prefixes on their own and ignore these options. Pass
 `caching: false` to send none, for example for a Bedrock model without
-prompt caching. Both adapters report `usage` when the provider gives counts:
+prompt caching. `aiModel` reports `usage` when the provider gives counts:
 `inputTokens` includes cached reads and writes, `cachedInputTokens` counts the
-reads, and `cacheWriteInputTokens` the writes (`aiModel` only).
+reads, and `cacheWriteInputTokens` the writes.
 
-Both adapters send a tool schema in strict mode when it has an exact strict
+`aiModel` sends a tool schema in strict mode when it has an exact strict
 form, so the model's arguments always match it: every property is required
 (use `.nullable()` rather than `.optional()`) and there are no free-form maps.
-`openAIModel` does the same for `output` schemas. Other schemas are sent as
-they are.
+Other tool schemas are sent as they are. Structured output is handled by
+AI SDK and validated against the agent's `output` schema.
 
 `modelGateway(call)` sends model requests to another Restate handler. Use it
 to centralize keys, quotas, or routing in one service:

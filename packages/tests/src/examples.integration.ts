@@ -335,8 +335,8 @@ function skillsModel(request: ModelRequest): ModelResponse {
 }
 
 // Replace only the external model. Import the same service instances the app serves.
-mock.module("@restatedev/agentlib/openai", {
-  namedExports: {openAIModel: () => fixtureModel},
+mock.module("@restatedev/agentlib/provider", {
+  namedExports: {aiModel: () => fixtureModel},
 });
 const [
   {hello},

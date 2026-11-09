@@ -5,7 +5,18 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
 import {agent, GuardrailError, tool, ToolError} from "@restatedev/agentlib";
 import {z} from "zod";
-import {exampleModel as model} from "../shared.js";
+import {openai} from "@ai-sdk/openai";
+import {aiModel} from "@restatedev/agentlib/provider";
+
+const model = aiModel({
+  model: openai("gpt-5.6-luna"),
+  retry: {
+    maxAttempts: 3,
+    initialInterval: {milliseconds: 500},
+    exponentiationFactor: 2,
+    maxInterval: {seconds: 5},
+  },
+});
 
 const sourceSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),

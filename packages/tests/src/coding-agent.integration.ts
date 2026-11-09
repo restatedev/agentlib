@@ -89,7 +89,7 @@ const coder: Model = function* (request) {
   const {stdout} = last.result.output as {stdout: string};
   return {type: "final", text: stdout.trim()};
 };
-mock.module("@restatedev/agentlib/openai", {namedExports: {openAIModel: () => coder}});
+mock.module("@restatedev/agentlib/provider", {namedExports: {aiModel: () => coder}});
 const {codingAgent} = await import("@restatedev/agentlib-examples/coding-agent");
 
 let env: RestateTestEnvironment;
