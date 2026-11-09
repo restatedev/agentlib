@@ -11,6 +11,7 @@ import {
   cancelOperationTool,
   handoff,
   handlerTool,
+  journaledModel,
   serviceTool,
   LazyStateConversation,
   sleepTool,
@@ -446,6 +447,40 @@ const runner = r.service({
     *gateway() {
       return yield* agent({model: modelGateway(() => r.client(gateway).generate())}).run("go");
     },
+    *repairToolInput() {
+      const a = agent({
+        model: journaledModel(async (request): Promise<ModelResponse> => {
+          const results = request.messages.filter((message) => message.role === "tool");
+          if (results.some((message) => message.callId === "repaired")) return final;
+          if (results.length) {
+            assert.equal(
+              results.find((message) => message.callId === "invalid")?.result.status,
+              "error",
+            );
+            return {type: "tool_calls", calls: [{id: "repaired", name: "write", input: "fixed"}]};
+          }
+          return {
+            type: "tool_calls",
+            calls: [
+              {id: "valid", name: "write", input: "valid"},
+              {id: "invalid", name: "write", input: "{", validationError: "Invalid JSON arguments"},
+            ],
+          };
+        }),
+        tools: {
+          write: asyncTool({
+            description: "Write a string",
+            input: z.string(),
+            async execute(value) {
+              const key = `repair-${value}`;
+              effects.set(key, (effects.get(key) ?? 0) + 1);
+              return value;
+            },
+          }),
+        },
+      });
+      return yield* a.run("Write");
+    },
   },
 });
 const session = r.object({
@@ -707,6 +742,21 @@ before(
 );
 after(async () => {
   await env?.stop();
+});
+void test("native always-replay: only the invalid tool call needs correction", async () => {
+  const result = await connect({url: env.baseUrl()}).client(runner).repairToolInput();
+  assert.equal(result.status, "completed");
+  assert.equal(effects.get("repair-valid"), 1);
+  assert.equal(effects.get("repair-fixed"), 1);
+  assert.equal(effects.get("repair-{"), undefined);
+  const failed = result.messages.find(
+    (message) => message.role === "tool" && message.callId === "invalid",
+  );
+  assert.deepEqual(failed?.role === "tool" && failed.result, {
+    status: "error",
+    code: "invalid_input",
+    message: "Invalid JSON arguments",
+  });
 });
 void test(
   "native always-replay: concurrent runs isolate call budgets and history",

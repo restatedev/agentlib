@@ -11,6 +11,7 @@ const callSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   input: jsonSchema,
+  validationError: z.string().min(1).optional(),
 });
 const toolResultSchema = z.discriminatedUnion("status", [
   z.object({status: z.literal("success"), output: jsonSchema}),

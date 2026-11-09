@@ -80,9 +80,10 @@ export function createToolExecutor<C>({
         input: call.input,
         ...(definition.info ? {info: structuredClone(definition.info)} : {}),
       });
+      if (call.validationError) throw new ToolError(call.validationError, "invalid_input");
       outcome = yield* runCall(call, callStep, owner, registry, definition, depth);
     } catch (error) {
-      // Reporting the start was interrupted; failedResult rethrows anything else.
+      // Invalid input and interruptions become tool results; retryable failures propagate.
       outcome = {result: failedResult(error), info: {name: call.name, details: call.input}};
     }
     const {result, info} = outcome;

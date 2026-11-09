@@ -3,7 +3,13 @@ import type {z} from "zod";
 
 /** Values that can cross a model or durable journal boundary. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | {[key: string]: JsonValue};
-export type ToolCall = {id: string; name: string; input: JsonValue};
+export type ToolCall = {
+  id: string;
+  name: string;
+  input: JsonValue;
+  /** Model arguments could not be parsed or validated. Return a tool error without execution. */
+  validationError?: string;
+};
 /** Display-only information. It is never included in a model's tool schema or history. */
 export type ToolInfo = {name: string; details?: JsonValue};
 export type ToolResult =
