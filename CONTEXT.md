@@ -103,7 +103,8 @@ _Avoid_: Model response, token stream
 **Guardrail**:
 A hook that allows or denies a run, step, or tool call before it proceeds
 (`beforeRun`, `beforeStep`, `beforeTool`, a tool's `before`), or post-processes a
-tool's output (`afterTool`).
+tool's output (`afterTool`). A guardrail never changes what it receives; it returns
+the replacement: the input message, one request's messages, or a tool's input.
 _Avoid_: Policy, retry policy
 
 **Output policy**:

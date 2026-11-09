@@ -1,6 +1,7 @@
 import {z} from "zod";
 import {ModelProtocolError, RunInputError, ToolError} from "./errors.js";
-import type {JsonValue, Message, ModelResponse} from "./types.js";
+import {freeze} from "./freeze.js";
+import type {JsonValue, Message, ModelResponse, ReadonlyMessage} from "./types.js";
 
 export const jsonSchema = z.json();
 export const steeringUpdate = z.object({
@@ -77,7 +78,13 @@ export function toolOutput(value: unknown): JsonValue {
 export function history(value: readonly Message[]): Message[] {
   const parsed = z.array(messageSchema).safeParse(value);
   if (!parsed.success) throw new RunInputError(`Invalid history: ${parsed.error.message}`);
-  const messages = parsed.data;
+  checkProtocol(parsed.data);
+  return parsed.data;
+}
+
+/** Rejects a history whose tool results do not answer the calls before them, in
+ * order. Structural only: callers pass messages that were already validated. */
+export function checkProtocol(messages: readonly Message[]): void {
   const ids = new Set<string>();
   const pending = new Map<string, string>();
   for (const message of messages) {
@@ -99,5 +106,24 @@ export function history(value: readonly Message[]): Message[] {
     }
   }
   if (pending.size > 0) throw new RunInputError("History contains unfinished tool calls");
+}
+
+/** The messages a `beforeStep` hook returned for one request. Messages it kept from
+ * the request were validated when they were recorded; only new ones are parsed, and
+ * frozen like recorded ones, since a later hook receives them. */
+export function stepMessages(
+  sent: readonly Message[],
+  returned: readonly ReadonlyMessage[],
+): Message[] {
+  if (!Array.isArray(returned)) throw new RunInputError("beforeStep must return a messages array");
+  const recorded = new Set<unknown>(sent);
+  const messages = returned.map((message) => {
+    if (recorded.has(message)) return message as Message;
+    const parsed = messageSchema.safeParse(message);
+    if (!parsed.success)
+      throw new RunInputError(`beforeStep returned an invalid message: ${parsed.error.message}`);
+    return freeze(parsed.data);
+  });
+  checkProtocol(messages);
   return messages;
 }

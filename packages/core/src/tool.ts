@@ -10,13 +10,13 @@ import {denial, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
 import type {
   Agent,
   AsyncToolDefinition,
-  GuardrailResult,
   JsonValue,
   RunOptions,
   RunResult,
   Tool,
   ToolContext,
   ToolDefinition,
+  ToolDecision,
   ToolInfo,
 } from "./types.js";
 import {jsonSchema, toolOutput} from "./validation.js";
@@ -31,7 +31,7 @@ export type ParseResult<T> = {ok: true; data: T} | {ok: false; error: string};
  */
 export type ToolLifecycle<Data, Context> = {
   describe?: ToolInfo | ((input: Data) => ToolInfo);
-  before?(input: Data, context: ToolContext<Context>): Operation<GuardrailResult>;
+  before?(input: Data, context: ToolContext<Context>): Operation<ToolDecision<Data>>;
   needsApproval?: boolean | ((input: Data, context: ToolContext<Context>) => Operation<boolean>);
   execute(input: Data, context: ToolContext<Context>): Operation<JsonValue>;
   after?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
@@ -71,7 +71,7 @@ export function buildTool<Data, Context = unknown>(
     *execute(input, context): Operation<JsonValue> {
       const parsed = spec.parseInput(input);
       if (!parsed.ok) throw new ToolError(`Invalid tool input: ${parsed.error}`, "invalid_input");
-      const data = parsed.data;
+      let data = parsed.data;
       if (lifecycle.describe) {
         const info =
           typeof lifecycle.describe === "function"
@@ -80,8 +80,12 @@ export function buildTool<Data, Context = unknown>(
         yield* context.describe(info);
       }
       if (lifecycle.before) {
-        const reason = denial(yield* lifecycle.before(data, context));
-        if (reason !== undefined) throw new ToolDenied(reason);
+        const decision = yield* lifecycle.before(data, context);
+        if (typeof decision === "object" && decision !== null) data = decision.input;
+        else {
+          const reason = denial(decision);
+          if (reason !== undefined) throw new ToolDenied(reason);
+        }
       }
       const approval =
         typeof lifecycle.needsApproval === "function"

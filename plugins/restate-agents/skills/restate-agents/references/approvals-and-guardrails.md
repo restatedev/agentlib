@@ -82,6 +82,7 @@ Variants:
 Put trusted facts in run `context` and check them in the tool's `before`.
 Return a string to deny with that reason, `false` to deny, and nothing or
 `true` to allow. A denial goes back to the model, and `execute` never runs.
+Return `{input}` to run the tool with that input instead.
 
 ```ts
 const booking = agent<{hotelId: string; quotedTotalCents: number; maxTotalCents: number}>({
@@ -107,11 +108,52 @@ yield* booking.run(question, {context: {hotelId, quotedTotalCents, maxTotalCents
 
 | Hook                       | Runs                        | Return                                                              |
 | -------------------------- | --------------------------- | ------------------------------------------------------------------- |
-| `beforeRun(messages, ctx)` | Once, before the first step | deny with `string`/`false`                                          |
-| `beforeStep(request, ctx)` | Before each model call      | deny with `string`/`false`                                          |
-| `beforeTool(call, ctx)`    | Before every tool call      | deny with `string`/`false`                                          |
+| `beforeRun(messages, ctx)` | Once, before the first step | deny with `string`/`false`, or `{message}` to record instead        |
+| `beforeStep(request, ctx)` | Before each model call      | deny with `string`/`false`, or `{messages}` to send instead         |
+| `beforeTool(call, ctx)`    | Before every tool call      | deny with `string`/`false`, or `{input}` to run with instead        |
 | `afterTool(output, ctx)`   | After every tool call       | the (possibly redacted) output                                      |
 | `afterRun(candidate, ctx)` | On the final result         | nothing to accept, `{output}` to replace, or throw `GuardrailError` |
+
+A hook never edits what it receives; it returns the replacement. Recorded messages
+and tool calls are frozen, so editing them in place throws a `TypeError`.
+
+| To                                           | Use                                  | History keeps                                      |
+| -------------------------------------------- | ------------------------------------ | -------------------------------------------------- |
+| Redact the user's message before it is saved | `beforeRun` → `{message}`            | the replacement; the original is never recorded    |
+| Change what one model call sees              | `beforeStep` → `{messages}`          | the originals; the change is for that request only |
+| Change a tool's arguments                    | `beforeTool` or `before` → `{input}` | the model's call, and the result of the new input  |
+| Redact tool output                           | `afterTool` → the new output         | the replacement; the original is never recorded    |
+| Replace the final answer                     | `afterRun` → `{output}`              | the replacement; the candidate is never recorded   |
+
+History means the run's messages: what the model sees in later steps,
+`result.messages`, and the saved conversation. So `beforeRun`, `afterTool` and
+`afterRun` are the places for redaction that must last; a `beforeStep` change is
+gone on the next step.
+
+A changed tool input is not recorded. In later steps the model sees its own call
+next to a result from different arguments, and cannot tell they changed. That suits
+keeping data from a tool: the model asked about `ada@example.com`, the tool searched
+for `[email]`. The model's call still holds the original, so this does not remove it
+from history. For other changes, say so in the tool's result, or the model may be
+confused by it.
+
+```ts
+*beforeStep({messages}) {
+  return {
+    messages: messages.map((m) =>
+      m.role === "user" ? {...m, content: redact(m.content)} : m,
+    ),
+  };
+}
+```
+
+Keep the messages you do not change: the SDK validates only new ones, then checks
+that every tool call still has its result. Input from `beforeTool` is validated
+against the tool's schema like the model's. The history keeps the model's original
+tool call. A denial in `beforeRun` or `beforeStep` fails the run; a denial in
+`beforeTool` or `before` goes back to the model. For a sub-agent called through
+`agentTool`, `beforeRun` is the place to check or redact the input the parent model
+sends.
 
 If `beforeTool` or `afterTool` throws a terminal error, for example because a
 policy model is down, the call is blocked and the model gets an error with

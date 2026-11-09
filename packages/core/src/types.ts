@@ -24,6 +24,7 @@ export type ToolManifest = {
 };
 export type ModelRequest = {
   instructions?: string;
+  /** The run's recorded messages, shared and frozen: read them, never change them. */
   messages: Message[];
   tools: ToolManifest[];
   outputSchema?: Record<string, unknown>;
@@ -126,6 +127,16 @@ export type ToolContext<Context> = RunContext<Context> & {
   cancelOperation(id: string, reason?: string): Operation<boolean>;
 };
 export type GuardrailResult = void | boolean | string;
+/** A recorded message. Recorded messages are frozen: change one by building a new one. */
+export type ReadonlyMessage = ReadonlyValue<Message>;
+/** The model request a `beforeStep` hook inspects. */
+export type StepRequest = ReadonlyValue<ModelRequest>;
+/** A `beforeRun` result: a guardrail decision, or the input message to record instead. */
+export type RunDecision = GuardrailResult | {message: string};
+/** A `beforeStep` result: a guardrail decision, or the messages to send instead. */
+export type StepDecision = GuardrailResult | {messages: readonly ReadonlyMessage[]};
+/** A tool hook's result: a guardrail decision, or the input to run the tool with instead. */
+export type ToolDecision<Input = JsonValue> = GuardrailResult | {input: Input};
 export type Tool<Context = unknown> = {
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
@@ -150,7 +161,13 @@ export type ToolDefinition<Schema extends z.ZodType, Context> = {
   background?: boolean;
   deferred?: boolean;
   provider?: string;
-  before?(input: z.output<Schema>, context: ToolContext<Context>): Operation<GuardrailResult>;
+  /** Allows or denies this call: a string or `false` denies it, and the model gets the
+   * reason. Return `{input}` to run the tool with that input instead. The new input is
+   * not recorded: later steps show the model its own call next to the new input's result. */
+  before?(
+    input: z.output<Schema>,
+    context: ToolContext<Context>,
+  ): Operation<ToolDecision<z.output<Schema>>>;
   needsApproval?:
     | boolean
     | ((input: z.output<Schema>, context: ToolContext<Context>) => Operation<boolean>);
@@ -228,14 +245,35 @@ export type AgentOptions<Context, Output = string> = {
   maxToolCalls?: number;
   maxToolDepth?: number;
   maxOutputChars?: number;
+  /** Allows or denies a run before its first model call; a denial fails the run. It
+   * sees the loaded history and the input message. Return `{message}` to record, send
+   * and save that input instead, for example with personal data redacted; the original
+   * is never recorded. */
   beforeRun?(
-    messages: readonly Message[],
+    messages: readonly ReadonlyMessage[],
     context: RunContext<Context>,
-  ): Operation<GuardrailResult>;
-  beforeStep?(request: ModelRequest, context: RunContext<Context>): Operation<GuardrailResult>;
-  beforeTool?(call: ToolCall, context: ToolContext<Context>): Operation<GuardrailResult>;
+  ): Operation<RunDecision>;
+  /** Allows or denies a model call: return a string or `false` to deny, nothing or
+   * `true` to allow. Return `{messages}` to allow and send those messages in this one
+   * request instead. The request is read-only, so build new messages rather than
+   * editing them, and keep the ones you do not change. The run's history never
+   * changes; to keep tool data from the model for good, transform it in `afterTool`. */
+  beforeStep?(request: StepRequest, context: RunContext<Context>): Operation<StepDecision>;
+  /** Allows or denies every tool call, before its input is validated: a string or
+   * `false` denies it, and the model gets the reason. Return `{input}` to run the tool
+   * with that input instead; it is validated like the model's. The new input is not
+   * recorded: later steps show the model its own call next to the new input's result.
+   * The root agent's hook runs first, and the next sees its input. */
+  beforeTool?(
+    call: ReadonlyValue<ToolCall>,
+    context: ToolContext<Context>,
+  ): Operation<ToolDecision>;
+  /** Transforms a tool's output before it is recorded: the model, the history and the
+   * saved conversation only ever see the result; the original is never recorded. The
+   * place to redact tool output. */
   afterTool?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
-  /** Return nothing to accept, {output} to replace, or throw to reject. */
+  /** Return nothing to accept, {output} to replace, or throw to reject. A replacement
+   * is recorded, returned and saved; the candidate never is. */
   afterRun?(
     candidate: OutputCandidate<Output>,
     context: RunContext<Context>,

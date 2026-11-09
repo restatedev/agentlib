@@ -19,6 +19,7 @@ import type {
   AgentRuntime,
   ApprovalHandler,
   ApprovalRequest,
+  JsonValue,
   ProgressEvent,
   RunContext,
   Tool,
@@ -28,6 +29,7 @@ import type {
   ToolResult,
 } from "./types.js";
 import type {ToolCatalog} from "./tool-catalog.js";
+import {freeze} from "./freeze.js";
 import {jsonSchema, toolOutput} from "./validation.js";
 
 export type ToolExecutionLimits = Readonly<{
@@ -186,14 +188,19 @@ export function createToolExecutor<C>({
       cancelOperation,
     };
     try {
+      // The tool runs with the last input a policy returned; the history keeps the call.
+      let input = call.input;
       for (const policy of policies) {
         if (!policy.beforeTool) continue;
-        const reason = denial(
-          yield* checked(policy.beforeTool(structuredClone(call), toolContext)),
-        );
-        if (reason !== undefined) throw new ToolDenied(reason);
+        const shown = freeze(structuredClone({...call, input}));
+        const decision = yield* checked(policy.beforeTool(shown, toolContext));
+        if (typeof decision === "object" && decision !== null) input = policyInput(decision.input);
+        else {
+          const reason = denial(decision);
+          if (reason !== undefined) throw new ToolDenied(reason);
+        }
       }
-      let output = yield* definition.execute(call.input, toolContext);
+      let output = yield* definition.execute(input, toolContext);
       for (const policy of policies.toReversed()) {
         if (policy.afterTool) output = yield* checked(policy.afterTool(output, toolContext));
       }
@@ -217,8 +224,16 @@ export function createToolExecutor<C>({
   };
 }
 
+/** Input a `beforeTool` policy returned. The tool validates it like the model's. */
+function policyInput(value: unknown): JsonValue {
+  const result = jsonSchema.safeParse(value);
+  if (!result.success) throw new ToolError("beforeTool must return JSON input", "guardrail_failed");
+  return result.data;
+}
+
 /** A policy that fails terminally blocks the call, and tells the model the check
  * failed rather than the tool. */
+
 function* checked<T>(policy: Operation<T>): Operation<T> {
   try {
     return yield* policy;

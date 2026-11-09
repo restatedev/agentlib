@@ -28,7 +28,7 @@ import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
 import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
 import {listSkills, skillsSection, skillTools} from "./skills.js";
-import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
+import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
@@ -167,8 +167,15 @@ class AgentRun<C, O> {
 
   /** Startup has no model work to supersede, so controls attach afterwards. */
   private *start(): Operation<void> {
-    if (this.root.beforeRun)
-      allow(yield* this.root.beforeRun(this.history.snapshot(), this.context));
+    if (this.root.beforeRun) {
+      const decision = yield* this.root.beforeRun(
+        Object.freeze(this.history.snapshot()),
+        this.context,
+      );
+      if (typeof decision === "object" && decision !== null)
+        this.history.replaceInput(decision.message);
+      else allow(decision);
+    }
     const source = this.root.skills;
     const listed = source ? yield* listSkills(source) : [];
     if (source && listed.length) {
@@ -258,6 +265,8 @@ class AgentRun<C, O> {
    * smaller view is in place, so a stopped run still has room to finalize. */
   private *compactContext(overflow = false): Operation<boolean> {
     const {compaction: settings, contextWindow, maxOutputTokens} = this.config;
+    // Measuring the view is only worth its cost when something can act on the result.
+    if (!overflow && !settings && !contextWindow) return false;
     const retain = (limit: number) => Math.min(settings?.retainTokens ?? limit, limit);
     const overhead = this.requestOverhead();
     // Retained messages share a limit with instructions and tools; keeping
@@ -390,8 +399,14 @@ class AgentRun<C, O> {
     };
     this.lastRequest = {instructions: request.instructions, tools: request.tools};
     // The root's policy applies to every step; a handoff target adds its own.
+    // A hook may send other messages in this request; the next hook sees them.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
-      if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));
+      if (!agent.beforeStep) continue;
+      const view = Object.freeze({...request, messages: Object.freeze([...request.messages])});
+      const decision = yield* agent.beforeStep(view, this.context);
+      if (typeof decision === "object" && decision !== null)
+        request.messages = stepMessages(request.messages, decision.messages);
+      else allow(decision);
     }
     const response = modelResponse(yield* this.active.model(request));
     if ((response.text?.length ?? 0) > this.config.maxOutputChars)

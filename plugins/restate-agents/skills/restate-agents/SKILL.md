@@ -102,6 +102,7 @@ Restate journals. Move on only when the learner is ready.
 | Keep working while a slow tool runs                            | `background: true`, `sleepTool()`, `cancelOperationTool()`                                |
 | A human decides first                                          | `needsApproval`, or `humanApprovalTool()` for free-form questions                         |
 | Enforce policy the model cannot bypass                         | tool `before`, agent `beforeTool` / `afterRun`                                            |
+| Keep personal data from the model                              | `afterTool` for tool output, `beforeRun` for input, `beforeStep` per request              |
 | Delegate a subtask, keep control                               | `agentTool(subAgent, {description})`                                                      |
 | Hand over the conversation                                     | `handoff(specialist)`                                                                     |
 | Independent, separately retried agents                         | one Restate service per agent, called with `restate.client`                               |

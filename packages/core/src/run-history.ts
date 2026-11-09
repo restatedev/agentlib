@@ -4,16 +4,27 @@ import type {Message} from "./types.js";
 import {RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
-import {history} from "./validation.js";
+import {checkProtocol, history} from "./validation.js";
+import {freeze} from "./freeze.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
+
+function withNote(note: NoteMessage | undefined, transcript: Message[]): Message[] {
+  if (note) transcript.unshift(note);
+  return transcript;
+}
+function checkInput(input: unknown, error: string): asserts input is string {
+  if (typeof input !== "string" || !input.trim()) throw new RunInputError(error);
+}
+
 /** Where the model's view stood when a request was built from it. */
 export type ViewMark = {events: number; from: number};
 type ToolMessage = Extract<Message, {role: "tool"}>;
 export type NoteMessage = Extract<Message, {role: "user"}>;
 
 /** Events arrive in execution order. Model protocols require each batch's tool
- * results immediately after its assistant call, ahead of intervening steering. */
+ * results immediately after its assistant call, ahead of intervening steering.
+ * Every event was validated when it was recorded, so only the order is checked. */
 function modelTranscript(events: readonly Message[]): Message[] {
   const batchByCall = new Map<string, number>();
   for (const [index, message] of events.entries()) {
@@ -35,10 +46,13 @@ function modelTranscript(events: readonly Message[]): Message[] {
     transcript.push(message);
     if (message.role === "assistant") transcript.push(...(resultsByBatch.get(index) ?? []));
   }
-  return history(transcript);
+  checkProtocol(transcript);
+  return transcript;
 }
 
-/** Owns the append-only event history and its persistence cursor. The run saves
+/** Owns the append-only event history and its persistence cursor. Recorded messages
+ * are frozen: every message enters a run as a copy the run owns, so model requests
+ * and hooks share them instead of copying the history. The run saves
  * a model-valid transcript at finalization; earlier failures save nothing.
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
@@ -56,7 +70,7 @@ export class RunHistory {
   private readonly previewed = new WeakMap<Message, Message>();
 
   private constructor(
-    readonly input: string,
+    private inputText: string,
     private readonly messages: Message[],
     private version: number,
     private persisted: number,
@@ -70,13 +84,13 @@ export class RunHistory {
     source: HistorySource = {},
     previews?: PreviewSettings,
   ): Operation<RunHistory> {
-    if (typeof input !== "string" || !input.trim())
-      throw new RunInputError("Agent input must be a nonempty string");
+    checkInput(input, "Agent input must be a nonempty string");
     const {conversation} = source;
     if (conversation && source.messages)
       throw new RunInputError("Use either conversation or messages");
     const snapshot = conversation ? yield* conversation.load() : undefined;
     const messages = history(snapshot?.messages ?? source.messages ?? []);
+    for (const message of messages) freeze(message);
     const run = new RunHistory(
       input,
       messages,
@@ -89,17 +103,29 @@ export class RunHistory {
     return run;
   }
 
+  /** This run's input message. */
+  get input(): string {
+    return this.inputText;
+  }
+
+  /** Replaces this run's input message, before any model call has seen it. */
+  replaceInput(message: string): void {
+    checkInput(message, "beforeRun must return a nonempty message");
+    this.inputText = message;
+    this.messages[this.inputAt] = freeze({role: "user", content: message});
+  }
+
   /** What the model sees during this run, including provisional feedback. */
   snapshot(): Message[] {
     const events = this.shown(this.messages.slice(this.view?.from ?? 0));
-    return [...(this.view ? [this.view.note] : []), ...modelTranscript(events)];
+    return withNote(this.view?.note, modelTranscript(events));
   }
 
   /** What a tool-free finalization sees: the model's view without provisional feedback. */
   finalContext(): Message[] {
     const from = this.view?.from ?? 0;
     const events = this.messages.slice(from).filter((message) => !this.provisional.has(message));
-    return [...(this.view ? [this.view.note] : []), ...modelTranscript(this.shown(events))];
+    return withNote(this.view?.note, modelTranscript(this.shown(events)));
   }
 
   /** Every event so far, whole, for reading a previewed result back. */
@@ -123,7 +149,7 @@ export class RunHistory {
     if (!previews) return message;
     let shown = this.previewed.get(message);
     if (!shown) {
-      shown = previewMessage(message, previews);
+      shown = freeze(previewMessage(message, previews));
       this.previewed.set(message, shown);
     }
     return shown;
@@ -166,24 +192,28 @@ export class RunHistory {
   /** Shows the model `note` instead of the events before `through`. The saved
    * and returned transcript is unchanged. */
   compactContext(through: number, note: NoteMessage): void {
-    this.view = {from: through, note};
+    this.view = {from: through, note: freeze(note)};
   }
 
-  /** What the turn commits: the persisted and returned transcript. */
+  /** What the turn commits: the persisted and returned transcript, as a copy the
+   * caller may change. Its messages were validated when they were recorded. */
   committed(): Message[] {
-    return modelTranscript(this.messages.filter((message) => !this.provisional.has(message)));
+    return structuredClone(
+      modelTranscript(this.messages.filter((message) => !this.provisional.has(message))),
+    );
   }
 
   append(...messages: Message[]): void {
+    for (const message of messages) freeze(message);
     this.messages.push(...messages);
   }
 
   /** Records a steering update as a runtime note the model sees in order. */
   appendSteering(message: string): void {
-    const note: Message = {
+    const note: Message = freeze({
       role: "user",
       content: JSON.stringify({source: "agent-runtime", type: "steering", message}),
-    };
+    });
     this.steering.set(note, message);
     this.messages.push(note);
   }
@@ -198,7 +228,7 @@ export class RunHistory {
 
   /** Model-visible for the rest of the run, but never saved or returned. */
   appendProvisional(...messages: Message[]): void {
-    for (const message of messages) this.provisional.add(message);
+    for (const message of messages) this.provisional.add(freeze(message));
     this.messages.push(...messages);
   }
 
@@ -215,10 +245,9 @@ export class RunHistory {
     const result = yield* this.conversation.compact();
     if (result === "skipped") return;
     const compacted = yield* this.conversation.load();
-    this.messages.splice(0, this.messages.length, ...history(compacted.messages), {
-      role: "user",
-      content: this.input,
-    });
+    const reloaded = [...history(compacted.messages), {role: "user" as const, content: this.input}];
+    for (const message of reloaded) freeze(message);
+    this.messages.splice(0, this.messages.length, ...reloaded);
     this.persisted = compacted.messages.length;
     this.inputAt = compacted.messages.length;
     this.version = compacted.version;

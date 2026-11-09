@@ -14,6 +14,7 @@ import {z} from "zod";
 import {
   agent,
   AgentLimitError,
+  handoff,
   summarizeConversation,
   tool,
   ToolError,
@@ -463,5 +464,268 @@ void test("conversation summaries must be text, not tool calls", async () => {
       }),
     ),
     /must not call tools/,
+  );
+});
+
+const lookup = tool({
+  description: "Lookup",
+  input: z.object({}),
+  *execute() {
+    return {email: "ada@example.com"};
+  },
+});
+
+void test("beforeStep can send other messages in one request, never changing the history", async () => {
+  const sent: Message[][] = [];
+  const a = agent({
+    tools: {lookup},
+    *beforeStep({messages}) {
+      return {
+        messages: messages.map((m) => {
+          if (m.role === "user")
+            return {...m, content: m.content.replace("ada@example.com", "[email]")};
+          if (m.role === "tool" && m.result.status === "success")
+            return {...m, result: {...m.result, output: {email: "[email]"}}};
+          return m;
+        }),
+      };
+    },
+    *model(request) {
+      sent.push(structuredClone(request.messages));
+      return request.step === 1 ? call("one", "lookup") : final;
+    },
+  });
+  const result = await execute(context(), a.run("Mail ada@example.com"));
+  assert.equal(result.status, "completed");
+  assert.deepEqual(sent[1], [
+    {role: "user", content: "Mail [email]"},
+    {role: "assistant", content: "", calls: [{id: "one", name: "lookup", input: {}}]},
+    {
+      role: "tool",
+      callId: "one",
+      name: "lookup",
+      result: {status: "success", output: {email: "[email]"}},
+    },
+  ]);
+  assert.deepEqual(result.messages.slice(0, 3), [
+    {role: "user", content: "Mail ada@example.com"},
+    {role: "assistant", content: "", calls: [{id: "one", name: "lookup", input: {}}]},
+    {
+      role: "tool",
+      callId: "one",
+      name: "lookup",
+      result: {status: "success", output: {email: "ada@example.com"}},
+    },
+  ]);
+  // The returned history is the caller's to change.
+  const returned = result.messages[2];
+  assert.ok(returned?.role === "tool" && returned.result.status === "success");
+  (returned.result.output as {email: string}).email = "changed";
+});
+
+void test("beforeStep cannot change request messages in place", async () => {
+  const a = agent({
+    tools: {lookup},
+    *beforeStep({messages}) {
+      const user = messages[0] as {content: string};
+      assert.throws(() => {
+        user.content = "[email]";
+      }, TypeError);
+      const m = messages.find((message) => message.role === "tool");
+      if (m?.role === "tool" && m.result.status === "success") {
+        const output = m.result.output as {email: string};
+        assert.throws(() => {
+          output.email = "[email]";
+        }, TypeError);
+      }
+    },
+    model: scripted(call("one", "lookup"), final),
+  });
+  assert.equal((await execute(context(), a.run("Go"))).status, "completed");
+});
+
+void test("beforeStep messages that break the call order fail before the model call", async () => {
+  let calls = 0;
+  const a = agent({
+    tools: {lookup},
+    *beforeStep({messages}) {
+      return {messages: messages.filter((message) => message.role !== "tool")};
+    },
+    *model() {
+      calls++;
+      return calls === 1 ? call("one", "lookup") : final;
+    },
+  });
+  await assert.rejects(execute(context(), a.run("Go")), RunInputError);
+  assert.equal(calls, 1);
+});
+
+void test("beforeStep messages it adds are validated", async () => {
+  const a = agent({
+    *beforeStep({messages}) {
+      return {messages: [...messages, {role: "user", content: 42} as unknown as Message]};
+    },
+    model: scripted(final),
+  });
+  await assert.rejects(execute(context(), a.run("Go")), RunInputError);
+});
+
+void test("the second beforeStep sees the first one's messages", async () => {
+  const seen: string[] = [];
+  const specialist = agent({
+    *beforeStep({messages}) {
+      seen.push(messages.map((m) => (m.role === "tool" ? m.name : m.content)).join("|"));
+    },
+    model: scripted(final),
+  });
+  const a = agent({
+    tools: {transfer: handoff(specialist)},
+    *beforeStep({messages}) {
+      return {messages: [...messages, {role: "user", content: "policy note"}]};
+    },
+    model: scripted(call("h", "transfer")),
+  });
+  assert.equal((await execute(context(), a.run("Go"))).status, "completed");
+  assert.match(seen.at(-1) ?? "", /policy note$/);
+});
+
+void test("beforeRun can record a different input message", async () => {
+  const sent: string[] = [];
+  const a = agent({
+    *beforeRun(messages) {
+      const input = messages.at(-1);
+      assert.ok(input?.role === "user");
+      assert.throws(() => {
+        (input as {content: string}).content = "x";
+      }, TypeError);
+      return {message: input.content.replace("ada@example.com", "[email]")};
+    },
+    *model(request) {
+      sent.push(request.messages.map((m) => (m.role === "tool" ? m.name : m.content)).join("|"));
+      return final;
+    },
+  });
+  const result = await execute(context(), a.run("Mail ada@example.com"));
+  assert.deepEqual(sent, ["Mail [email]"]);
+  assert.deepEqual(result.messages[0], {role: "user", content: "Mail [email]"});
+});
+
+void test("beforeRun must return a nonempty message", async () => {
+  const a = agent({
+    *beforeRun() {
+      return {message: " "};
+    },
+    model: scripted(final),
+  });
+  await assert.rejects(execute(context(), a.run("Go")), RunInputError);
+});
+
+const search = (seen: string[]) =>
+  tool({
+    description: "Search",
+    input: z.object({query: z.string()}),
+    *execute({query}) {
+      seen.push(query);
+      return "ok";
+    },
+  });
+
+void test("beforeTool can run a tool with other input; the history keeps the model's call", async () => {
+  const seen: string[] = [];
+  const a = agent({
+    tools: {search: search(seen)},
+    *beforeTool(call) {
+      assert.throws(() => {
+        (call.input as {query: string}).query = "x";
+      }, TypeError);
+      return {input: {query: "[email]"}};
+    },
+    model: scripted(call("one", "search", {query: "ada@example.com"}), final),
+  });
+  const result = await execute(context(), a.run("Go"));
+  assert.deepEqual(seen, ["[email]"]);
+  assert.deepEqual(result.messages[1], {
+    role: "assistant",
+    content: "",
+    calls: [{id: "one", name: "search", input: {query: "ada@example.com"}}],
+  });
+});
+
+void test("input from beforeTool is validated like the model's", async () => {
+  const seen: string[] = [];
+  const a = agent({
+    tools: {search: search(seen)},
+    *beforeTool() {
+      return {input: {query: 42}};
+    },
+    model: scripted(call("one", "search", {query: "x"}), final),
+  });
+  const result = await execute(context(), a.run("Go"));
+  assert.deepEqual(seen, []);
+  const failed = result.messages[2];
+  assert.ok(failed?.role === "tool" && failed.result.status === "error");
+  assert.equal(failed.result.code, "invalid_input");
+});
+
+void test("a tool's before can run it with other input", async () => {
+  const seen: string[] = [];
+  const a = agent({
+    tools: {
+      search: tool({
+        description: "Search",
+        input: z.object({query: z.string()}),
+        *before({query}) {
+          return {input: {query: query.toUpperCase()}};
+        },
+        *execute({query}) {
+          seen.push(query);
+          return "ok";
+        },
+      }),
+    },
+    model: scripted(call("one", "search", {query: "abc"}), final),
+  });
+  assert.equal((await execute(context(), a.run("Go"))).status, "completed");
+  assert.deepEqual(seen, ["ABC"]);
+});
+
+void test("editing what a hook receives throws a TypeError", async () => {
+  const run = (options: Omit<Parameters<typeof agent>[0], "model">) =>
+    execute(
+      context(),
+      agent({...options, model: scripted(call("one", "search", {query: "x"}), final)}).run("Go"),
+    );
+  await assert.rejects(
+    run({
+      *beforeRun(messages) {
+        (messages as Message[]).push({role: "user", content: "more"});
+      },
+    }),
+    TypeError,
+  );
+  await assert.rejects(
+    run({
+      *beforeStep(request) {
+        (request.messages as Message[]).push({role: "user", content: "more"});
+      },
+    }),
+    TypeError,
+  );
+  await assert.rejects(
+    run({
+      *beforeStep(request) {
+        (request.messages[0] as {content: string}).content = "x";
+      },
+    }),
+    TypeError,
+  );
+  await assert.rejects(
+    run({
+      tools: {search: search([])},
+      *beforeTool(call) {
+        (call.input as {query: string}).query = "y";
+      },
+    }),
+    TypeError,
   );
 });
