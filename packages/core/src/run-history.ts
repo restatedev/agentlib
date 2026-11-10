@@ -4,16 +4,23 @@ import type {Message} from "./types.js";
 import {RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
-import {history} from "./validation.js";
+import {checkProtocol, history} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
+
+function withNote(note: NoteMessage | undefined, transcript: Message[]): Message[] {
+  if (note) transcript.unshift(note);
+  return transcript;
+}
+
 /** Where the model's view stood when a request was built from it. */
 export type ViewMark = {events: number; from: number};
 type ToolMessage = Extract<Message, {role: "tool"}>;
 export type NoteMessage = Extract<Message, {role: "user"}>;
 
 /** Events arrive in execution order. Model protocols require each batch's tool
- * results immediately after its assistant call, ahead of intervening steering. */
+ * results immediately after its assistant call, ahead of intervening steering.
+ * Every event was validated when it was recorded, so only the order is checked. */
 function modelTranscript(events: readonly Message[]): Message[] {
   const batchByCall = new Map<string, number>();
   for (const [index, message] of events.entries()) {
@@ -35,10 +42,14 @@ function modelTranscript(events: readonly Message[]): Message[] {
     transcript.push(message);
     if (message.role === "assistant") transcript.push(...(resultsByBatch.get(index) ?? []));
   }
-  return history(transcript);
+  checkProtocol(transcript);
+  return transcript;
 }
 
-/** Owns the append-only event history and its persistence cursor. The run saves
+/** Owns the append-only event history and its persistence cursor. Every message enters
+ * a run as a copy the run owns, validated once. Model requests and hooks share these
+ * messages instead of copying the history, as the AI SDK does: they read them and never
+ * change them. The run saves
  * a model-valid transcript at finalization; earlier failures save nothing.
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
@@ -92,14 +103,14 @@ export class RunHistory {
   /** What the model sees during this run, including provisional feedback. */
   snapshot(): Message[] {
     const events = this.shown(this.messages.slice(this.view?.from ?? 0));
-    return [...(this.view ? [this.view.note] : []), ...modelTranscript(events)];
+    return withNote(this.view?.note, modelTranscript(events));
   }
 
   /** What a tool-free finalization sees: the model's view without provisional feedback. */
   finalContext(): Message[] {
     const from = this.view?.from ?? 0;
     const events = this.messages.slice(from).filter((message) => !this.provisional.has(message));
-    return [...(this.view ? [this.view.note] : []), ...modelTranscript(this.shown(events))];
+    return withNote(this.view?.note, modelTranscript(this.shown(events)));
   }
 
   /** Every event so far, whole, for reading a previewed result back. */
@@ -169,7 +180,9 @@ export class RunHistory {
     this.view = {from: through, note};
   }
 
-  /** What the turn commits: the persisted and returned transcript. */
+  /** What the turn commits: the persisted and returned transcript. Its messages were
+   * validated when they were recorded, and are shared, not copied: the run is over by
+   * the time anyone else sees them. */
   committed(): Message[] {
     return modelTranscript(this.messages.filter((message) => !this.provisional.has(message)));
   }
