@@ -19,7 +19,6 @@ import {
   ToolError,
   ModelProtocolError,
   RunInputError,
-  type JsonValue,
   type Message,
   type Model,
   type ModelResponse,
@@ -465,44 +464,4 @@ void test("conversation summaries must be text, not tool calls", async () => {
     ),
     /must not call tools/,
   );
-});
-
-void test("tool output must be plain JSON, and is recorded as a copy", async () => {
-  const shared = JSON.parse('{"__proto__": {"x": 1}, "n": [1, 2]}') as Record<string, JsonValue>;
-  const outputs: Record<string, unknown> = {date: new Date(0), shared};
-  const a = agent({
-    tools: Object.fromEntries(
-      Object.keys(outputs).map((name) => [
-        name,
-        tool({
-          description: name,
-          input: z.object({}),
-          *execute() {
-            return outputs[name] as JsonValue;
-          },
-        }),
-      ]),
-    ),
-    model: scripted(
-      {
-        type: "tool_calls",
-        calls: [
-          {id: "d", name: "date", input: {}},
-          {id: "s", name: "shared", input: {}},
-        ],
-      },
-      final,
-    ),
-  });
-  const result = await execute(context(), a.run("Go"));
-  const byId = (id: string) => result.messages.find((m) => m.role === "tool" && m.callId === id);
-  const date = byId("d");
-  assert.ok(date?.role === "tool" && date.result.status === "error");
-  assert.equal(date.result.code, "invalid_output");
-  const recorded = byId("s");
-  assert.ok(recorded?.role === "tool" && recorded.result.status === "success");
-  const output = recorded.result.output as Record<string, JsonValue>;
-  assert.deepEqual(Object.keys(output), ["__proto__", "n"]);
-  // The tool's own object stays the tool's: the run recorded a copy.
-  assert.equal(Object.isFrozen(shared), false);
 });

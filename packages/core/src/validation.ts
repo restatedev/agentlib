@@ -69,54 +69,9 @@ export function modelResponse(value: unknown): ModelResponse {
 
 /** Tool output must be JSON. Anything else goes back to the model instead of being retried. */
 export function toolOutput(value: unknown): JsonValue {
-  const copy = jsonCopy(value);
-  if (copy === undefined) throw new ToolError("Tool output must be JSON", "invalid_output");
-  return copy;
-}
-
-/** A copy of `value` when it is JSON by the rules of `z.json()`, and undefined otherwise:
- * finite numbers, arrays without holes, and plain objects with string keys. Written by
- * hand because every tool result passes through it, and Zod's union is much slower. */
-export function jsonCopy(value: unknown): JsonValue | undefined {
-  switch (typeof value) {
-    case "string":
-    case "boolean":
-      return value;
-    case "number":
-      return Number.isFinite(value) ? value : undefined;
-    case "object":
-      break;
-    default:
-      return undefined;
-  }
-  if (value === null) return null;
-  if (Array.isArray(value)) {
-    const copy: JsonValue[] = [];
-    for (let i = 0; i < value.length; i++) {
-      const item = jsonCopy(value[i]);
-      if (item === undefined) return undefined;
-      copy.push(item);
-    }
-    return copy;
-  }
-  const prototype: unknown = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return undefined;
-  if (Object.getOwnPropertySymbols(value).length) return undefined;
-  const copy: Record<string, JsonValue> = {};
-  for (const key of Object.keys(value)) {
-    const item = jsonCopy((value as Record<string, unknown>)[key]);
-    if (item === undefined) return undefined;
-    // Assigning "__proto__" would set the prototype instead of adding the key.
-    if (key === "__proto__")
-      Object.defineProperty(copy, key, {
-        value: item,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    else copy[key] = item;
-  }
-  return copy;
+  const result = jsonSchema.safeParse(value);
+  if (!result.success) throw new ToolError("Tool output must be JSON", "invalid_output");
+  return result.data;
 }
 
 /** Clone and reject incomplete histories before making any model call. */
