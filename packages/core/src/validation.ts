@@ -78,7 +78,13 @@ export function toolOutput(value: unknown): JsonValue {
 export function history(value: readonly Message[]): Message[] {
   const parsed = z.array(messageSchema).safeParse(value);
   if (!parsed.success) throw new RunInputError(`Invalid history: ${parsed.error.message}`);
-  const messages = parsed.data;
+  checkProtocol(parsed.data);
+  return parsed.data;
+}
+
+/** Rejects a history whose tool results do not answer the calls before them, in
+ * order. Structural only: callers pass messages that were already validated. */
+export function checkProtocol(messages: readonly Message[]): void {
   const ids = new Set<string>();
   const pending = new Map<string, string>();
   for (const message of messages) {
@@ -100,5 +106,4 @@ export function history(value: readonly Message[]): Message[] {
     }
   }
   if (pending.size > 0) throw new RunInputError("History contains unfinished tool calls");
-  return messages;
 }

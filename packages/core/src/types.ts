@@ -30,6 +30,7 @@ export type ToolManifest = {
 };
 export type ModelRequest = {
   instructions?: string;
+  /** The run's recorded messages, shared with its history: read them, never change them. */
   messages: Message[];
   tools: ToolManifest[];
   outputSchema?: Record<string, unknown>;

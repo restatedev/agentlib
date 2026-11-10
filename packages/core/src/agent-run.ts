@@ -258,6 +258,8 @@ class AgentRun<C, O> {
    * smaller view is in place, so a stopped run still has room to finalize. */
   private *compactContext(overflow = false): Operation<boolean> {
     const {compaction: settings, contextWindow, maxOutputTokens} = this.config;
+    // Measuring the view is only worth its cost when something can act on the result.
+    if (!overflow && !settings && !contextWindow) return false;
     const retain = (limit: number) => Math.min(settings?.retainTokens ?? limit, limit);
     const overhead = this.requestOverhead();
     // Retained messages share a limit with instructions and tools; keeping
