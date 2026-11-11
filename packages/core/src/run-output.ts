@@ -1,7 +1,14 @@
 import {CancelledError} from "@restatedev/restate-sdk";
 import {InterruptedError, type Operation} from "@restatedev/restate-sdk-gen";
-import {GuardrailError, ModelProtocolError} from "./errors.js";
-import type {Message, Model, OutputCandidate, OutputDecision, RunResult} from "./types.js";
+import {GuardrailError, guardrailDecision, ModelProtocolError} from "./errors.js";
+import type {
+  GuardrailResult,
+  Message,
+  Model,
+  OutputCandidate,
+  OutputDecision,
+  RunResult,
+} from "./types.js";
 import {modelResponse} from "./validation.js";
 
 /** Summaries may fail, but native cancellation must still reach the caller.
@@ -47,24 +54,20 @@ export function createOutputCandidate<O>(result: RunResult<O>): OutputCandidate<
   return candidate as unknown as OutputCandidate<O>;
 }
 
-/** A policy can replace output, never the run's lifecycle or history. */
+/** A policy can accept, reject or replace output, never change the run's lifecycle or
+ * history. */
 export function applyOutputDecision<O>(
   result: RunResult<O>,
-  decision: void | OutputDecision<O>,
+  returned: GuardrailResult | OutputDecision<O>,
 ): RunResult<O> {
-  if (decision === undefined) return result;
-  if (
-    decision === null ||
-    typeof decision !== "object" ||
-    !Object.hasOwn(decision, "output") ||
-    Reflect.ownKeys(decision).some((key) => key !== "output")
-  )
-    throw new GuardrailError("afterRun must return nothing or an object containing only output");
+  const decision = guardrailDecision("afterRun", returned, "output");
+  if (!decision) return result;
+  if ("reject" in decision) throw new GuardrailError(decision.reject);
   if (result.status === "completed") {
     // The root output schema (or text contract) validates this before publication.
-    return {...result, output: decision.output as O};
+    return {...result, output: decision.replace as O};
   }
-  const summary: unknown = decision.output;
+  const summary: unknown = decision.replace;
   if (summary !== undefined && typeof summary !== "string")
     throw new GuardrailError("A stopped or interrupted output must be a text summary");
   return {...result, output: summary};

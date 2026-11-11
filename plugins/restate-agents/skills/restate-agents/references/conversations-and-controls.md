@@ -98,6 +98,9 @@ const researcher = agent({
   restates the run's input once it is summarized and lists background calls
   still running. A previewed result keeps its ref, so it can still be read.
 - The tool-free finalization of a stopped run also sees the compacted view.
+- Compaction summaries do not run `beforeStep`: the compaction model gets the
+  history as recorded. Redact with `beforeRun`, `beforeSteering` and `afterTool`
+  instead.
 - Steering and interrupts wait until compaction finishes. If the compactor
   fails, the run stops summarizing and truncates instead: the older messages
   give way to a short note that restates the input and lists pending calls.
@@ -165,12 +168,18 @@ a message string, or to `{message, data}`: `data` comes back on the
 `steering` progress event, so the app can tell which of its messages the run
 accepted.
 
+An agent's `beforeSteering` hook checks each steering message before it acts:
+it can allow it, replace it with `{message}`, or reject it with a reason. A
+rejected message is never recorded and does not interrupt the work in
+progress; a `steering-rejected` event carries the reason and the message's
+`data`. See [approvals and guardrails](approvals-and-guardrails.md).
+
 ## Progress events
 
 `onProgress` receives each event as the run goes: `step`, `tool-start`,
-`tool-info`, `tool-progress`, `tool-end`, `steering`, `handoff`, and
-`compaction` (`applied` or `failed`). A tool
-reports partial progress with `context.progress(value)`. `tool-end` carries
+`tool-info`, `tool-progress`, `tool-end`, `steering`, `steering-rejected`,
+`handoff`, and `compaction` (`applied` or `failed`). A tool reports partial
+progress with `context.progress(value)`. `tool-end` carries
 the call's final display `info`, so a UI can label a finished call from one
 event; `tool-start` carries it too when the tool's `describe` is a fixed
 label rather than a function of the input.

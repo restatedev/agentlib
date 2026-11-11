@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {ModelProtocolError, RunInputError, ToolError} from "./errors.js";
-import type {JsonValue, Message, ModelResponse} from "./types.js";
+import type {JsonValue, Message, ModelResponse, ReadonlyMessage} from "./types.js";
 
 export const jsonSchema = z.json();
 export const steeringUpdate = z.object({
@@ -106,4 +106,23 @@ export function checkProtocol(messages: readonly Message[]): void {
     }
   }
   if (pending.size > 0) throw new RunInputError("History contains unfinished tool calls");
+}
+
+/** The messages a `beforeStep` hook returned for one request. Messages it kept from
+ * the request were validated when they were recorded; only new ones are parsed. */
+export function stepMessages(
+  sent: readonly Message[],
+  returned: readonly ReadonlyMessage[],
+): Message[] {
+  if (!Array.isArray(returned)) throw new RunInputError("beforeStep must return a messages array");
+  const recorded = new Set<unknown>(sent);
+  const messages = returned.map((message) => {
+    if (recorded.has(message)) return message as Message;
+    const parsed = messageSchema.safeParse(message);
+    if (!parsed.success)
+      throw new RunInputError(`beforeStep returned an invalid message: ${parsed.error.message}`);
+    return parsed.data;
+  });
+  checkProtocol(messages);
+  return messages;
 }

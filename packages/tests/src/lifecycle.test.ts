@@ -982,3 +982,128 @@ void test("an instructions function is called as a method", async () => {
   };
   assert.equal((await r.execute(ctx(), agent(definition).run("go"))).status, "completed");
 });
+
+void test("beforeSteering can reject a message: it is never recorded and the work continues", async () => {
+  const events: unknown[] = [];
+  let steps = 0;
+  const result = await r.execute(
+    ctx(),
+    (function* () {
+      const change = r.channel<string>(),
+        checked = r.channel<void>(),
+        never = r.channel<string>();
+      let listens = 0;
+      const a = agent({
+        *model() {
+          steps++;
+          yield* change.send("My card number is 4111 1111 1111 1111");
+          yield* checked.receive;
+          return {type: "final", text: "kept"};
+        },
+        *beforeSteering({message}) {
+          yield* checked.send();
+          if (message.includes("card")) return "Steering may not contain card numbers";
+        },
+      });
+      return yield* a.run("go", {
+        controls: {steering: () => (listens++ === 0 ? change.receive : never.receive)},
+        *onProgress(event) {
+          if (event.type.startsWith("steering")) events.push(event);
+        },
+      });
+    })(),
+  );
+  assert.equal(result.status, "completed");
+  // The model call in progress was not discarded.
+  assert.equal(steps, 1);
+  assert.equal(result.output, "kept");
+  assert.doesNotMatch(JSON.stringify(result.messages), /4111/);
+  assert.deepEqual(events, [
+    {type: "steering-rejected", reason: "Steering may not contain card numbers"},
+  ]);
+});
+
+void test("beforeSteering can record another message instead", async () => {
+  const events: unknown[] = [];
+  let seen: readonly unknown[] = [];
+  const result = await r.execute(
+    ctx(),
+    (function* () {
+      const change = r.channel<{message: string; data: {id: number}}>(),
+        never = r.channel<string>();
+      let listens = 0;
+      let step = 0;
+      const a = agent({
+        tools: {
+          wait: tool({
+            ...base,
+            *execute() {
+              yield* change.send({message: "Ship to ada@example.com", data: {id: 7}});
+              return "waited";
+            },
+          }),
+        },
+        *model(req) {
+          if (++step === 1) return batch(call("wait"));
+          assert.match(JSON.stringify(req.messages), /Ship to \[email\]/);
+          return done;
+        },
+        *beforeSteering({message, messages}) {
+          seen = messages;
+          return {message: message.replace(/\S+@\S+/, "[email]")};
+        },
+      });
+      return yield* a.run("go", {
+        controls: {steering: () => (listens++ === 0 ? change.receive : never.receive)},
+        *onProgress(event) {
+          if (event.type === "steering") events.push(event);
+        },
+      });
+    })(),
+  );
+  assert.equal(result.status, "completed");
+  assert.doesNotMatch(JSON.stringify(result.messages), /ada@example\.com/);
+  assert.deepEqual(events, [{type: "steering", message: "Ship to [email]", data: {id: 7}}]);
+  // The hook sees the history so far, starting with the run's input.
+  assert.deepEqual(seen[0], {role: "user", content: "go"});
+});
+
+void test("beforeSteering can check steering that arrives while a tool call is still running", async () => {
+  let seen: readonly unknown[] = [];
+  const result = await r.execute(
+    ctx(),
+    (function* () {
+      const change = r.channel<string>(),
+        checked = r.channel<void>(),
+        never = r.channel<string>();
+      let listens = 0;
+      let step = 0;
+      const a = agent({
+        tools: {
+          wait: tool({
+            ...base,
+            *execute() {
+              yield* change.send("use the other file");
+              // Still running while the hook checks the message.
+              yield* checked.receive;
+              return "waited";
+            },
+          }),
+        },
+        *model() {
+          return ++step === 1 ? batch(call("wait")) : done;
+        },
+        *beforeSteering({messages}) {
+          seen = messages;
+          yield* checked.send();
+        },
+      });
+      return yield* a.run("go", {
+        controls: {steering: () => (listens++ === 0 ? change.receive : never.receive)},
+      });
+    })(),
+  );
+  assert.equal(result.status, "completed");
+  // The hook saw the call whose result had not arrived yet.
+  assert.ok(seen.some((m) => (m as {role: string}).role === "assistant"));
+});

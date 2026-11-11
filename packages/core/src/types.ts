@@ -94,6 +94,8 @@ export type ProgressEvent =
   /** `info` is the call's final display information, as set by `describe`. */
   | {type: "tool-end"; callId: string; name: string; result: ToolResult; info: ToolInfo}
   | {type: "steering"; message: string; data?: JsonValue}
+  /** `beforeSteering` rejected a steering message; it was not recorded. */
+  | {type: "steering-rejected"; reason: string; data?: JsonValue}
   | {type: "handoff"; agent?: string}
   /** The run replaced older messages of the model's view, with a handoff note
    * (`summary`) or a short runtime note (`truncate`), or failed to summarize.
@@ -132,7 +134,27 @@ export type ToolContext<Context> = RunContext<Context> & {
   callTool(name: string, input: JsonValue): Operation<JsonValue>;
   cancelOperation(id: string, reason?: string): Operation<boolean>;
 };
+/** Nothing or `true` allows; a string rejects with that reason, and `false` without one. */
 export type GuardrailResult = void | boolean | string;
+/** A recorded message, shared with the run's history: change one by building a new one. */
+export type ReadonlyMessage = ReadonlyValue<Message>;
+/** The model request a `beforeStep` hook inspects. */
+export type StepRequest = ReadonlyValue<ModelRequest>;
+/** A `beforeRun` or `beforeSteering` result: a guardrail decision, or the message to
+ * record instead. */
+export type InputDecision = GuardrailResult | {message: string};
+/** A steering message a `beforeSteering` hook inspects, with the run's history so far as
+ * recorded: in arrival order, before previews or compaction, and with a tool call that
+ * may still be waiting for its result. */
+export type SteeringRequest = ReadonlyValue<{
+  message: string;
+  data?: JsonValue;
+  messages: Message[];
+}>;
+/** A `beforeStep` result: a guardrail decision, or the messages to send instead. */
+export type StepDecision = GuardrailResult | {messages: readonly ReadonlyMessage[]};
+/** A `beforeTool` result: a guardrail decision, or the input to run the tool with instead. */
+export type ToolDecision = GuardrailResult | {input: JsonValue};
 export type Tool<Context = unknown> = {
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
@@ -157,6 +179,9 @@ export type ToolDefinition<Schema extends z.ZodType, Context> = {
   background?: boolean;
   deferred?: boolean;
   provider?: string;
+  /** Checks this call. Return nothing or `true` to allow; a string or `false` denies it,
+   * and the model gets the reason as the call's result. To change a call's input, use the
+   * agent's `beforeTool`. */
   before?(input: z.output<Schema>, context: ToolContext<Context>): Operation<GuardrailResult>;
   needsApproval?:
     | boolean
@@ -235,18 +260,58 @@ export type AgentOptions<Context, Output = string> = {
   maxToolCalls?: number;
   maxToolDepth?: number;
   maxOutputChars?: number;
+  /** Checks the run's input before the first model call. It sees the loaded history
+   * and the input message. Return nothing or `true` to allow; a string or `false` fails
+   * the run with a `GuardrailError`, and nothing is saved. Return `{message}` to record
+   * that input instead, for example with personal data redacted: the original never
+   * enters the history. Restate's journal still keeps the handler's own input. */
   beforeRun?(
-    messages: readonly Message[],
+    messages: readonly ReadonlyMessage[],
     context: RunContext<Context>,
-  ): Operation<GuardrailResult>;
-  beforeStep?(request: ModelRequest, context: RunContext<Context>): Operation<GuardrailResult>;
-  beforeTool?(call: ToolCall, context: ToolContext<Context>): Operation<GuardrailResult>;
+  ): Operation<InputDecision>;
+  /** Checks each steering message before it takes effect. It sees the message, its
+   * data, and the run's history so far. Return nothing or `true` to allow. A string or
+   * `false` drops the message: it is never recorded, the work in progress continues,
+   * and a `steering-rejected` progress event carries the reason. Return `{message}` to
+   * record that message instead: the original never enters the history. */
+  beforeSteering?(
+    steering: SteeringRequest,
+    context: RunContext<Context>,
+  ): Operation<InputDecision>;
+  /** Checks each of the agent's own steps. Return nothing or `true` to allow; a string
+   * or `false` fails the run with a `GuardrailError`. Return `{messages}` to send those
+   * messages in this one request instead. The request shares the run's history and is
+   * typed read-only: build new messages rather than editing them, since an edit in place
+   * would change the history, and keep the ones you do not change.
+   *
+   * Summary calls do not run this hook: the summary of a stopped run (`finalize`) and
+   * compaction summaries send the history as recorded, possibly to another model. To
+   * keep data from every model call, remove it from the history with `beforeRun`,
+   * `beforeSteering` and `afterTool`. */
+  beforeStep?(request: StepRequest, context: RunContext<Context>): Operation<StepDecision>;
+  /** Checks every tool call, before its input is validated. Return nothing or `true` to
+   * allow; a string or `false` denies it, and the model gets the reason as the call's
+   * result. Return `{input}` to run the tool with that input instead; it is validated
+   * like the model's. The new input is not recorded: the history keeps the model's own
+   * call, next to the new input's result. The root agent's hook runs first, and the next
+   * sees its input. */
+  beforeTool?(
+    call: ReadonlyValue<ToolCall>,
+    context: ToolContext<Context>,
+  ): Operation<ToolDecision>;
+  /** Transforms a tool's output before it is recorded: the model, the history and the
+   * saved conversation only ever see the result; the original never enters the run's
+   * history. The place to redact tool output. Restate's journal still keeps the original
+   * when the tool returned it from a journaled step, as `asyncTool` does. */
   afterTool?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
-  /** Return nothing to accept, {output} to replace, or throw to reject. */
+  /** Checks the run's result before it is returned and saved. Return nothing or `true`
+   * to accept; a string or `false` fails the run with a `GuardrailError`, and nothing is
+   * saved. Return `{output}` to replace the output: the replacement is recorded, returned
+   * and saved; the candidate never enters the history. */
   afterRun?(
     candidate: OutputCandidate<Output>,
     context: RunContext<Context>,
-  ): Operation<void | OutputDecision<Output>>;
+  ): Operation<GuardrailResult | OutputDecision<Output>>;
   onApproval?: ApprovalHandler<Context>;
   /** Override the decision mechanism; onApproval only publishes the request. */
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;

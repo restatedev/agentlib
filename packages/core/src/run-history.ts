@@ -13,6 +13,10 @@ function withNote(note: NoteMessage | undefined, transcript: Message[]): Message
   return transcript;
 }
 
+function checkInput(input: unknown, error: string): asserts input is string {
+  if (typeof input !== "string" || !input.trim()) throw new RunInputError(error);
+}
+
 /** Where the model's view stood when a request was built from it. */
 export type ViewMark = {events: number; from: number};
 type ToolMessage = Extract<Message, {role: "tool"}>;
@@ -67,7 +71,7 @@ export class RunHistory {
   private readonly previewed = new WeakMap<Message, Message>();
 
   private constructor(
-    readonly input: string,
+    private inputText: string,
     private readonly messages: Message[],
     private version: number,
     private persisted: number,
@@ -81,8 +85,7 @@ export class RunHistory {
     source: HistorySource = {},
     previews?: PreviewSettings,
   ): Operation<RunHistory> {
-    if (typeof input !== "string" || !input.trim())
-      throw new RunInputError("Agent input must be a nonempty string");
+    checkInput(input, "Agent input must be a nonempty string");
     const {conversation} = source;
     if (conversation && source.messages)
       throw new RunInputError("Use either conversation or messages");
@@ -98,6 +101,18 @@ export class RunHistory {
     run.previews = previews;
     run.append({role: "user", content: input});
     return run;
+  }
+
+  /** This run's input message. */
+  get input(): string {
+    return this.inputText;
+  }
+
+  /** Replaces this run's input message, before any model call has seen it. */
+  replaceInput(message: string): void {
+    checkInput(message, "beforeRun must return a nonempty message");
+    this.inputText = message;
+    this.messages[this.inputAt] = {role: "user", content: message};
   }
 
   /** What the model sees during this run, including provisional feedback. */
