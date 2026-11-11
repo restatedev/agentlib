@@ -71,11 +71,12 @@ prompt caching. `aiModel` reports `usage` when the provider gives counts:
 `inputTokens` includes cached reads and writes, `cachedInputTokens` counts the
 reads, and `cacheWriteInputTokens` the writes.
 
-`aiModel` sends a tool schema in strict mode when it has an exact strict
-form, so the model's arguments always match it: every property is required
-(use `.nullable()` rather than `.optional()`) and there are no free-form maps.
-Other tool schemas are sent as they are. Structured output is handled by
-AI SDK and validated against the agent's `output` schema.
+`aiModel` passes tool and `output` schemas to AI SDK as they are, so AI SDK's
+defaults apply: tools are not strict, and OpenAI structured output is strict.
+OpenAI strict mode requires every property, so use `.nullable()` rather than
+`.optional()` in an `output` schema, or pass
+`providerOptions: {openai: {strictJsonSchema: false}}`. Tool input and output
+are validated against their Zod schemas either way.
 
 `modelGateway(call)` sends model requests to another Restate handler. Use it
 to centralize keys, quotas, or routing in one service:

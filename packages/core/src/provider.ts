@@ -27,7 +27,6 @@ import type {
   ModelUsage,
   ToolCall,
 } from "./types.js";
-import {strictSchema} from "./strict-schema.js";
 
 type GenerateSettings = Parameters<typeof generateText>[0];
 
@@ -155,19 +154,12 @@ function settingsFor(
   signal: AbortSignal,
 ): GenerateSettings {
   const caching = options.caching ?? true;
-  const strictOutput = request.outputSchema ? strictSchema(request.outputSchema) : undefined;
+  // Schemas go to AI SDK as they are, with its defaults for strict mode.
   const tools: ToolSet = Object.fromEntries(
-    request.tools.map((t) => {
-      const strict = strictSchema(t.inputSchema);
-      return [
-        t.name,
-        {
-          description: t.description,
-          inputSchema: aiSchema(strict ?? t.inputSchema),
-          strict: strict !== undefined,
-        },
-      ];
-    }),
+    request.tools.map((t) => [
+      t.name,
+      {description: t.description, inputSchema: aiSchema(t.inputSchema)},
+    ]),
   );
   return {
     model: options.model,
@@ -181,18 +173,10 @@ function settingsFor(
     maxOutputTokens: request.maxOutputTokens,
     maxRetries: 0,
     abortSignal: signal,
-    providerOptions: request.outputSchema
-      ? {
-          ...options.providerOptions,
-          openai: {
-            strictJsonSchema: strictOutput !== undefined,
-            ...options.providerOptions?.openai,
-          },
-        }
-      : options.providerOptions,
+    providerOptions: options.providerOptions,
     experimental_telemetry: options.telemetry,
     ...(request.outputSchema
-      ? {output: Output.object({schema: aiSchema(strictOutput ?? request.outputSchema)})}
+      ? {output: Output.object({schema: aiSchema(request.outputSchema)})}
       : {}),
   };
 }

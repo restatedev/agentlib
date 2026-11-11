@@ -123,7 +123,6 @@ export function readToolResultTool<C>(
   settings: PreviewSettings,
 ): Tool<C> {
   const maxChars = jsonChars(settings.maxTokens) * READ_SLICES;
-  // Nullable rather than optional, so the schema qualifies for strict mode.
   const input = z.object({
     ref: z.string().min(1),
     offset: z.number().int().min(0).nullable(),
