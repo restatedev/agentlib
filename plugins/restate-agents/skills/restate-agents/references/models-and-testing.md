@@ -72,7 +72,8 @@ prompt caching. `aiModel` reports `usage` when the provider gives counts:
 reads, and `cacheWriteInputTokens` the writes.
 
 `aiModel` passes tool and `output` schemas to AI SDK as they are, so AI SDK's
-defaults apply: tools are not strict, and OpenAI structured output is strict.
+defaults apply: tool strictness follows provider defaults, and OpenAI
+structured output is strict.
 OpenAI strict mode requires every property, so use `.nullable()` rather than
 `.optional()` in an `output` schema. It also rejects open-ended keys, such as
 `z.record()` or `.passthrough()`, and `.nullable()` does not help there. For
