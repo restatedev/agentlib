@@ -74,9 +74,10 @@ reads, and `cacheWriteInputTokens` the writes.
 `aiModel` passes tool and `output` schemas to AI SDK as they are, so AI SDK's
 defaults apply: tools are not strict, and OpenAI structured output is strict.
 OpenAI strict mode requires every property, so use `.nullable()` rather than
-`.optional()` in an `output` schema, or pass
-`providerOptions: {openai: {strictJsonSchema: false}}`. Tool input and output
-are validated against their Zod schemas either way.
+`.optional()` in an `output` schema. It also rejects open-ended keys, such as
+`z.record()` or `.passthrough()`, and `.nullable()` does not help there. For
+those, pass `providerOptions: {openai: {strictJsonSchema: false}}`. Tool input
+and output are validated against their Zod schemas either way.
 
 `modelGateway(call)` sends model requests to another Restate handler. Use it
 to centralize keys, quotas, or routing in one service:
