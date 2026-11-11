@@ -58,7 +58,6 @@ export function cancelOperationTool(
       options.description ??
       "Cancel one background operation using its operationId. Other work continues.",
     describe: options.describe,
-    // Nullable rather than optional, so the schema qualifies for strict mode.
     input: z.object({operationId: z.string(), reason: z.string().nullable()}),
     *execute({operationId, reason}, context) {
       return {cancelled: yield* context.cancelOperation(operationId, reason ?? undefined)};

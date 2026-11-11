@@ -8,23 +8,17 @@ import {aiModel} from "@restatedev/agentlib/provider";
 import {runHandler} from "./replay-harness.mjs";
 
 for (const api of ["chat", "responses"] as const) {
-  void test(`OpenAI ${api} output strictness follows the schema and preserves explicit options`, async () => {
+  void test(`OpenAI ${api} output keeps AI SDK's strict default and its strictJsonSchema option`, async () => {
     const cases: {
       schema: z.ZodType;
       output: Record<string, unknown>;
       strict: boolean;
       override?: boolean;
     }[] = [
-      {schema: z.object({answer: z.string().optional()}), output: {}, strict: false},
-      {
-        schema: z.object({labels: z.record(z.string(), z.string())}),
-        output: {labels: {key: "value"}},
-        strict: false,
-      },
       {schema: z.object({answer: z.string().nullable()}), output: {answer: null}, strict: true},
       {
-        schema: z.object({answer: z.string()}),
-        output: {answer: "yes"},
+        schema: z.object({answer: z.string().optional()}),
+        output: {},
         strict: false,
         override: false,
       },
@@ -76,8 +70,7 @@ for (const api of ["chat", "responses"] as const) {
         api === "chat" ? bodies[0]!.response_format.json_schema : bodies[0]!.text.format;
       assert.equal(format.strict, fixture.strict);
       assert.equal(bodies[0]!.store, false);
-      if (!fixture.strict && fixture.override === undefined)
-        assert.deepEqual(format.schema, z.toJSONSchema(fixture.schema));
+      assert.deepEqual(format.schema, z.toJSONSchema(fixture.schema));
       const replay = await runHandler(handler, {replay: live.journal});
       assert.deepEqual(replay.output, live.output);
       assert.equal(bodies.length, 1);
@@ -158,7 +151,7 @@ void test("AI SDK OpenAI Responses handles tools, structured output and replay",
   assert.equal(first.store, false);
   assert.equal(first.max_output_tokens, 512);
   assert.equal(first.tools[0].name, "lookup");
-  assert.equal(first.tools[0].strict, true);
+  assert.equal(first.tools[0].strict, undefined);
   assert.equal(first.text.format.type, "json_schema");
   assert.deepEqual(first.text.format.schema.required, ["answer"]);
   assert.ok(
@@ -242,8 +235,7 @@ void test(
     assert.equal(requests.length, 2);
     assert.equal(requests[0]!.model, "test-model");
     assert.equal(requests[0]!.tools[0].function.name, "lookup");
-    assert.equal(requests[0]!.tools[0].function.strict, true);
-    assert.equal(requests[0]!.tools[0].function.parameters.additionalProperties, false);
+    assert.equal(requests[0]!.tools[0].function.strict, undefined);
     assert.deepEqual(requests[1]!.messages, [
       {role: "system", content: "Help with tickets"},
       {role: "user", content: "Find ticket 123"},
