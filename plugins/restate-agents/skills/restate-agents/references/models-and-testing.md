@@ -18,7 +18,9 @@ Which adapter to use:
 
 All providers come through the [Vercel AI SDK](https://ai-sdk.dev). The
 SDK supplies the provider protocol only; Restate still owns the loop, tools,
-retries, and journaling (`aiModel` sets the SDK's own retries to zero).
+retries, and journaling (`aiModel` sets the SDK's own retries to zero). A
+throttled call waits as long as the provider asks (`retry-after` headers, or
+Gemini's `RetryInfo`) before Restate retries it.
 
 1. Install the provider package, for example `@ai-sdk/openai`, `@ai-sdk/anthropic`,
    `@ai-sdk/amazon-bedrock`, `@ai-sdk/google`, `@ai-sdk/mistral`, or

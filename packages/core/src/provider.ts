@@ -1,4 +1,4 @@
-import {TerminalError} from "@restatedev/restate-sdk";
+import {RetryableError, TerminalError} from "@restatedev/restate-sdk";
 import type {ClientFuture, RetryOptions} from "@restatedev/restate-sdk-gen";
 import {
   APICallError,
@@ -66,6 +66,42 @@ function contextOverflow(error: APICallError): boolean {
     "code" in detail &&
     detail.code === "context_length_exceeded"
   );
+}
+
+/** The wait a throttled provider asks for, in whole milliseconds. Read from
+ * `retry-after-ms`, else `retry-after` in seconds or as an HTTP date, else,
+ * for Google models, `RetryInfo` in the body. A negative or infinite value
+ * falls through to the next source. */
+function retryAfter(error: APICallError, model: LanguageModel): number | undefined {
+  const headers = error.responseHeaders ?? {};
+  const header = headers["retry-after"] ?? "";
+  const seconds = parseFloat(header);
+  const google = typeof model !== "string" && model.provider.startsWith("google.");
+  return (
+    wait(parseFloat(headers["retry-after-ms"] ?? "")) ??
+    wait(Number.isNaN(seconds) ? Date.parse(header) - Date.now() : seconds * 1000) ??
+    (google ? wait(retryInfo(error.responseBody)) : undefined)
+  );
+}
+
+const wait = (ms: number) => (Number.isFinite(ms) && ms >= 0 ? Math.ceil(ms) : undefined);
+
+const RETRY_INFO = "type.googleapis.com/google.rpc.RetryInfo";
+/** Gemini sends the wait in the body instead, as a `RetryInfo` detail with a
+ * duration such as "30s". */
+function retryInfo(body: string | undefined): number {
+  type Detail = {"@type"?: unknown; retryDelay?: unknown} | null;
+  try {
+    const parsed = JSON.parse(body ?? "") as {error?: {details?: Detail[]}} | null;
+    const details = parsed?.error?.details;
+    const info = Array.isArray(details)
+      ? details.find((detail) => detail?.["@type"] === RETRY_INFO)
+      : undefined;
+    const delay = /^(\d+(?:\.\d+)?)s$/.exec(String(info?.retryDelay));
+    return delay ? Number(delay[1]) * 1000 : NaN;
+  } catch {
+    return NaN;
+  }
 }
 // Namespaced: each provider reads its own key, so no provider detection is needed.
 const CACHE_POINT = {
@@ -290,6 +326,10 @@ export function aiModel(options: ProviderOptions): Model {
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});
+      // Wait as long as the provider asks, so throttling does not use up the
+      // retry attempts before its window has passed.
+      const delay = APICallError.isInstance(error) ? retryAfter(error, options.model) : undefined;
+      if (delay !== undefined) throw RetryableError.from(error, {retryAfter: delay});
       throw error;
     }
   }
