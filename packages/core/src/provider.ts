@@ -68,10 +68,10 @@ function contextOverflow(error: APICallError): boolean {
   );
 }
 
-/** The wait a throttled provider asks for, in whole milliseconds
- * Read as either `retry-after-ms`, else `retry-after` in seconds or as an
- * HTTP date. */
-function retryAfter(error: APICallError): number | undefined {
+/** The wait a throttled provider asks for, in whole milliseconds. Read from
+ * `retry-after-ms`, else `retry-after` in seconds or as an HTTP date, else,
+ * for Google models, `RetryInfo` in the body. */
+function retryAfter(error: APICallError, model: LanguageModel): number | undefined {
   const headers = error.responseHeaders ?? {};
   let ms = parseFloat(headers["retry-after-ms"] ?? "");
   const header = headers["retry-after"];
@@ -79,7 +79,27 @@ function retryAfter(error: APICallError): number | undefined {
     const seconds = parseFloat(header);
     ms = Number.isNaN(seconds) ? Date.parse(header) - Date.now() : seconds * 1000;
   }
+  if (Number.isNaN(ms) && typeof model !== "string" && model.provider.startsWith("google."))
+    ms = retryInfo(error.responseBody);
   return Number.isFinite(ms) && ms >= 0 ? Math.ceil(ms) : undefined;
+}
+
+const RETRY_INFO = "type.googleapis.com/google.rpc.RetryInfo";
+/** Gemini sends the wait in the body instead, as a `RetryInfo` detail with a
+ * duration such as "30s". */
+function retryInfo(body: string | undefined): number {
+  type Detail = {"@type"?: unknown; retryDelay?: unknown} | null;
+  try {
+    const parsed = JSON.parse(body ?? "") as {error?: {details?: Detail[]}} | null;
+    const details = parsed?.error?.details;
+    const info = Array.isArray(details)
+      ? details.find((detail) => detail?.["@type"] === RETRY_INFO)
+      : undefined;
+    const delay = /^(\d+(?:\.\d+)?)s$/.exec(String(info?.retryDelay));
+    return delay ? Number(delay[1]) * 1000 : NaN;
+  } catch {
+    return NaN;
+  }
 }
 // Namespaced: each provider reads its own key, so no provider detection is needed.
 const CACHE_POINT = {
@@ -306,7 +326,7 @@ export function aiModel(options: ProviderOptions): Model {
         throw new TerminalError(error.message, {errorCode: error.statusCode});
       // Wait as long as the provider asks, so throttling does not use up the
       // retry attempts before its window has passed.
-      const delay = APICallError.isInstance(error) ? retryAfter(error) : undefined;
+      const delay = APICallError.isInstance(error) ? retryAfter(error, options.model) : undefined;
       if (delay !== undefined) throw RetryableError.from(error, {retryAfter: delay});
       throw error;
     }

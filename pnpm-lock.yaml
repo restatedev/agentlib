@@ -263,6 +263,9 @@ importers:
       '@ai-sdk/anthropic':
         specifier: 4.0.14
         version: 4.0.14(zod@4.6.5)
+      '@ai-sdk/google':
+        specifier: 4.0.14
+        version: 4.0.14(zod@4.6.5)
       '@ai-sdk/openai':
         specifier: 4.0.13
         version: 4.0.13(zod@4.6.5)
@@ -330,6 +333,12 @@ packages:
 
   '@ai-sdk/gateway@4.0.19':
     resolution: {integrity: sha512-pQ3UPO0tyLUuW751jdgWhvHmXmjvAFpyiTeZF6eSVHMYhH/dSH4FtSKGT2nOnvvpaRpU8ygsLV4ng2Mz0lcU/A==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/google@4.0.14':
+    resolution: {integrity: sha512-nkF+EqreJzBUuo8noDAKN2bN3WHFHXPHoL8BfrtCWRuMTrm9FIUFDUDu9ACjLJrvgRZb06M0vlMsOao84F+9fg==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -1893,6 +1902,12 @@ snapshots:
       '@ai-sdk/provider': 4.0.3
       '@ai-sdk/provider-utils': 5.0.9(zod@4.6.5)
       '@vercel/oidc': 3.2.0
+      zod: 4.6.5
+
+  '@ai-sdk/google@4.0.14(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.3
+      '@ai-sdk/provider-utils': 5.0.9(zod@4.6.5)
       zod: 4.6.5
 
   '@ai-sdk/openai@4.0.13(zod@4.6.5)':
