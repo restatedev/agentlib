@@ -70,19 +70,21 @@ function contextOverflow(error: APICallError): boolean {
 
 /** The wait a throttled provider asks for, in whole milliseconds. Read from
  * `retry-after-ms`, else `retry-after` in seconds or as an HTTP date, else,
- * for Google models, `RetryInfo` in the body. */
+ * for Google models, `RetryInfo` in the body. A negative or infinite value
+ * falls through to the next source. */
 function retryAfter(error: APICallError, model: LanguageModel): number | undefined {
   const headers = error.responseHeaders ?? {};
-  let ms = parseFloat(headers["retry-after-ms"] ?? "");
-  const header = headers["retry-after"];
-  if (Number.isNaN(ms) && header) {
-    const seconds = parseFloat(header);
-    ms = Number.isNaN(seconds) ? Date.parse(header) - Date.now() : seconds * 1000;
-  }
-  if (Number.isNaN(ms) && typeof model !== "string" && model.provider.startsWith("google."))
-    ms = retryInfo(error.responseBody);
-  return Number.isFinite(ms) && ms >= 0 ? Math.ceil(ms) : undefined;
+  const header = headers["retry-after"] ?? "";
+  const seconds = parseFloat(header);
+  const google = typeof model !== "string" && model.provider.startsWith("google.");
+  return (
+    wait(parseFloat(headers["retry-after-ms"] ?? "")) ??
+    wait(Number.isNaN(seconds) ? Date.parse(header) - Date.now() : seconds * 1000) ??
+    (google ? wait(retryInfo(error.responseBody)) : undefined)
+  );
 }
+
+const wait = (ms: number) => (Number.isFinite(ms) && ms >= 0 ? Math.ceil(ms) : undefined);
 
 const RETRY_INFO = "type.googleapis.com/google.rpc.RetryInfo";
 /** Gemini sends the wait in the body instead, as a `RetryInfo` detail with a

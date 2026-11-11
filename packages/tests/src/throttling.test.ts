@@ -74,7 +74,10 @@ void test("retry-after headers are read", async () => {
     // HTTP dates have whole seconds, so the wait is up to a second shorter.
     {headers: {"retry-after": inSeconds(30)}, delay: [28_000, 30_000]},
     {headers: {"retry-after-ms": "2000", "retry-after": "9"}, delay: [2000, 2000]},
+    // An unusable value falls through to the next header.
     {headers: {"retry-after-ms": "soon", "retry-after": "3"}, delay: [3000, 3000]},
+    {headers: {"retry-after-ms": "-1", "retry-after": "5"}, delay: [5000, 5000]},
+    {headers: {"retry-after-ms": "Infinity", "retry-after": "5"}, delay: [5000, 5000]},
     // Unusable or missing headers keep Restate's own backoff.
     {headers: {"retry-after": inSeconds(-30)}, delay: [restateDefault, restateDefault]},
     {headers: {"retry-after": "later"}, delay: [restateDefault, restateDefault]},
@@ -99,6 +102,8 @@ void test("Google's RetryInfo sets the wait when no header does", async () => {
   assert.equal(await google([info("1.5s")]), 1500);
   // A header wins over the body.
   assert.equal(await google([info("30s")], {"retry-after": "2"}), 2000);
+  // An unusable header falls through to the body.
+  assert.equal(await google([info("30s")], {"retry-after": "-2"}), 30_000);
   // A missing or unreadable RetryInfo keeps Restate's own backoff.
   assert.equal(await google([quota]), restateDefault);
   assert.equal(await google([info("soon")]), restateDefault);
