@@ -349,6 +349,45 @@ void test("throttled, conflicting and server-side OpenAI errors stay retryable",
   }
 });
 
+void test("Restate waits as long as a throttled provider asks before retrying", async () => {
+  const restateDefault = 50;
+  const inSeconds = (seconds: number) => new Date(Date.now() + seconds * 1000).toUTCString();
+  const cases: {headers: Record<string, string>; delay: [number, number]}[] = [
+    {headers: {"retry-after-ms": "1500.5"}, delay: [1501, 1501]},
+    {headers: {"retry-after": "7"}, delay: [7000, 7000]},
+    // Longer than the AI SDK would wait in process; Restate waits durably.
+    {headers: {"retry-after": "120"}, delay: [120_000, 120_000]},
+    // HTTP dates have whole seconds, so the wait is up to a second shorter.
+    {headers: {"retry-after": inSeconds(30)}, delay: [28_000, 30_000]},
+    {headers: {"retry-after-ms": "2000", "retry-after": "9"}, delay: [2000, 2000]},
+    {headers: {"retry-after-ms": "soon", "retry-after": "3"}, delay: [3000, 3000]},
+    // Unusable or missing headers keep Restate's own backoff.
+    {headers: {"retry-after": inSeconds(-30)}, delay: [restateDefault, restateDefault]},
+    {headers: {"retry-after": "later"}, delay: [restateDefault, restateDefault]},
+    {headers: {}, delay: [restateDefault, restateDefault]},
+  ];
+  for (const {headers, delay} of cases) {
+    let requests = 0;
+    const client = createOpenAI({
+      apiKey: "test-only",
+      fetch: async () => {
+        requests++;
+        return Response.json({error: {message: "slow down"}}, {status: 429, headers});
+      },
+    });
+    const a = agent({model: aiModel({model: client.chat("test")})});
+    const failure = await runHandler((ctx) => execute(ctx, a.run("hello"))).then(
+      () => assert.fail("expected a retryable failure"),
+      (error: Error & {nextRetryDelay?: number}) => error,
+    );
+    assert.match(failure.message, /SDK failure.*slow down/);
+    const [min, max] = delay;
+    const actual = failure.nextRetryDelay ?? -1;
+    assert.ok(min <= actual && actual <= max, `${JSON.stringify(headers)}: waited ${actual} ms`);
+    assert.equal(requests, 1);
+  }
+});
+
 void test("incomplete OpenAI chat responses never execute a tool", {timeout: 5000}, async () => {
   const validCall = {id: "one", type: "function", function: {name: "write", arguments: "{}"}};
   // Each case fails its own protocol check, not some unrelated error.

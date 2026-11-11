@@ -1,4 +1,4 @@
-import {TerminalError} from "@restatedev/restate-sdk";
+import {RetryableError, TerminalError} from "@restatedev/restate-sdk";
 import type {ClientFuture, RetryOptions} from "@restatedev/restate-sdk-gen";
 import {
   APICallError,
@@ -66,6 +66,20 @@ function contextOverflow(error: APICallError): boolean {
     "code" in detail &&
     detail.code === "context_length_exceeded"
   );
+}
+
+/** The wait a throttled provider asks for, in whole milliseconds
+ * Read as either `retry-after-ms`, else `retry-after` in seconds or as an
+ * HTTP date. */
+function retryAfter(error: APICallError): number | undefined {
+  const headers = error.responseHeaders ?? {};
+  let ms = parseFloat(headers["retry-after-ms"] ?? "");
+  const header = headers["retry-after"];
+  if (Number.isNaN(ms) && header) {
+    const seconds = parseFloat(header);
+    ms = Number.isNaN(seconds) ? Date.parse(header) - Date.now() : seconds * 1000;
+  }
+  return Number.isFinite(ms) && ms >= 0 ? Math.ceil(ms) : undefined;
 }
 // Namespaced: each provider reads its own key, so no provider detection is needed.
 const CACHE_POINT = {
@@ -290,6 +304,10 @@ export function aiModel(options: ProviderOptions): Model {
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});
+      // Wait as long as the provider asks, so throttling does not use up the
+      // retry attempts before its window has passed.
+      const delay = APICallError.isInstance(error) ? retryAfter(error) : undefined;
+      if (delay !== undefined) throw RetryableError.from(error, {retryAfter: delay});
       throw error;
     }
   }
