@@ -46,7 +46,8 @@ type RunResult<O> = {steps: number; messages: Message[]} & (
 A stopped or interrupted run still gets a short summary in `output`, made by
 a tool-free model call (`finalize`, which defaults to the agent's model; pass
 `finalize: false` to skip it). When a person reads the answer, that summary
-is a fine reply, with `reason` as the fallback:
+is a fine reply, with `reason` as the fallback. The summary call does not run
+`beforeStep`; see [approvals and guardrails](approvals-and-guardrails.md).
 
 ```ts
 const result = yield* assistant.run(message);

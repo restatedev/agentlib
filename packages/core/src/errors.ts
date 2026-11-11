@@ -1,6 +1,5 @@
 import {TerminalError} from "@restatedev/restate-sdk";
 import {InterruptedError} from "@restatedev/restate-sdk-gen";
-import type {GuardrailResult} from "./types.js";
 
 /** A present failure can contain any thrown value, including undefined. */
 export type CapturedFailure = {error: unknown};
@@ -51,8 +50,23 @@ export class ContextOverflowError extends TerminalError {
 export function isContextOverflow(error: unknown): boolean {
   return error instanceof TerminalError && error.code === CONTEXT_OVERFLOW_CODE;
 }
-export function denial(result: GuardrailResult): string | undefined {
-  if (typeof result === "string") return result;
-  if (result === false) return "Rejected by guardrail";
-  return undefined;
+/** Reads a guardrail's result: nothing or `true` allows, a string or `false` rejects,
+ * and an object whose only key is `replace` replaces. Anything else is a mistake rather
+ * than a decision, so it fails instead of allowing. */
+export function guardrailDecision(
+  hook: string,
+  result: unknown,
+  replace?: string,
+  fail: (message: string) => Error = (message) => new GuardrailError(message),
+): {reject: string} | {replace: unknown} | undefined {
+  if (result === undefined || result === true) return undefined;
+  if (result === false) return {reject: "Rejected by guardrail"};
+  if (typeof result === "string") return {reject: result || "Rejected by guardrail"};
+  if (replace !== undefined && typeof result === "object" && result !== null) {
+    const keys = Reflect.ownKeys(result);
+    if (keys.length === 1 && keys[0] === replace)
+      return {replace: (result as Record<string, unknown>)[replace]};
+  }
+  const choices = replace ? `a rejection reason, or {${replace}}` : "or a rejection reason";
+  throw fail(`${hook} must return nothing, a boolean, ${choices}`);
 }

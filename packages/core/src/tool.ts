@@ -6,7 +6,7 @@ import {
   type Operation,
 } from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {denial, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
+import {guardrailDecision, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
 import type {
   Agent,
   AsyncToolDefinition,
@@ -80,8 +80,10 @@ export function buildTool<Data, Context = unknown>(
         yield* context.describe(info);
       }
       if (lifecycle.before) {
-        const reason = denial(yield* lifecycle.before(data, context));
-        if (reason !== undefined) throw new ToolDenied(reason);
+        const result = yield* lifecycle.before(data, context);
+        const failure = (message: string) => new ToolError(message, "guardrail_failed");
+        const decision = guardrailDecision("before", result, undefined, failure);
+        if (decision && "reject" in decision) throw new ToolDenied(decision.reject);
       }
       const approval =
         typeof lifecycle.needsApproval === "function"

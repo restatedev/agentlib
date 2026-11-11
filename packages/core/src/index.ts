@@ -56,6 +56,12 @@ export type {
   ProgressEvent,
   ProgressHandler,
   GuardrailResult,
+  ReadonlyMessage,
+  StepRequest,
+  StepDecision,
+  InputDecision,
+  SteeringRequest,
+  ToolDecision,
   AgentRuntime,
 } from "./types.js";
 export {sleepTool, humanApprovalTool, cancelOperationTool, searchToolsTool} from "./builtins.js";

@@ -101,9 +101,11 @@ answers and streamed model chunks have not yet earned this status.
 _Avoid_: Model response, token stream
 
 **Guardrail**:
-A hook that allows or denies a run, step, or tool call before it proceeds
-(`beforeRun`, `beforeStep`, `beforeTool`, a tool's `before`), or post-processes a
-tool's output (`afterTool`).
+A hook that checks something as it enters the run: the input (`beforeRun`), a
+steering message (`beforeSteering`), a tool call (`beforeTool`, a tool's `before`),
+a tool's output (`afterTool`), or the final answer (`afterRun`). It allows, rejects
+with a reason, or returns a replacement, and what it returns is what the history
+records. A guardrail never changes what it receives.
 _Avoid_: Policy, retry policy
 
 **Output policy**:

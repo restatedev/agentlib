@@ -11,10 +11,11 @@ import {
 import {
   AgentLimitError,
   ContextOverflowError,
-  denial,
+  guardrailDecision,
   GuardrailError,
   isContextOverflow,
   ModelProtocolError,
+  RunInputError,
   RunInterrupted,
   ToolBudgetExceeded,
 } from "./errors.js";
@@ -28,16 +29,16 @@ import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
 import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
 import {listSkills, skillsSection, skillTools} from "./skills.js";
-import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
+import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
-  GuardrailResult,
   Message,
   ModelFinalResponse,
   ModelRequest,
   ModelResponse,
   ModelToolCallsResponse,
+  ReadonlyMessage,
   ToolManifest,
   ProgressEvent,
   RunContext,
@@ -73,11 +74,6 @@ export function* runAgent<C, O>(
 function withSkills(instructions: string | undefined, section: string | undefined) {
   if (!section) return instructions;
   return instructions ? `${instructions}\n\n${section}` : section;
-}
-
-function allow(result: GuardrailResult): void {
-  const rejected = denial(result);
-  if (rejected !== undefined) throw new GuardrailError(rejected);
 }
 
 /** Explicit controls take precedence over named invocation signals. */
@@ -167,8 +163,12 @@ class AgentRun<C, O> {
 
   /** Startup has no model work to supersede, so controls attach afterwards. */
   private *start(): Operation<void> {
-    if (this.root.beforeRun)
-      allow(yield* this.root.beforeRun(this.history.snapshot(), this.context));
+    if (this.root.beforeRun) {
+      const result = yield* this.root.beforeRun(this.history.snapshot(), this.context);
+      const decision = guardrailDecision("beforeRun", result, "message");
+      if (decision && "reject" in decision) throw new GuardrailError(decision.reject);
+      if (decision) this.history.replaceInput(decision.replace as string);
+    }
     const source = this.root.skills;
     const listed = source ? yield* listSkills(source) : [];
     if (source && listed.length) {
@@ -203,23 +203,23 @@ class AgentRun<C, O> {
   }
 
   /** Waits for one branch or a control. Failures and interruption throw;
-   * steering is recorded and reported under the "steering" tag. */
+   * accepted steering is recorded and reported under the "steering" tag. Rejected
+   * steering changes nothing, so the race keeps waiting for the same branches. */
   private *race(branches: FutureBranches): Operation<{tag: string; value: unknown}> {
-    const controls: FutureBranches = {failed: this.tasks.failed};
-    if (this.interrupt) controls.interrupt = this.interrupt;
-    if (this.steering) controls.steering = this.steering;
-    const {tag, future} = yield* select({...controls, ...branches});
-    const value = yield* future;
-    if (tag === "failed") throw value;
-    if (tag === "interrupt") {
-      if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
-      throw new RunInterrupted(value);
+    for (;;) {
+      const controls: FutureBranches = {failed: this.tasks.failed};
+      if (this.interrupt) controls.interrupt = this.interrupt;
+      if (this.steering) controls.steering = this.steering;
+      const {tag, future} = yield* select({...controls, ...branches});
+      const value = yield* future;
+      if (tag === "failed") throw value;
+      if (tag === "interrupt") {
+        if (typeof value !== "string") throw new TypeError("Interruption reason must be a string");
+        throw new RunInterrupted(value);
+      }
+      if (tag === "steering" && !(yield* this.acceptSteering(value))) continue;
+      return {tag, value};
     }
-    if (tag === "steering") {
-      const {message, data} = this.acceptSteering(value);
-      yield* this.emit({type: "steering", message, ...(data === undefined ? {} : {data})});
-    }
-    return {tag, value};
   }
 
   /** Asks the model for the next step; undefined when steering discarded it.
@@ -392,8 +392,14 @@ class AgentRun<C, O> {
     };
     this.lastRequest = {instructions: request.instructions, tools: request.tools};
     // The root's policy applies to every step; a handoff target adds its own.
+    // A hook may send other messages in this request; the next hook sees them.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
-      if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));
+      if (!agent.beforeStep) continue;
+      const result = yield* agent.beforeStep(request, this.context);
+      const decision = guardrailDecision("beforeStep", result, "messages");
+      if (decision && "reject" in decision) throw new GuardrailError(decision.reject);
+      if (decision)
+        request.messages = stepMessages(request.messages, decision.replace as ReadonlyMessage[]);
     }
     const response = modelResponse(yield* this.active.model(request));
     if ((response.text?.length ?? 0) > this.config.maxOutputChars)
@@ -487,14 +493,35 @@ class AgentRun<C, O> {
     return {output: parsed.data};
   }
 
-  private acceptSteering(value: unknown): SteeringUpdate {
+  /** Records and reports a steering message the root's `beforeSteering` allows, or
+   * its replacement; false when the hook rejected it. Either way the run listens for
+   * the next one. */
+  private *acceptSteering(value: unknown): Operation<boolean> {
     const update = steeringUpdate.safeParse(typeof value === "string" ? {message: value} : value);
     if (!update.success) throw new TypeError("Steering must be a nonempty message");
-    const {message} = update.data;
-    this.history.appendSteering(message);
     // A steering future only exists when its source does.
     this.steering = this.steeringSource!();
-    return update.data;
+    const {data} = update.data;
+    const withData = data === undefined ? {} : {data};
+    let {message} = update.data;
+    if (this.root.beforeSteering) {
+      // As recorded, not the model's view: mid-batch, a call may not have its result yet.
+      const request = {message, ...withData, messages: [...this.history.events()]};
+      const result = yield* this.root.beforeSteering(request, this.context);
+      const decision = guardrailDecision("beforeSteering", result, "message");
+      if (decision && "reject" in decision) {
+        yield* this.emit({type: "steering-rejected", reason: decision.reject, ...withData});
+        return false;
+      }
+      if (decision) {
+        if (typeof decision.replace !== "string" || !decision.replace.trim())
+          throw new RunInputError("beforeSteering must return a nonempty message");
+        message = decision.replace;
+      }
+    }
+    this.history.appendSteering(message);
+    yield* this.emit({type: "steering", message, ...withData});
+    return true;
   }
 
   private *review(result: RunResult<O>): Operation<RunResult<O>> {
