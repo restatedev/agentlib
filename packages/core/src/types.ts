@@ -18,10 +18,24 @@ export type ToolResult =
   | {status: "denied" | "cancelled"; message: string}
   | {status: "pending"; operationId: string};
 
+/** A model's reasoning with a response, kept exactly as its provider returned it: Claude's
+ * signed thinking or OpenAI's encrypted reasoning `items`, and in `calls` each tool call's
+ * metadata by call id, such as Gemini's thought signatures. `text` keeps text-part
+ * original text and signature metadata together. It goes back with the response
+ * on later requests, so the model builds on its reasoning instead of redoing it. Never
+ * edit it: providers reject reasoning that changed. `tokens` is what it takes in the
+ * model's context, as the provider reported it. */
+export type Reasoning = {
+  items: JsonValue[];
+  calls?: {[callId: string]: JsonValue};
+  text?: {text: string; providerOptions?: {[provider: string]: JsonValue}}[];
+  tokens?: number;
+};
+
 /** Model context, including complete tool-call/result pairs. Caller-owned. */
 export type Message =
   | {role: "user"; content: string}
-  | {role: "assistant"; content: string; calls?: ToolCall[]}
+  | {role: "assistant"; content: string; calls?: ToolCall[]; reasoning?: Reasoning}
   | {role: "tool"; callId: string; name: string; result: ToolResult};
 export type ToolManifest = {
   name: string;
@@ -53,12 +67,14 @@ export type ModelFinalResponse = {
   output?: JsonValue;
   validationError?: string;
   usage?: ModelUsage;
+  reasoning?: Reasoning;
 };
 export type ModelToolCallsResponse = {
   type: "tool_calls";
   calls: ToolCall[];
   text?: string;
   usage?: ModelUsage;
+  reasoning?: Reasoning;
 };
 export type ModelResponse = ModelFinalResponse | ModelToolCallsResponse;
 /** A local journaled call or an RPC to a model gateway are both operations. */

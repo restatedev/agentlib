@@ -62,6 +62,10 @@ export const model = aiModel({model: bedrock("<bedrock model id>")});
 `aiModel` also accepts `providerOptions` (passed through to the provider), an
 OpenTelemetry `tracer`, and `onChunk` for streaming text to a UI.
 
+With a reasoning model, `aiModel` keeps the model's reasoning and sends it back on
+later requests; for OpenAI it sets `store: false` unless you set `store`. See
+`references/reasoning.md`.
+
 
 Prompt caching is on by default. `aiModel` marks the instructions (which
 follow the tools), the newest message, and the message before the newest

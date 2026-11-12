@@ -1,5 +1,6 @@
 import {TerminalError} from "@restatedev/restate-sdk";
 import {sharedState, state, type Operation} from "@restatedev/restate-sdk-gen";
+import {readable} from "./context-size.js";
 import type {Message, Model} from "./types.js";
 import {history, modelResponse} from "./validation.js";
 
@@ -124,8 +125,9 @@ export class LazyStateConversation implements Conversation {
     const meta = yield* this.meta();
     const baseThrough = meta.summary?.through ?? 0;
     const messages = history(yield* this.range(baseThrough, meta.count));
-    if (messages.length <= maxMessages && JSON.stringify(messages).length <= maxChars)
-      return undefined;
+    // Measured as a summarizer reads them: encrypted reasoning would inflate the count.
+    const chars = JSON.stringify(messages.map(readable)).length;
+    if (messages.length <= maxMessages && chars <= maxChars) return undefined;
     const target = messages.length - retainMessages;
     const outstanding = new Set<string>();
     let boundary = 0;
@@ -189,7 +191,7 @@ export function* summarizeConversation(
           role: "user",
           content: JSON.stringify({
             previousSummary: plan.previousSummary ?? null,
-            messages: plan.messages,
+            messages: plan.messages.map(readable),
           }),
         },
       ],

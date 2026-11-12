@@ -23,8 +23,24 @@ function messageTokens(message: Message): number {
   const text = message.content.startsWith("{")
     ? jsonTokens(message.content)
     : textTokens(message.content);
-  if (message.role === "user" || !message.calls) return text;
-  return text + jsonTokens(JSON.stringify(message.calls));
+  if (message.role === "user") return text;
+  const calls = message.calls ? jsonTokens(JSON.stringify(message.calls)) : 0;
+  // Reasoning counts at the tokens it takes in context, not by its often encrypted characters.
+  return text + calls + (message.reasoning?.tokens ?? 0);
+}
+
+/** A message as a summarizer reads it: reasoning as its readable text, if any, without
+ * the signatures and encrypted content that are unreadable bytes to any model. */
+export function readable(message: Message): unknown {
+  if (message.role !== "assistant" || !message.reasoning) return message;
+  const {reasoning, ...rest} = message;
+  const text = reasoning.items
+    .flatMap((item) => {
+      const text = item && typeof item === "object" && !Array.isArray(item) ? item.text : undefined;
+      return typeof text === "string" && text.trim() ? [text] : [];
+    })
+    .join("\n\n");
+  return text ? {...rest, reasoning: text} : rest;
 }
 
 export function textTokens(text: string): number {

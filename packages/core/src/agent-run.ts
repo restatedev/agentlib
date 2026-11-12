@@ -38,6 +38,7 @@ import type {
   ModelRequest,
   ModelResponse,
   ModelToolCallsResponse,
+  Reasoning,
   ToolManifest,
   ProgressEvent,
   RunContext,
@@ -447,7 +448,11 @@ class AgentRun<C, O> {
     if (!parsed) {
       // The model needs its rejected answer to correct it; the turn must not keep it.
       this.history.appendProvisional(
-        {role: "assistant", content: action.text},
+        {
+          role: "assistant",
+          content: action.text,
+          ...(action.reasoning ? {reasoning: structuredClone(action.reasoning)} : {}),
+        },
         {
           role: "user",
           content: JSON.stringify({
@@ -467,7 +472,13 @@ class AgentRun<C, O> {
         messages: this.history.committed(),
       }),
     );
-    return result && (yield* this.finish(result));
+    // Reasoning can contain readable details the output policy removed. Keep it
+    // only when the policy leaves the answer unchanged, including structured output.
+    const reasoning =
+      result && JSON.stringify(result.output) === JSON.stringify(parsed.output)
+        ? action.reasoning
+        : undefined;
+    return result && (yield* this.finish(result, reasoning));
   }
 
   /** Returns undefined when the model should retry against the output schema. */
@@ -533,7 +544,7 @@ class AgentRun<C, O> {
   }
 
   /** Validates the accepted result, commits its output, and saves the turn. */
-  private *finish(result: RunResult<O>): Operation<RunResult<O>> {
+  private *finish(result: RunResult<O>, reasoning?: Reasoning): Operation<RunResult<O>> {
     if (result.status === "completed") {
       if (this.root.output) {
         const parsed = this.root.output.safeParse(result.output);
@@ -554,6 +565,7 @@ class AgentRun<C, O> {
       this.history.append({
         role: "assistant",
         content: typeof output === "string" ? output : JSON.stringify(output),
+        ...(reasoning ? {reasoning: structuredClone(reasoning)} : {}),
       });
     }
     yield* this.history.save();

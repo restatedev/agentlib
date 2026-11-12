@@ -13,6 +13,19 @@ const callSchema = z.object({
   input: jsonSchema,
   validationError: z.string().min(1).optional(),
 });
+const reasoningSchema = z.object({
+  items: z.array(jsonSchema),
+  calls: z.record(z.string(), jsonSchema).optional(),
+  text: z
+    .array(
+      z.object({
+        text: z.string(),
+        providerOptions: z.record(z.string(), jsonSchema).optional(),
+      }),
+    )
+    .optional(),
+  tokens: z.number().int().nonnegative().optional(),
+});
 const toolResultSchema = z.discriminatedUnion("status", [
   z.object({status: z.literal("success"), output: jsonSchema}),
   z.object({status: z.literal("error"), code: z.string(), message: z.string()}),
@@ -25,6 +38,7 @@ const messageSchema = z.discriminatedUnion("role", [
     role: z.literal("assistant"),
     content: z.string(),
     calls: z.array(callSchema).min(1).optional(),
+    reasoning: reasoningSchema.optional(),
   }),
   z.object({
     role: z.literal("tool"),
@@ -47,6 +61,7 @@ const responseSchema = z.discriminatedUnion("type", [
       output: jsonSchema.optional(),
       validationError: z.string().optional(),
       usage: usageSchema.optional(),
+      reasoning: reasoningSchema.optional(),
     })
     .refine(
       (value) =>
@@ -57,6 +72,7 @@ const responseSchema = z.discriminatedUnion("type", [
     calls: z.array(callSchema).min(1),
     text: z.string().optional(),
     usage: usageSchema.optional(),
+    reasoning: reasoningSchema.optional(),
   }),
 ]);
 
