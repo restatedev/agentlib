@@ -344,9 +344,10 @@ async function stream(
   return {finishReason, text, calls, reasoning, output, usage: modelUsage(rawUsage)};
 }
 
-/** AI SDK 7.0.26 filters empty text deltas before building responseMessages.
- * Gemini can put its signature on that final empty delta. Carry its metadata
- * onto text-end before the SDK filters it, without adding any visible text. */
+/** Gemini reuses a text-block ID across signed segments. Give each segment its
+ * own start/end pair so AI SDK aggregation keeps its text and signature together.
+ * Empty trailing deltas sign the preceding text; carry their metadata onto text-end
+ * because AI SDK 7.0.26 filters empty deltas before building responseMessages. */
 function preserveTextMetadata(model: LanguageModel): LanguageModel {
   // String model IDs are resolved internally by the SDK's configured gateway.
   if (typeof model === "string") return model;
@@ -356,22 +357,51 @@ function preserveTextMetadata(model: LanguageModel): LanguageModel {
       specificationVersion: "v4",
       async wrapStream({doStream}) {
         const result = await doStream();
-        const metadata = new Map<string, ProviderMetadata>();
+        const blocks = new Map<string, {metadata?: ProviderMetadata; hasText: boolean}>();
+        const signed = (metadata?: ProviderMetadata) =>
+          Object.values(metadata ?? {}).some(
+            (options) => typeof options.thoughtSignature === "string",
+          );
         return {
           ...result,
           stream: result.stream.pipeThrough(
             new TransformStream({
               transform(chunk, controller) {
-                if (
-                  (chunk.type === "text-start" || chunk.type === "text-delta") &&
-                  chunk.providerMetadata
-                )
-                  metadata.set(chunk.id, chunk.providerMetadata);
+                if (chunk.type === "text-start")
+                  blocks.set(chunk.id, {metadata: chunk.providerMetadata, hasText: false});
+                if (chunk.type === "text-delta") {
+                  const block = blocks.get(chunk.id);
+                  if (block) {
+                    if (
+                      chunk.delta.length > 0 &&
+                      block.hasText &&
+                      (signed(block.metadata) || signed(chunk.providerMetadata))
+                    ) {
+                      controller.enqueue({
+                        type: "text-end",
+                        id: chunk.id,
+                        providerMetadata: block.metadata,
+                      });
+                      // The SDK's output transform also remembers metadata by ID.
+                      // Explicitly clear it when the next segment is unsigned.
+                      chunk = {...chunk, providerMetadata: chunk.providerMetadata ?? {}};
+                      controller.enqueue({
+                        type: "text-start",
+                        id: chunk.id,
+                        providerMetadata: chunk.providerMetadata,
+                      });
+                      block.metadata = undefined;
+                      block.hasText = false;
+                    }
+                    block.metadata = chunk.providerMetadata ?? block.metadata;
+                    block.hasText ||= chunk.delta.length > 0;
+                  }
+                }
                 if (chunk.type === "text-end") {
-                  const previous = metadata.get(chunk.id);
+                  const previous = blocks.get(chunk.id)?.metadata;
                   if (previous)
                     chunk = {...chunk, providerMetadata: {...previous, ...chunk.providerMetadata}};
-                  metadata.delete(chunk.id);
+                  blocks.delete(chunk.id);
                 }
                 controller.enqueue(chunk);
               },

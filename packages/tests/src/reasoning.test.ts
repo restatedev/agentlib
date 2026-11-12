@@ -504,37 +504,112 @@ for (const redact of [false, true])
     assert.equal(requests.length, 2);
   });
 
-void test("Gemini's streamed signature on an empty trailing text chunk survives the next turn", async () => {
-  const requests: Record<string, any>[] = [];
-  const google = createGoogleGenerativeAI({
-    apiKey: "test-only",
-    fetch: async (_url, init) => {
-      requests.push(JSON.parse(init!.body as string));
-      const parts =
-        requests.length === 1
-          ? [{text: "Found"}, {text: "", thoughtSignature: "stream-sig"}]
-          : [{text: "Again"}];
-      const chunks = parts.map((part) => ({
-        candidates: [{content: {role: "model", parts: [part]}}],
-      }));
-      const finish = {
-        candidates: [{content: {role: "model", parts: []}, finishReason: "STOP"}],
-        usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15},
-      };
-      return new Response(
-        [...chunks, finish].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join(""),
-        {headers: {"content-type": "text/event-stream"}},
+for (const {name, parts, expected, structured} of [
+  {
+    name: "multiple signed deltas",
+    parts: [
+      {text: "First ", thoughtSignature: "sig-A"},
+      {text: "second", thoughtSignature: "sig-B"},
+    ],
+  },
+  {
+    name: "unsigned text around signed deltas",
+    parts: [
+      {text: "Before "},
+      {text: "first ", thoughtSignature: "sig-A"},
+      {text: "between "},
+      {text: "second", thoughtSignature: "sig-B"},
+      {text: " after"},
+    ],
+  },
+  {
+    name: "signed structured output segments",
+    structured: true,
+    parts: [
+      {text: '{ "answer": ', thoughtSignature: "sig-A"},
+      {text: "42 }", thoughtSignature: "sig-B"},
+    ],
+  },
+  {
+    name: "a single empty trailing signature",
+    parts: [{text: "Found"}, {text: "", thoughtSignature: "stream-sig"}],
+    expected: [{text: "Found", thoughtSignature: "stream-sig"}],
+  },
+  {
+    name: "empty trailing signatures",
+    parts: [
+      {text: "First "},
+      {text: "part"},
+      {text: "", thoughtSignature: "sig-A"},
+      {text: " second"},
+      {text: "", thoughtSignature: "sig-B"},
+    ],
+    expected: [
+      {text: "First part", thoughtSignature: "sig-A"},
+      {text: " second", thoughtSignature: "sig-B"},
+    ],
+  },
+])
+  void test(`Gemini streamed ${name} survive history, the next turn, and replay`, async () => {
+    const requests: Record<string, any>[] = [];
+    const nextText = structured ? '{"answer":43}' : "Again";
+    const google = createGoogleGenerativeAI({
+      apiKey: "test-only",
+      fetch: async (_url, init) => {
+        requests.push(JSON.parse(init!.body as string));
+        const chunks = (requests.length === 1 ? parts : [{text: nextText}]).map((part) => ({
+          candidates: [{content: {role: "model", parts: [part]}}],
+        }));
+        const finish = {
+          candidates: [{content: {role: "model", parts: []}, finishReason: "STOP"}],
+          usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15},
+        };
+        return new Response(
+          [...chunks, finish].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join(""),
+          {headers: {"content-type": "text/event-stream"}},
+        );
+      },
+    });
+    const streamed: string[] = [];
+    const a = agent({
+      ...(structured ? {output: z.object({answer: z.number()})} : {}),
+      model: aiModel({
+        model: google("gemini-3-flash"),
+        onChunk: async (chunk) => {
+          if (chunk.type === "text-delta") streamed.push(chunk.text);
+        },
+      }),
+    });
+    const handler = (ctx: Parameters<typeof r.execute>[0]) =>
+      r.execute(
+        ctx,
+        (function* () {
+          const conversation = new LazyStateConversation({store: memoryStore().store});
+          const first = yield* a.run("First", {conversation});
+          yield* a.run("Next", {conversation});
+          return first;
+        })(),
       );
-    },
+    const first = await runHandler(handler);
+    const text = parts.map((part) => part.text).join("");
+    assert.deepEqual(first.output.output, structured ? {answer: 42} : text);
+    assert.equal(streamed.join(""), text + nextText);
+    assert.deepEqual(
+      assistants(first.output.messages)[0]!.reasoning?.text,
+      (expected ?? parts).map(({text, thoughtSignature}) => ({
+        text,
+        ...(thoughtSignature ? {providerOptions: {google: {thoughtSignature}}} : {}),
+      })),
+    );
+    assert.deepEqual(
+      requests[1]!.contents.find((turn: {role: string}) => turn.role === "model").parts,
+      expected ?? parts,
+    );
+    const replay = await runHandler(handler, {replay: first.journal});
+    assert.deepEqual(replay.output, first.output);
+    assert.equal(requests.length, 2);
+    assert.equal(streamed.join(""), text + nextText);
   });
-  const a = agent({model: aiModel({model: google("gemini-3-flash"), onChunk: async () => {}})});
-  const first = await runHandler((ctx) => r.execute(ctx, a.run("First")));
-  await runHandler((ctx) => r.execute(ctx, a.run("Next", {messages: first.output.messages})));
-  assert.deepEqual(
-    requests[1]!.contents.find((turn: {role: string}) => turn.role === "model").parts,
-    [{text: "Found", thoughtSignature: "stream-sig"}],
-  );
-});
 
 void test("redacting a Gemini answer drops both readable reasoning and text signatures before the next turn", async () => {
   const requests: Record<string, any>[] = [];
