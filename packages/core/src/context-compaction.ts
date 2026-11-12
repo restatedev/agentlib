@@ -23,7 +23,7 @@
 import {TerminalError} from "@restatedev/restate-sdk";
 import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {NoteMessage, RunHistory} from "./run-history.js";
-import {estimateTokens} from "./context-size.js";
+import {estimateTokens, readable} from "./context-size.js";
 import type {Message, Model, ModelRequest} from "./types.js";
 import {modelResponse} from "./validation.js";
 
@@ -163,7 +163,7 @@ function retainedStart(events: readonly Message[], shown: Message[], budget: num
 }
 
 function clip(message: Message): string {
-  const text = JSON.stringify(message);
+  const text = JSON.stringify(readable(message));
   if (text.length <= MAX_MESSAGE_CHARS) return text;
   return `${text.slice(0, MAX_MESSAGE_CHARS)} [${text.length - MAX_MESSAGE_CHARS} more characters omitted]`;
 }

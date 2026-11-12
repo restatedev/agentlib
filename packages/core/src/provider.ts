@@ -9,8 +9,11 @@ import {
   Output,
   streamText,
   UnsupportedFunctionalityError,
+  wrapLanguageModel,
+  type AssistantModelMessage,
   type LanguageModel,
   type ModelMessage,
+  type ProviderMetadata,
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
@@ -25,6 +28,7 @@ import type {
   ModelRequest,
   ModelResponse,
   ModelUsage,
+  Reasoning,
   ToolCall,
 } from "./types.js";
 
@@ -138,18 +142,95 @@ function renderMessage(message: ModelRequest["messages"][number]): ModelMessage 
         },
       ],
     };
+  // Reasoning goes back as the model produced it: first, and each tool call with its metadata.
+  const {reasoning} = message;
   return {
     role: "assistant",
     content: [
-      ...(message.content ? [{type: "text" as const, text: message.content}] : []),
-      ...(message.calls ?? []).map((call) => ({
-        type: "tool-call" as const,
-        toolCallId: call.id,
-        toolName: call.name,
-        input: call.input,
-      })),
+      ...((reasoning?.items ?? []) as unknown as ReasoningPart[]),
+      ...textParts(message.content, reasoning?.text),
+      ...(message.calls ?? []).map((call) => {
+        const metadata = reasoning?.calls?.[call.id];
+        return {
+          type: "tool-call" as const,
+          toolCallId: call.id,
+          toolName: call.name,
+          input: call.input,
+          ...(metadata ? {providerOptions: metadata as ProviderMetadata} : {}),
+        };
+      }),
     ],
   };
+}
+
+type ReasoningPart = Extract<
+  Exclude<AssistantModelMessage["content"], string>[number],
+  {type: "reasoning"}
+>;
+
+/** Replay signed text as returned by the model, including its original formatting. */
+function textParts(
+  content: string,
+  parts: Reasoning["text"],
+): Extract<Exclude<AssistantModelMessage["content"], string>[number], {type: "text"}>[] {
+  if (!parts?.length) return content ? [{type: "text", text: content}] : [];
+  return parts.map(({text, providerOptions}) => ({
+    type: "text",
+    text,
+    ...(providerOptions ? {providerOptions: providerOptions as ProviderMetadata} : {}),
+  }));
+}
+
+/** A response's reasoning, taken from the messages the AI SDK builds to send it back: the
+ * reasoning parts as they are, and each tool call's provider options by call id. Its
+ * tokens: the reported reasoning count, or for providers that report none, such as
+ * Anthropic, the response's output, the closest bound. */
+function responseReasoning(
+  messages: readonly ModelMessage[],
+  usage: Awaited<ReturnType<typeof generateText>>["usage"],
+): Reasoning | undefined {
+  const parts = messages.flatMap((m) =>
+    m.role === "assistant" && typeof m.content !== "string" ? m.content : [],
+  );
+  const items = parts.filter((part) => part.type === "reasoning");
+  const calls = Object.fromEntries(
+    parts.flatMap((part) =>
+      part.type === "tool-call" && part.providerOptions
+        ? [[part.toolCallId, part.providerOptions]]
+        : [],
+    ),
+  );
+  const hasCalls = Object.keys(calls).length > 0;
+  // Gemini can sign ordinary text, including the final answer. Keep every text
+  // part with its text if any part has a signature. Message IDs aren't reasoning metadata:
+  // replaying an OpenAI text itemId with store:true would restore the original
+  // answer even if an output policy had replaced it.
+  const text = parts
+    .filter((part) => part.type === "text")
+    .map((part) => {
+      const providerOptions = Object.fromEntries(
+        Object.entries(part.providerOptions ?? {}).filter(
+          ([, options]) => typeof options.thoughtSignature === "string",
+        ),
+      );
+      return {
+        text: part.text,
+        ...(Object.keys(providerOptions).length ? {providerOptions} : {}),
+      };
+    });
+  const hasText = text.some((part) => part.providerOptions !== undefined);
+  if (!items.length && !hasCalls && !hasText) return undefined;
+  const tokens =
+    usage.outputTokenDetails?.reasoningTokens || (items.length ? usage.outputTokens : undefined);
+  const reasoning = {
+    items,
+    ...(hasCalls ? {calls} : {}),
+    ...(hasText ? {text} : {}),
+    ...(tokens ? {tokens} : {}),
+  };
+  // As the journal stores it: JSON, without undefined fields.
+  const parsed = jsonSchema.safeParse(JSON.parse(JSON.stringify(reasoning)));
+  return parsed.success ? (parsed.data as Reasoning) : undefined;
 }
 
 function toolCalls(
@@ -179,6 +260,7 @@ type Generation = {
   finishReason: string;
   text: string;
   calls: ToolCall[];
+  reasoning?: Reasoning;
   output: unknown;
   usage?: ModelUsage;
 };
@@ -209,7 +291,12 @@ function settingsFor(
     maxOutputTokens: request.maxOutputTokens,
     maxRetries: 0,
     abortSignal: signal,
-    providerOptions: options.providerOptions,
+    // OpenAI keeps nothing: its reasoning comes back encrypted and lives in the history,
+    // so it never depends on what OpenAI stores and deletes. The caller's options win.
+    providerOptions: {
+      ...options.providerOptions,
+      openai: {store: false, ...options.providerOptions?.openai},
+    },
     experimental_telemetry: options.telemetry,
     ...(request.outputSchema
       ? {output: Output.object({schema: aiSchema(request.outputSchema)})}
@@ -226,6 +313,7 @@ async function generate(settings: GenerateSettings, wantsOutput: boolean): Promi
     finishReason: result.finishReason,
     text: result.text,
     calls,
+    reasoning: responseReasoning(result.responseMessages, result.usage),
     output,
     usage: modelUsage(result.usage),
   };
@@ -238,7 +326,7 @@ async function stream(
   info: ChunkInfo,
 ): Promise<Generation> {
   await options.onChunk?.({type: "start"}, info);
-  const result = streamText(settings);
+  const result = streamText({...settings, model: preserveTextMetadata(settings.model)});
   for await (const part of result.fullStream) {
     if (part.type === "error") throw part.error;
     if (part.type === "text-delta" || part.type === "reasoning-delta") {
@@ -250,9 +338,49 @@ async function stream(
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls);
   const output = wantsOutput && !calls.length ? await result.output : undefined;
-  const usage = modelUsage(await result.usage);
+  const rawUsage = await result.usage;
+  const reasoning = responseReasoning(await result.responseMessages, rawUsage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, output, usage};
+  return {finishReason, text, calls, reasoning, output, usage: modelUsage(rawUsage)};
+}
+
+/** AI SDK 7.0.26 filters empty text deltas before building responseMessages.
+ * Gemini can put its signature on that final empty delta. Carry its metadata
+ * onto text-end before the SDK filters it, without adding any visible text. */
+function preserveTextMetadata(model: LanguageModel): LanguageModel {
+  // String model IDs are resolved internally by the SDK's configured gateway.
+  if (typeof model === "string") return model;
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      specificationVersion: "v4",
+      async wrapStream({doStream}) {
+        const result = await doStream();
+        const metadata = new Map<string, ProviderMetadata>();
+        return {
+          ...result,
+          stream: result.stream.pipeThrough(
+            new TransformStream({
+              transform(chunk, controller) {
+                if (
+                  (chunk.type === "text-start" || chunk.type === "text-delta") &&
+                  chunk.providerMetadata
+                )
+                  metadata.set(chunk.id, chunk.providerMetadata);
+                if (chunk.type === "text-end") {
+                  const previous = metadata.get(chunk.id);
+                  if (previous)
+                    chunk = {...chunk, providerMetadata: {...previous, ...chunk.providerMetadata}};
+                  metadata.delete(chunk.id);
+                }
+                controller.enqueue(chunk);
+              },
+            }),
+          ),
+        };
+      },
+    },
+  });
 }
 
 /** Providers that report no counts leave usage out; compaction then estimates. */
@@ -277,12 +405,12 @@ export function aiModel(options: ProviderOptions): Model {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
     try {
-      const {finishReason, text, calls, output, usage} = options.onChunk
+      const {finishReason, text, calls, reasoning, output, usage} = options.onChunk
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
         throw new ModelProtocolError("Model indicated tool calls but returned none");
-      const reported = usage ? {usage} : {};
+      const reported = {...(usage ? {usage} : {}), ...(reasoning ? {reasoning} : {})};
       if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
         type: "final",

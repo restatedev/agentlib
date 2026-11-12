@@ -21,6 +21,7 @@ export type {
   AgentOptions,
   JsonValue,
   Message,
+  Reasoning,
   Model,
   ModelRequest,
   ModelChunk,

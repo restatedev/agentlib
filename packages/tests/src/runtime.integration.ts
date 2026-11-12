@@ -557,6 +557,35 @@ const session = r.object({
       }).run("go", {conversation});
       return {result, history: yield* conversation.page()};
     },
+    *reasoningPolicy(redact: boolean) {
+      const conversation = new LazyStateConversation();
+      const reasoning = {
+        items: [{type: "reasoning", text: "private thought"}],
+        text: [
+          {
+            text: "private answer",
+            providerOptions: {google: {thoughtSignature: "private signature"}},
+          },
+        ],
+      };
+      const a = agent({
+        model: journaledModel(async (request): Promise<ModelResponse> => {
+          const previous = request.messages.find((message) => message.role === "assistant");
+          if (previous?.role === "assistant") {
+            assert.deepEqual(previous.reasoning, redact ? undefined : reasoning);
+            return {type: "final", text: "next answer"};
+          }
+          return {type: "final", text: "private answer", reasoning};
+        }),
+        *afterRun(candidate) {
+          yield* r.sleep(1);
+          if (redact && candidate.output === "private answer") return {output: "public answer"};
+        },
+      });
+      const first = yield* a.run("first", {conversation});
+      yield* a.run("next", {conversation});
+      return {first, history: yield* conversation.page()};
+    },
     *interruptGuard() {
       const conversation = new LazyStateConversation();
       const result = yield* agent({
@@ -928,6 +957,25 @@ void test(
     assert.equal(response.result.status, "interrupted");
     assert.doesNotMatch(JSON.stringify(response), /unapproved candidate/);
     assert.deepEqual(response.history.messages, [{role: "user", content: "go"}]);
+  },
+);
+
+void test(
+  "native always-replay: output policies drop reasoning only for changed answers",
+  {timeout: 20000},
+  async () => {
+    for (const redact of [false, true]) {
+      const response = await connect({url: env.baseUrl()})
+        .client(session, `reasoning-policy-${redact}`)
+        .reasoningPolicy(redact);
+      const answer = response.first.messages.at(-1);
+      assert.equal(answer?.role, "assistant");
+      if (answer?.role !== "assistant") throw new Error("Missing answer");
+      assert.equal(answer.content, redact ? "public answer" : "private answer");
+      assert.equal(answer.reasoning !== undefined, !redact);
+      if (redact) assert.doesNotMatch(JSON.stringify(response), /private/);
+      assert.deepEqual(response.history.messages[1], answer);
+    }
   },
 );
 
