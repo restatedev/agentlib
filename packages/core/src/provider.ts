@@ -326,7 +326,7 @@ async function stream(
   info: ChunkInfo,
 ): Promise<Generation> {
   await options.onChunk?.({type: "start"}, info);
-  const result = streamText({...settings, model: preserveTextMetadata(settings.model)});
+  const result = streamText({...settings, model: preserveGeminiTextMetadata(settings.model)});
   for await (const part of result.fullStream) {
     if (part.type === "error") throw part.error;
     if (part.type === "text-delta" || part.type === "reasoning-delta") {
@@ -348,9 +348,10 @@ async function stream(
  * own start/end pair so AI SDK aggregation keeps its text and signature together.
  * Empty trailing deltas sign the preceding text; carry their metadata onto text-end
  * because AI SDK 7.0.26 filters empty deltas before building responseMessages. */
-function preserveTextMetadata(model: LanguageModel): LanguageModel {
+function preserveGeminiTextMetadata(model: LanguageModel): LanguageModel {
   // String model IDs are resolved internally by the SDK's configured gateway.
-  if (typeof model === "string") return model;
+  // Only Google's adapters (including Vertex) need this stream workaround.
+  if (typeof model === "string" || !model.provider.startsWith("google.")) return model;
   return wrapLanguageModel({
     model,
     middleware: {
