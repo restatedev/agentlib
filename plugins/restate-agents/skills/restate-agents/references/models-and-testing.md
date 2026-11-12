@@ -77,6 +77,17 @@ prompt caching. `aiModel` reports `usage` when the provider gives counts:
 `inputTokens` includes cached reads and writes, `cachedInputTokens` counts the
 reads, and `cacheWriteInputTokens` the writes.
 
+Use `result.usage` to inspect token consumption after `agent.run()` returns.
+The SDK sums the reported `inputTokens`, `outputTokens`, `cachedInputTokens`, and
+`cacheWriteInputTokens`. `totalTokens` equals `inputTokens + outputTokens`; cache
+counts are already included in `inputTokens`. The totals include planning,
+in-run compaction, and finalization calls, including responses the SDK later
+discards. A handoff preserves the totals, and each new run starts at zero.
+The `afterRun` hook receives the totals in `candidate.usage`.
+
+Only reported usage contributes to the totals. Model calls made by tools or
+sub-agents and conversation-store compaction are excluded.
+
 `aiModel` passes tool and `output` schemas to AI SDK as they are, so AI SDK's
 defaults apply: tool strictness follows provider defaults, and OpenAI
 structured output is strict.

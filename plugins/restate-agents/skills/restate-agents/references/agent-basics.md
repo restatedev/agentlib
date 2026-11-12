@@ -36,7 +36,7 @@ with no history.
 ## RunResult
 
 ```ts
-type RunResult<O> = {steps: number; messages: Message[]} & (
+type RunResult<O> = {steps: number; messages: Message[]; usage: RunUsage} & (
   | {status: "completed"; output: O}
   | {status: "stopped"; reason: "max_steps" | "max_tool_calls"; output?: string}
   | {status: "interrupted"; reason: string; output?: string}

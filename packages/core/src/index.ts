@@ -29,6 +29,7 @@ export type {
   ModelFinalResponse,
   ModelToolCallsResponse,
   ModelUsage,
+  RunUsage,
   SkillSource,
   SkillSummary,
   OutputCandidate,

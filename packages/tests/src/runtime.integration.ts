@@ -58,6 +58,36 @@ const gateway = r.service({
 const runner = r.service({
   name: "SdkHarness",
   handlers: {
+    *usageTotals(ending: "completed" | "stopped") {
+      return yield* agent({
+        maxSteps: ending === "stopped" ? 1 : 3,
+        tools: {
+          read: tool({
+            ...base,
+            *execute() {
+              return "read";
+            },
+          }),
+        },
+        model: journaledModel(async (request): Promise<ModelResponse> => {
+          const key = `usage-${ending}-${request.step ?? "summary"}`;
+          effects.set(key, (effects.get(key) ?? 0) + 1);
+          const usage = {
+            inputTokens: 100,
+            outputTokens: 10,
+            cachedInputTokens: 60,
+            cacheWriteInputTokens: 20,
+          };
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "r1", name: "read", input: {}}], usage};
+          return {...final, usage};
+        }),
+        *afterRun(candidate) {
+          assert.equal(candidate.usage.totalTokens, 220);
+          yield* r.sleep(1);
+        },
+      }).run("Go");
+    },
     *concurrentRuns() {
       const a = agent<{owner: string}>({
         maxToolCalls: 1,
@@ -772,6 +802,21 @@ before(
 after(async () => {
   await env?.stop();
 });
+for (const ending of ["completed", "stopped"] as const) {
+  void test(`native always-replay: usage totals for ${ending} runs`, async () => {
+    const result = await connect({url: env.baseUrl()}).client(runner).usageTotals(ending);
+    assert.equal(result.status, ending);
+    assert.deepEqual(result.usage, {
+      inputTokens: 200,
+      outputTokens: 20,
+      totalTokens: 220,
+      cachedInputTokens: 120,
+      cacheWriteInputTokens: 40,
+    });
+    assert.equal(effects.get(`usage-${ending}-1`), 1);
+    assert.equal(effects.get(`usage-${ending}-${ending === "completed" ? 2 : "summary"}`), 1);
+  });
+}
 void test("native always-replay: only the invalid tool call needs correction", async () => {
   const result = await connect({url: env.baseUrl()}).client(runner).repairToolInput();
   assert.equal(result.status, "completed");

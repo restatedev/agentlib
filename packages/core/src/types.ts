@@ -61,6 +61,17 @@ export type ModelUsage = {
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;
 };
+/** Aggregates provider-reported tokens for this run's planning, compaction,
+ * and finalization calls. Cache counts are included in inputTokens. Calls
+ * without reported usage do not contribute to the totals. Totals
+ * exclude model calls made by tools or sub-agents and conversation-store compaction. */
+export type RunUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+};
 export type ModelFinalResponse = {
   type: "final";
   text: string;
@@ -193,7 +204,7 @@ export type AsyncToolDefinition<Schema extends z.ZodType, Context = unknown> = O
   /** Defaults to three attempts. Use `callId` as an idempotency key for external writes. */
   retry?: RetryOptions;
 };
-export type RunResult<Output = string> = {steps: number; messages: Message[]} & (
+export type RunResult<Output = string> = {steps: number; messages: Message[]; usage: RunUsage} & (
   | {status: "completed"; output: Output}
   | {status: "stopped"; reason: "max_steps" | "max_tool_calls"; output?: string}
   | {status: "interrupted"; reason: string; output?: string}
@@ -220,6 +231,7 @@ export type OutputDecision<Output = string> = {
   steps?: never;
   reason?: never;
   messages?: never;
+  usage?: never;
 };
 /** A steering message, with application data returned on its progress event. */
 export type SteeringUpdate = {message: string; data?: JsonValue};

@@ -21,6 +21,7 @@ import {
 import {RunHistory} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
+import {RunUsageTracker} from "./run-usage.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
@@ -28,7 +29,7 @@ import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
 import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
 import {listSkills, skillsSection, skillTools} from "./skills.js";
-import {jsonSchema, modelResponse, steeringUpdate} from "./validation.js";
+import {jsonSchema, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
@@ -123,6 +124,7 @@ class AgentRun<C, O> {
   private readonly context: RunContext<C>;
   private readonly tasks = new RunTasks();
   private readonly tools: RunTools<C>;
+  private readonly usage = new RunUsageTracker();
 
   constructor(
     private readonly root: AgentOptions<C, O>,
@@ -294,7 +296,13 @@ class AgentRun<C, O> {
           ? {...this.lastRequest, maxOutputTokens}
           : undefined;
       try {
-        if (yield* summarizeContext(this.history, {model, retainTokens, prefix}, pending)) {
+        if (
+          yield* summarizeContext(
+            this.history,
+            {model: this.usage.wrap(model), retainTokens, prefix},
+            pending,
+          )
+        ) {
           yield* this.emit({type: "compaction", mode: "summary", status: "applied", reason});
           return true;
         }
@@ -396,7 +404,7 @@ class AgentRun<C, O> {
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
       if (agent.beforeStep) allow(yield* agent.beforeStep(request, this.context));
     }
-    const response = modelResponse(yield* this.active.model(request));
+    const response = yield* this.usage.call(this.active.model(request));
     if ((response.text?.length ?? 0) > this.config.maxOutputChars)
       throw new AgentLimitError("Model output exceeds maxOutputChars");
     return response;
@@ -470,6 +478,7 @@ class AgentRun<C, O> {
         output: parsed.output,
         steps: this.step,
         messages: this.history.committed(),
+        usage: this.usage.snapshot(),
       }),
     );
     // Reasoning can contain readable details the output policy removed. Keep it
@@ -512,8 +521,13 @@ class AgentRun<C, O> {
     const finalize = this.root.finalize ?? this.root.model;
     if (finalize && result.status !== "completed") {
       yield* this.compactContext();
-      result = yield* summarizeStoppedRun(result, finalize, this.history.finalContext());
+      result = yield* summarizeStoppedRun(
+        result,
+        this.usage.wrap(finalize),
+        this.history.finalContext(),
+      );
     }
+    result = {...result, usage: this.usage.snapshot()};
     if (this.root.afterRun) {
       const decision = yield* this.root.afterRun(createOutputCandidate(result), this.context);
       result = applyOutputDecision(result, decision);
@@ -534,6 +548,7 @@ class AgentRun<C, O> {
     const end = {
       steps: Math.min(this.step, this.config.maxSteps),
       messages: this.history.committed(),
+      usage: this.usage.snapshot(),
     };
     let result: RunResult<O>;
     if (cause instanceof RunInterrupted)
