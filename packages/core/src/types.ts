@@ -305,6 +305,18 @@ export type AgentOptions<Context, Output = string> = {
    * loaded history. The saved and returned transcript keeps every result whole.
    * `false` shows every result in full. */
   toolResults?: false | {maxTokens?: number; previewTokens?: number};
+  /** Adds `search_tools` when the agent or the run has a `deferred` tool. The
+   * model then sees a deferred tool's schema only after a search loads it,
+   * which keeps a large catalog out of every request. A search tool in
+   * `tools`, such as `searchToolsTool()`, replaces it. `false` leaves it out,
+   * and deferred tools are listed like any other. Default: true. */
+  toolSearch?: boolean;
+  /** Adds `run_program` when the agent or the run has a tool a program can
+   * call. The model writes one JavaScript program, run in a QuickJS sandbox,
+   * that calls several tools and returns only the compact result. A program
+   * tool in `tools`, such as `programTool({limits})` from `/program`,
+   * replaces it. `false` leaves it out. Default: true. */
+  programs?: boolean;
   /** Skills the model can load when a task needs them. The run lists them once
    * at its start, after the instructions, and adds `load_skill` (and
    * `read_skill_file` when the source can read files). They belong to the

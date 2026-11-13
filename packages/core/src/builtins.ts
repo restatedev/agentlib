@@ -65,6 +65,9 @@ export function cancelOperationTool(
   });
 }
 
+/** The name of the search tool a run adds when an agent has deferred tools. */
+export const SEARCH_TOOL = "search_tools";
+
 export function searchToolsTool(options: BuiltinToolOptions<{query: string}> = {}) {
   return {
     ...tool({

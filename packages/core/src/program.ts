@@ -29,6 +29,9 @@ function callSummary(calls: {name: string; status: CallStatus}[]): string {
   return `Tool calls made before the failure, which are not undone: ${tools.join(", ")}.`;
 }
 
+/** The name of the program tool a run adds when an agent has tools to call. */
+export const PROGRAM_TOOL = "run_program";
+
 /** QuickJS orchestrates the same permitted, policy-checked tools as direct calls. */
 export function programTool(
   options: {tools?: string[]; limits?: GuestLimits} & BuiltinToolOptions<{source: string}> = {},

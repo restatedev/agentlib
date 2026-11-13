@@ -197,4 +197,5 @@ depend on the request: lesson 17 passes the tools of an MCP server, and
 [lesson 18](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/18_ag_ui.ts)
 turns the tools an AG-UI client sends into tools that wait on a durable
 signal until the client returns their result. The name `read_tool_result` is
-reserved while `toolResults` is on.
+reserved while `toolResults` is on, and `search_tools` and `run_program` while
+the run adds them (see `toolSearch` and `programs` in `tools.md`).
