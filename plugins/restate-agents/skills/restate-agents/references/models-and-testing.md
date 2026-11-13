@@ -77,6 +77,23 @@ prompt caching. `aiModel` reports `usage` when the provider gives counts:
 `inputTokens` includes cached reads and writes, `cachedInputTokens` counts the
 reads, and `cacheWriteInputTokens` the writes.
 
+`result.usage` sums the usage of every model call a run makes: its steps,
+in-run compaction, and the summary of a stopped or interrupted run, including
+responses the run discards, such as an answer superseded by steering. It also
+includes each sub-agent run by `agentTool`, whether the sub-agent completes,
+stops, or fails. `totalTokens` is `inputTokens + outputTokens`. Calls that
+report no usage add nothing. Model calls made by other tools or by hooks,
+conversation-store compaction, and calls cancelled before they return are not
+counted.
+
+When `run()` throws, `usageOf(error)` returns the totals up to the failure (see
+the example in `agent-basics.md`). Record them only for terminal errors: after
+a retryable error, Restate retries the invocation, and the replay counts the
+same calls again. The totals are attached to the error object in the handler,
+so a remote caller of the handler does not receive them. When several runs
+throw the same error object, such as two runs in one handler that is
+cancelled, `usageOf` returns the totals of the run that threw it last.
+
 `aiModel` passes tool and `output` schemas to AI SDK as they are, so AI SDK's
 defaults apply: tool strictness follows provider defaults, and OpenAI
 structured output is strict.

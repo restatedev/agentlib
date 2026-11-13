@@ -7,6 +7,7 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {denial, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
+import {PARENT_USAGE} from "./run-usage.js";
 import type {
   Agent,
   AsyncToolDefinition,
@@ -235,6 +236,8 @@ export function agentTool<C, O>(
         onApproval: context.publishApproval,
         // Each sub-agent event arrives as progress of the parent's call.
         onProgress: (event) => context.progress(event),
+        // The sub-agent's usage counts toward the parent run, whatever its outcome.
+        [PARENT_USAGE]: (context as {[PARENT_USAGE]?: unknown})[PARENT_USAGE],
       } as RunOptions<C>;
       const run = subAgent.run as (
         input: string,

@@ -16,6 +16,7 @@ export {
   ContextOverflowError,
   isContextOverflow,
 } from "./errors.js";
+export {usageOf} from "./run-usage.js";
 export type {
   Agent,
   AgentOptions,
@@ -38,6 +39,7 @@ export type {
   SteeringSource,
   SteeringUpdate,
   RunResult,
+  RunUsage,
   Tool,
   ToolCall,
   ToolInfo,
