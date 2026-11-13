@@ -152,8 +152,8 @@ repeat a completed model call.
 | Sub-agents as tools          | `agentTool`                                                                | —                                                           |
 | Restate services as tools    | `serviceTool`, `handlerTool`, `restateTools` (`/discovery`)                | [10](packages/examples/src/lessons/10_service_tool.ts)      |
 | Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | —                                                           |
-| Tool search                  | `searchToolsTool`, `deferred: true`                                        | —                                                           |
-| Programmatic tool calling    | `programTool` (`/program`), run in a QuickJS sandbox                       | —                                                           |
+| Tool search                  | `deferred: true`; `agent({toolSearch})`, on by default                     | —                                                           |
+| Programmatic tool calling    | `agent({programs})`, on by default, in QuickJS; `programTool` (`/program`) | —                                                           |
 | MCP                          | `mcpTools` (`/mcp`), passed as `run(input, {tools})`                       | [17](packages/examples/src/lessons/17_mcp_tools.ts)         |
 | AG-UI clients                | `onProgress`, `onApproval` and client-run tools as AG-UI events            | [18](packages/examples/src/lessons/18_ag_ui.ts)             |
 | Guardrails                   | `beforeRun`, `beforeStep`, `beforeTool`, `afterTool`, `afterRun`, `before` | [13](packages/examples/src/lessons/13_tool_guardrail.ts)    |

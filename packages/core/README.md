@@ -43,7 +43,7 @@ go from a first run to multi-agent workflows.
 | `@restatedev/agentlib`           | Agents, tools, conversations, guardrails   |
 | `@restatedev/agentlib/provider`  | Models through the Vercel AI SDK providers |
 | `@restatedev/agentlib/mcp`       | Tools from MCP servers                     |
-| `@restatedev/agentlib/program`   | Programmatic tool calling in a sandbox     |
+| `@restatedev/agentlib/program`   | Program tool with custom tools and limits  |
 | `@restatedev/agentlib/discovery` | Expose agents and tools for discovery      |
 
 ## License
