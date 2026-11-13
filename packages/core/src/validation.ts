@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {ModelProtocolError, RunInputError, ToolError} from "./errors.js";
-import type {JsonValue, Message, ModelResponse} from "./types.js";
+import type {JsonValue, Message, ModelResponse, ModelUsage} from "./types.js";
 
 export const jsonSchema = z.json();
 export const steeringUpdate = z.object({
@@ -81,6 +81,15 @@ export function modelResponse(value: unknown): ModelResponse {
   if (!result.success)
     throw new ModelProtocolError("Model returned an invalid response or empty tool batch");
   return result.data;
+}
+
+/** The usage a model response reports, or undefined when it reports none or
+ * invalid counts. Only the usage is read, so tokens still count when the rest
+ * of the response fails `modelResponse`. */
+export function reportedUsage(response: unknown): ModelUsage | undefined {
+  if (typeof response !== "object" || response === null) return undefined;
+  const result = usageSchema.safeParse((response as {usage?: unknown}).usage);
+  return result.success ? result.data : undefined;
 }
 
 /** Tool output must be JSON. Anything else goes back to the model instead of being retried. */

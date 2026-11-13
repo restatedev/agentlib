@@ -36,7 +36,7 @@ with no history.
 ## RunResult
 
 ```ts
-type RunResult<O> = {steps: number; messages: Message[]} & (
+type RunResult<O> = {steps: number; messages: Message[]; usage: RunUsage} & (
   | {status: "completed"; output: O}
   | {status: "stopped"; reason: "max_steps" | "max_tool_calls"; output?: string}
   | {status: "interrupted"; reason: string; output?: string}
@@ -63,6 +63,23 @@ const result = yield* triage.run(message);
 if (result.status !== "completed") throw new TerminalError(`Triage ${result.status}: ${result.reason}`);
 return result.output; // typed by the output schema
 ```
+
+`usage` holds the run's token totals: `inputTokens`, `outputTokens`,
+`totalTokens`, `cachedInputTokens`, and `cacheWriteInputTokens`. A run that
+throws carries the same totals on its error; read them with `usageOf` (from
+`@restatedev/agentlib`). Record them only for a `TerminalError`, because
+Restate retries other errors and the replay counts the same calls again:
+
+```ts
+try {
+  return yield* triage.run(message);
+} catch (error) {
+  if (error instanceof TerminalError) console.log("tokens used", usageOf(error)?.totalTokens);
+  throw error;
+}
+```
+
+`models-and-testing.md` lists what the totals include.
 
 ## Typed output
 
