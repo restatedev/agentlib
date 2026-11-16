@@ -195,8 +195,10 @@ const result = yield* auditor.run(request, {
 
 Lesson 16 pairs this with a pub/sub object (see `restate-gen-sdk`'s
 `patterns.md`), so clients can `subscribe` and receive each next event.
-Sub-agents started with `agentTool` report their events as progress of the
-parent's tool call.
+Sub-agents started with `agentTool` and forks started with `forkTool` report
+their events as progress of the parent's tool call. Steering reaches the parent
+run only: a sub-agent or fork in the foreground finishes its task before the
+parent's model reads the steering message.
 
 ## Tools for one run
 

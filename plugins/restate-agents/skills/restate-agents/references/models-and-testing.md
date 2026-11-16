@@ -80,8 +80,8 @@ reads, and `cacheWriteInputTokens` the writes.
 `result.usage` sums the usage of every model call a run makes: its steps,
 in-run compaction, and the summary of a stopped or interrupted run, including
 responses the run discards, such as an answer superseded by steering. It also
-includes each sub-agent run by `agentTool`, whether the sub-agent completes,
-stops, or fails. `totalTokens` is `inputTokens + outputTokens`. Calls that
+includes each sub-agent run by `agentTool` and each fork run by `forkTool`,
+whether it completes, stops, or fails. `totalTokens` is `inputTokens + outputTokens`. Calls that
 report no usage add nothing. Model calls made by other tools or by hooks,
 conversation-store compaction, and calls cancelled before they return are not
 counted.
