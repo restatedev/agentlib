@@ -42,8 +42,9 @@ const DEFAULT_MAX_CONCURRENT = 6;
  * conversation up to the step that called this tool, and has the run's tools,
  * policies, and limits; its answer becomes the tool result. Calls in one step
  * run in parallel. A fork cannot start forks or sub-agents, and saves nothing
- * to the conversation. It skips the root's beforeRun and afterRun: its input and
- * answer belong to the parent run, as a tool call and its result.
+ * to the conversation. It skips the root's beforeRun and afterRun, and replies
+ * in plain text even when the agent has an output schema: its input and answer
+ * belong to the parent run, as a tool call and its result.
  *
  * `maxConcurrent` (default 6) bounds how many forks of one run run at once,
  * counting every fork tool of the run; a call past it returns a `fork_limit`

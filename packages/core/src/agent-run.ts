@@ -584,7 +584,7 @@ class AgentRun<C, O> {
 
   /** Returns undefined when the model should retry against the output schema. */
   private parseOutput(action: ModelFinalResponse): {output: O} | undefined {
-    if (!this.root.output) {
+    if (!this.output) {
       if (action.validationError) throw new ModelProtocolError(action.validationError);
       return {output: action.text as O};
     }
@@ -594,7 +594,7 @@ class AgentRun<C, O> {
         candidate = JSON.parse(action.text);
       } catch {}
     }
-    const parsed = this.root.output.safeParse(candidate);
+    const parsed = this.output.safeParse(candidate);
     if (action.validationError || !parsed.success) return undefined;
     return {output: parsed.data};
   }
@@ -670,6 +670,12 @@ class AgentRun<C, O> {
     return yield* this.finish(yield* this.review(result));
   }
 
+  /** The schema the run's answer must match. A fork answers in plain text: its
+   * reply is a tool result for the parent, not the run's output. */
+  private get output(): AgentOptions<C, O>["output"] {
+    return this.origin ? undefined : this.root.output;
+  }
+
   /** Runs a copy of this run on `task`, from the fork point of the call's step.
    * The fork has its own steps, tool budget, and history, and saves nothing.
    * Its usage counts toward this run; its approval requests reach this run's
@@ -703,14 +709,9 @@ class AgentRun<C, O> {
       } as RunOptions<C>;
       const history = this.history.branch(point.history, FORK_PREAMBLE + task);
       const origin = {active: point.active, skills: this.skills, loaded: point.loaded};
-      return yield* new AgentRun<C, O>(
-        this.root,
-        this.config,
-        history,
-        usage,
-        options,
-        origin,
-      ).run();
+      // Without the output schema, the fork's requests ask for a plain reply.
+      const config = {...this.config, outputSchema: undefined};
+      return yield* new AgentRun<C, O>(this.root, config, history, usage, options, origin).run();
     } catch (error) {
       recordFailedRun(error, usage.snapshot());
       throw error;
@@ -723,8 +724,8 @@ class AgentRun<C, O> {
   /** Validates the accepted result, commits its output, and saves the turn. */
   private *finish(result: RunResult<O>, reasoning?: Reasoning): Operation<RunResult<O>> {
     if (result.status === "completed") {
-      if (this.root.output) {
-        const parsed = this.root.output.safeParse(result.output);
+      if (this.output) {
+        const parsed = this.output.safeParse(result.output);
         if (!parsed.success)
           throw new GuardrailError(
             `Run output does not match the output schema: ${parsed.error.message}`,

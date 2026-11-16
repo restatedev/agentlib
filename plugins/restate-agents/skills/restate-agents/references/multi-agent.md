@@ -170,9 +170,11 @@ const investigator = agent({
 - **Fork or sub-agent**: fork when the subtask needs what the run already
   learned and the same model and tools. Use `agentTool` for a specialist with
   its own model, instructions, or tools, or for work that needs a clean context.
-- **Only the reply returns**: the fork's answer becomes the tool result. Its
-  own tool calls stay out of the parent's history, and it saves nothing to the
-  conversation. Its token usage counts toward the parent's `result.usage`, its
+- **Only the reply returns**: the fork's answer becomes the tool result. It
+  replies in plain text, also when the agent has an `output` schema: the schema
+  describes the run's final answer, and the fork's reply is a report for the
+  parent. Its own tool calls stay out of the parent's history, and it saves
+  nothing to the conversation. Its token usage counts toward the parent's `result.usage`, its
   approval requests reach the run's handlers, and interrupting the parent
   interrupts it. `background: true` and `needsApproval` work as on any tool.
 - **One level**: a fork cannot start forks or sub-agents. `forkTool` and
@@ -185,8 +187,7 @@ const investigator = agent({
   `beforeTool`, and `afterTool` apply as in the parent. `beforeStep` and an
   `instructions` function run again for the fork and see its own step numbers
   and run name: keep them deterministic so the fork's request matches the cache.
-- **Limits to know**: a fork of an agent with an `output` schema answers in
-  that schema. It sees the parent's pending background calls but cannot
-  cancel them or receive their results. It runs inside the parent's
+- **Limits to know**: a fork sees the parent's pending background calls but
+  cannot cancel them or receive their results. It runs inside the parent's
   invocation, so its steps add to the parent's journal; for long, independent
   work, use one service per agent instead.

@@ -124,31 +124,36 @@ void test("without fork, a sub-agent starts with only the task", async () => {
   assert.deepEqual(seen?.messages, [{role: "user", content: "Subtask"}]);
 });
 
-void test("a fork of a structured-output agent must answer in the parent's output schema", async () => {
+void test("a fork of a structured-output agent replies in plain text", async () => {
   const forkSteps: ModelRequest[] = [];
+  let delegating: ModelRequest | undefined;
   const lead = forkingAgent({
     output: z.object({answer: z.string()}),
     tools: {read},
     script(request) {
       if (isFork(request)) {
-        forkSteps.push(request);
-        // The preamble asks for a reply; a plain one does not match the schema.
-        if (request.step === 1) return final("The page says hello.");
-        return final(JSON.stringify({answer: "The page says hello."}));
+        forkSteps.push(structuredClone(request));
+        return final("The page says hello.");
       }
-      if (request.step === 1) return delegate("d1", "Read the page");
+      if (request.step === 1) {
+        delegating = structuredClone(request);
+        return delegate("d1", "Read the page");
+      }
       return final(JSON.stringify({answer: "Done"}));
     },
   });
   const result = await execute(lead.run("Go"));
   assert.equal(result.status, "completed");
+  // The run's own answer still matches the schema.
   assert.deepEqual(result.output, {answer: "Done"});
-  // The fork spends a step on the rejected answer, and its result has the parent's output type.
-  assert.equal(forkSteps.length, 2);
-  assert.match(JSON.stringify(forkSteps[1]!.messages), /output-invalid/);
+  assert.ok(delegating!.outputSchema);
+  // The fork's reply is a tool result for the parent, so it asks for no schema
+  // and accepts the plain reply in one step.
+  assert.equal(forkSteps.length, 1);
+  assert.equal(forkSteps[0]!.outputSchema, undefined);
   assert.deepEqual(resultOf(result.messages, "d1"), {
     status: "success",
-    output: {answer: "The page says hello."},
+    output: "The page says hello.",
   });
 });
 
