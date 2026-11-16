@@ -9,11 +9,11 @@ import {
   InterruptedError,
   spawn,
 } from "@restatedev/restate-sdk-gen";
-import {Guest, ProgramError} from "../../core/src/ptc/guest.js";
-import {executeProgram} from "../../core/src/ptc/runtime.js";
+import {Guest, ProgramError} from "../../core/src/code-mode/guest.js";
+import {executeProgram} from "../../core/src/code-mode/runtime.js";
 import {testContext} from "./helpers.js";
 
-const context = () => testContext("ptc-lifecycle");
+const context = () => testContext("code-mode-lifecycle");
 
 void test("interrupting a program joins every child and is never caught by guest code", async () => {
   const stopped: string[] = [];

@@ -103,7 +103,7 @@ void test("in-run compaction is counted, including the cached-prefix attempt", a
   const a = agent({
     tools: {read},
     // The program tool's description alone exceeds this budget.
-    programs: false,
+    codeMode: false,
     compaction: {maxTokens: 650, retainTokens: 300},
     *model(request) {
       if (request.step === undefined) {

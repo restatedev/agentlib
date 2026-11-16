@@ -158,20 +158,21 @@ Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
 
 ## Large catalogs and advanced tool calling
 
-**Tool search and programs are on by default.** When the agent or the run has
-a `deferred` tool, the run adds `search_tools`, and the model sees a deferred
-tool's schema only after a search loads it. When the agent or the run has a
-tool a program can call (any tool except a handoff or a search tool), the run adds
-`run_program`: the model writes one JavaScript program that calls several
-tools, and only the program's result enters the model's context. Programs run
-in a QuickJS sandbox without network or filesystem access.
+**Tool search and code mode are on by default.** When the agent or the run
+has a `deferred` tool, the run adds `search_tools`, and the model sees a
+deferred tool's schema only after a search loads it. When the agent or the run
+has a tool a program can call (any tool except a handoff or a search tool),
+the run adds `run_program` for code mode (programmatic tool calling): the
+model writes one JavaScript program that calls several tools, and only the
+program's result enters the model's context. Programs run in a QuickJS sandbox
+without network or filesystem access.
 
 ```ts
 const assistant = agent({
   model,
   tools: {lookupOrder, refund},
   toolSearch: false, // list deferred tools from the start
-  programs: false, // leave run_program out
+  codeMode: false, // leave run_program out
 });
 ```
 
@@ -190,6 +191,6 @@ const assistant = agent({
 | `deferred: true` on a tool                                        | The tool's schema is hidden until the model finds it with `search_tools`                                     |
 | `background: true`                                                | The model gets a pending result and keeps working; the real result arrives in a later step                   |
 | `sleepTool()`, `cancelOperationTool()`                            | Let the model wait durably, or cancel a background operation                                                 |
-| `programTool({tools, limits})` (`/program`)                       | Replaces `run_program`; `tools` narrows which tools a program may call, and `limits` bounds its work          |
+| `programTool({tools, limits})` (`/program`)                       | Replaces `run_program` for code mode; `tools` narrows which tools a program may call, and `limits` bounds its work |
 | `describe` / `context.describe(info)`                             | Display info for UIs, delivered through progress events                                                      |
 | `context.callTool(name, input)`                                   | Call another tool from a tool, under the same policy and budgets                                             |

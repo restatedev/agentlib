@@ -363,7 +363,7 @@ class AgentRun<C, O> {
   }
 
   /** Tools that belong to the run rather than an agent, so they survive a handoff.
-   * Search and the program tool depend on the active agent's tools, so the run
+   * Search and code mode depend on the active agent's tools, so the run
    * decides on them again after a handoff. */
   private runTools(): Record<string, Tool<C>> {
     const tools = {...this.options?.tools};
@@ -380,8 +380,8 @@ class AgentRun<C, O> {
     return tools;
   }
 
-  /** Search when a tool is deferred, and a program tool when a program has a
-   * tool to call. An agent turns either off, or brings its own in its tools. */
+  /** Search when a tool is deferred, and code mode when a program has a tool
+   * to call. An agent turns either off, or brings its own tool in its tools. */
   private defaultTools(own: Tool<C>[]): Record<string, Tool<C>> {
     const tools: Record<string, Tool<C>> = {};
     if (
@@ -392,7 +392,7 @@ class AgentRun<C, O> {
       tools[SEARCH_TOOL] = defaultSearch;
     // A program cannot hand off, and has no use for search on its own.
     if (
-      this.root.programs !== false &&
+      this.root.codeMode !== false &&
       !own.some((definition) => definition.program) &&
       own.some((definition) => !definition.handoff && !definition.search)
     )
@@ -472,7 +472,7 @@ class AgentRun<C, O> {
       this.active = transfer();
       yield* this.emit({type: "handoff", agent: this.active.name});
       // Run-level tools belong to the run, not the agent, so they survive a handoff;
-      // search and the program tool follow the new agent's tools.
+      // search and code mode follow the new agent's tools.
       this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
   }

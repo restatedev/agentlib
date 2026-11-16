@@ -198,4 +198,4 @@ depend on the request: lesson 17 passes the tools of an MCP server, and
 turns the tools an AG-UI client sends into tools that wait on a durable
 signal until the client returns their result. The name `read_tool_result` is
 reserved while `toolResults` is on, and `search_tools` and `run_program` while
-the run adds them (see `toolSearch` and `programs` in `tools.md`).
+the run adds them (see `toolSearch` and `codeMode` in `tools.md`).

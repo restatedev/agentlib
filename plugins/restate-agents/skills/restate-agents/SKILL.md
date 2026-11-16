@@ -98,7 +98,7 @@ Restate journals. Move on only when the learner is ready.
 | Let the model call one or all handlers of a Restate service    | `handlerTool` / `serviceTool`                                                             |
 | Remote tools                                                   | `mcpTools`; your own registered services: `restateTools` (`/discovery`) |
 | Many tools, load schemas on demand                             | `deferred: true` (tool search is on by default)                                           |
-| Let the model script several tool calls in one step            | `run_program` (on by default); `programTool()` (`/program`) to configure it               |
+| Let the model script several tool calls in one step            | Code mode (on by default); `programTool()` (`/program`) to configure it                   |
 | Keep working while a slow tool runs                            | `background: true`, `sleepTool()`, `cancelOperationTool()`                                |
 | A human decides first                                          | `needsApproval`, or `humanApprovalTool()` for free-form questions                         |
 | Enforce policy the model cannot bypass                         | tool `before`, agent `beforeTool` / `afterRun`                                            |

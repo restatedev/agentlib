@@ -8,8 +8,8 @@ import {
   unknownTool,
   type Outcome,
   type Request,
-} from "../../core/src/ptc/guest.js";
-import {executeWithTools as executeProgram} from "./ptc-adapter.js";
+} from "../../core/src/code-mode/guest.js";
+import {executeWithTools as executeProgram} from "./code-mode-adapter.js";
 
 void test("invalid guest budgets fail before allocating a VM", () => {
   for (const key of ["maxInterruptChecks", "maxJobsPerDrain", "maxToolCalls"] as const) {

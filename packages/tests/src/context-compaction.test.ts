@@ -30,7 +30,7 @@ const reads = (id: string) => ({
 });
 // About three reads outgrow maxTokens; the newest read fits retainTokens.
 // The program tool's description alone exceeds these budgets, so the tests
-// that measure where the cut lands turn programs off.
+// that measure where the cut lands turn code mode off.
 const compaction = {maxTokens: 650, retainTokens: 300};
 
 function note(messages: readonly Message[]): Record<string, unknown> | undefined {
@@ -109,7 +109,7 @@ void test("the run's own model writes the note from the cached prefix of its las
   const a = agent({
     instructions: "Read pages.",
     tools: {read},
-    programs: false,
+    codeMode: false,
     compaction,
     *model(request) {
       requests.push(structuredClone(request));
@@ -138,7 +138,7 @@ void test("a note request answered with a tool call falls back to a separate sum
   let steps = 0;
   const a = agent({
     tools: {read},
-    programs: false,
+    codeMode: false,
     compaction,
     *model(request) {
       if (request.tools.length === 0) {
@@ -349,7 +349,7 @@ void test("the handoff note names background calls that are still running", asyn
             },
           }),
         },
-        programs: false,
+        codeMode: false,
         *model(request) {
           handoff ??= note(request.messages);
           step++;

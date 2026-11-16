@@ -20,7 +20,7 @@ import {programTool} from "@restatedev/agentlib/program";
 import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";
 const done: ModelResponse = {type: "final", text: "done"};
-const context = () => testContext("ptc");
+const context = () => testContext("code-mode");
 
 void test("tool search loads permitted schemas, resets between runs, and journals ranking", async (t) => {
   const a = agent({
@@ -88,7 +88,7 @@ void test("deferred tools stay visible when toolSearch is false", async () => {
   );
 });
 
-void test("a run searches deferred tools and runs programs by default", async () => {
+void test("a run searches deferred tools and turns on code mode by default", async () => {
   let step = 0;
   const a = agent({
     tools: {
@@ -171,7 +171,7 @@ void test("an agent turns the default tools off or replaces them with its own", 
     await r.execute(context(), a.run("go", {tools}));
     return names;
   };
-  assert.deepEqual(await listed({tools: {lookup}, toolSearch: false, programs: false}), [
+  assert.deepEqual(await listed({tools: {lookup}, toolSearch: false, codeMode: false}), [
     "lookup",
     "read_tool_result",
   ]);
@@ -212,7 +212,7 @@ void test("a tool that takes a default tool's name fails the run", async () => {
   await assert.rejects(r.execute(context(), a.run("go")), /Duplicate tool name: run_program/);
 });
 
-void test("PTC shares approval and output policies while keeping intermediate results out of model context", async () => {
+void test("Code mode shares approval and output policies while keeping intermediate results out of model context", async () => {
   let calls = 0,
     step = 0,
     approvals = 0;
@@ -340,7 +340,7 @@ void test("a program that fails before calling a tool says so", async () => {
   assert.match(message ?? "", /SyntaxError[^]*\n\nNo tool calls were made\.$/);
 });
 
-void test("PTC failure and child cleanup remain native through the full agent dispatcher", async () => {
+void test("Code mode failure and child cleanup remain native through the full agent dispatcher", async () => {
   let cleaned = false,
     step = 0;
   const a = agent({
@@ -386,7 +386,7 @@ void test("PTC failure and child cleanup remain native through the full agent di
   assert.equal(cleaned, true);
 });
 
-void test("PTC runs and nested durable effects replay without invoking the host again", async () => {
+void test("Code mode runs and nested durable effects replay without invoking the host again", async () => {
   let effects = 0;
   const a = agent({
     tools: {
