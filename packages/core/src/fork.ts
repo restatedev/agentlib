@@ -12,6 +12,7 @@ import {z} from "zod";
 import {ToolCancelled, ToolError} from "./errors.js";
 import {assertNotForked, forkSource} from "./fork-source.js";
 import {tool} from "./tool.js";
+import {positiveInteger} from "./limits.js";
 import {jsonSchema} from "./validation.js";
 import type {BuiltinToolOptions} from "./builtins.js";
 import type {Tool, ToolContext} from "./types.js";
@@ -34,17 +35,30 @@ const forkedTask = z.object({
     .describe("The task for the copy, which sees your conversation up to this step."),
 });
 
+/** Forks a run can have running at once by default, as many as Codex runs sub-agents. */
+const DEFAULT_MAX_CONCURRENT = 6;
+
 /** Start a copy of the running agent to do one task. The copy sees the
  * conversation up to the step that called this tool, and has the run's tools,
  * policies, and limits; its answer becomes the tool result. Calls in one step
  * run in parallel. A fork cannot start forks or sub-agents, and saves nothing
  * to the conversation. It skips the root's beforeRun and afterRun: its input and
- * answer belong to the parent run, as a tool call and its result. */
+ * answer belong to the parent run, as a tool call and its result.
+ *
+ * `maxConcurrent` (default 6) bounds how many forks of one run run at once,
+ * counting every fork tool of the run; a call past it returns a `fork_limit`
+ * error, and the model can fork again once a fork finishes. */
 export function forkTool<C = unknown>(
-  options: {background?: boolean; needsApproval?: boolean} & BuiltinToolOptions<{
-    task: string;
-  }> = {},
+  options: {
+    background?: boolean;
+    needsApproval?: boolean;
+    maxConcurrent?: number;
+  } & BuiltinToolOptions<{task: string}> = {},
 ): Tool<C> {
+  const maxConcurrent = positiveInteger(
+    options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+    "maxConcurrent",
+  );
   return tool<typeof forkedTask, C>({
     description:
       options.description ??
@@ -59,7 +73,7 @@ export function forkTool<C = unknown>(
       const source = forkSource(call);
       if (!source) throw new ToolError("This tool can only fork an agent run", "fork_unavailable");
       assertNotForked(call);
-      const result = yield* source.fork(task, call);
+      const result = yield* source.fork(task, call, {maxConcurrent});
       if (result.status === "completed") return jsonSchema.parse(result.output);
       if (result.status === "interrupted") throw new ToolCancelled(result.reason);
       throw new ToolError(

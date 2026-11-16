@@ -8,8 +8,13 @@ export const FORK_SOURCE = Symbol("agentlib.forkSource");
 export type ForkSource = {
   /** Whether this run is itself a fork, which cannot start forks or sub-agents. */
   forked: boolean;
-  /** Runs a copy of this run, as it stood at the call's step, on `task`. */
-  fork(task: string, call: ToolContext<unknown>): Operation<RunResult<unknown>>;
+  /** Runs a copy of this run, as it stood at the call's step, on `task`. Fails
+   * with `fork_limit` when `maxConcurrent` forks of this run are already running. */
+  fork(
+    task: string,
+    call: ToolContext<unknown>,
+    limits: {maxConcurrent: number},
+  ): Operation<RunResult<unknown>>;
 };
 
 /** The fork source of the run that made a tool call, if the call came from a run. */

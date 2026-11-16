@@ -159,6 +159,8 @@ class AgentRun<C, O> {
   /** Each step's fork point, by step: a fork started by a call in that step
    * copies the run as it stood then, even when the call starts later. */
   private readonly forkPoints = new Map<number, ForkPoint<C>>();
+  /** Forks of this run that are running now. */
+  private runningForks = 0;
   private readonly context: RunContext<C>;
   private readonly tasks = new RunTasks();
   private readonly tools: RunTools<C>;
@@ -185,7 +187,7 @@ class AgentRun<C, O> {
       [PARENT_USAGE]: usage,
       [FORK_SOURCE]: {
         forked: origin !== undefined,
-        fork: (task, call) => this.fork(task, call as ToolContext<C>),
+        fork: (task, call, limits) => this.fork(task, call as ToolContext<C>, limits),
       } satisfies ForkSource,
     } as RunContext<C>;
     this.tools = new RunTools(
@@ -673,9 +675,21 @@ class AgentRun<C, O> {
    * Its usage counts toward this run; its approval requests reach this run's
    * handlers, and its progress arrives as progress of the call. Interrupting
    * the call interrupts the fork. */
-  private *fork(task: string, call: ToolContext<C>): Operation<RunResult<O>> {
+  private *fork(
+    task: string,
+    call: ToolContext<C>,
+    limits: {maxConcurrent: number},
+  ): Operation<RunResult<O>> {
     const point = this.forkPoints.get(call.step);
     if (!point) throw new ToolError("No model step to fork from", "fork_unavailable");
+    // Checked and counted with no yield in between, so concurrent calls see each other.
+    if (this.runningForks >= limits.maxConcurrent)
+      throw new ToolError(
+        `At most ${limits.maxConcurrent} forks can run at once. ` +
+          "Fork again after one finishes, or do this work yourself.",
+        "fork_limit",
+      );
+    this.runningForks++;
     const usage = new RunUsageTracker();
     try {
       const options = {
@@ -701,6 +715,7 @@ class AgentRun<C, O> {
       recordFailedRun(error, usage.snapshot());
       throw error;
     } finally {
+      this.runningForks--;
       this.usage.add(usage.snapshot());
     }
   }

@@ -5,7 +5,7 @@
 // These tests check what a fork copies and what stays with the parent.
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import type {Context} from "@restatedev/restate-sdk";
+import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {channel, gen, type Channel} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
@@ -13,11 +13,13 @@ import {
   agent,
   agentTool,
   cancelOperationTool,
+  forkTool,
   handoff,
   tool,
   type Message,
   type ModelRequest,
   type ModelResponse,
+  type ModelUsage,
   type ToolResult,
 } from "@restatedev/agentlib";
 import {runHandler} from "./replay-harness.mjs";
@@ -683,4 +685,112 @@ void test("a fork reads a result the parent's compaction folded into its note", 
   assert.equal(resultOf(delegating!.messages, "f1"), undefined, "the parent folded f1");
   assert.equal(read?.status, "success");
   assert.equal((read.output as {text: string}).text, largePage.slice(20000, 20100));
+});
+
+void test("forkTool runs at most maxConcurrent forks of a run at once", async () => {
+  let release!: Channel<void>;
+  const a = forkingAgent({
+    tools: {
+      hold: tool({
+        description: "Wait for the signal",
+        input: z.object({}),
+        *execute() {
+          yield* release.receive;
+          return "released";
+        },
+      }),
+    },
+    forkOptions: {maxConcurrent: 2},
+    script(request) {
+      if (isFork(request)) {
+        const task = forkTask(request)!;
+        // The first two forks hold their slots until the third call has been refused.
+        if (request.step === 1 && task !== "D") return call(`${task}-hold`, "hold");
+        return final(`done ${task}`);
+      }
+      if (request.step === 1)
+        return calls(
+          {id: "d1", name: "delegate", input: {task: "A"}},
+          {id: "d2", name: "delegate", input: {task: "B"}},
+          {id: "d3", name: "delegate", input: {task: "C"}},
+        );
+      if (request.step === 2) return delegate("d4", "D");
+      return final("Done");
+    },
+  });
+  const result = await execute(
+    gen(function* () {
+      release = channel<void>();
+      return yield* a.run("Go", {
+        *onProgress(event) {
+          if (event.type === "tool-end" && event.callId === "d3") {
+            yield* release.send();
+            yield* release.send();
+          }
+        },
+      });
+    }),
+  );
+  assert.equal(result.status, "completed");
+  assert.deepEqual(resultOf(result.messages, "d1"), {status: "success", output: "done A"});
+  assert.deepEqual(resultOf(result.messages, "d2"), {status: "success", output: "done B"});
+  const refused = resultOf(result.messages, "d3");
+  assert.equal(refused?.status === "error" && refused.code, "fork_limit");
+  // Finished forks free their slots.
+  assert.deepEqual(resultOf(result.messages, "d4"), {status: "success", output: "done D"});
+});
+
+void test("maxConcurrent must be a positive integer", () => {
+  assert.throws(() => forkTool({maxConcurrent: 0}), /maxConcurrent/);
+});
+
+void test("a run's usage is the sum of every model call, including forks that fail", async () => {
+  const reported: ModelUsage[] = [];
+  let n = 0;
+  // Distinct numbers per call, so a call counted twice or missed changes the totals.
+  const usage = (): ModelUsage => {
+    n++;
+    const one = {
+      inputTokens: 100 * n,
+      outputTokens: n,
+      cachedInputTokens: 10 * n,
+      cacheWriteInputTokens: n,
+    };
+    reported.push(one);
+    return one;
+  };
+  const a = forkingAgent({
+    tools: {lookup: lookupTool()},
+    script(request): ModelResponse {
+      if (isFork(request)) {
+        const task = forkTask(request)!;
+        if (request.step === 1) return {...call(`${task}-1`, "lookup", {id: task}), usage: usage()};
+        // A failed model call reports nothing; the fork's earlier calls still count.
+        if (task === "fails") throw new TerminalError("The model refused");
+        return {...final(`checked ${task}`), usage: usage()};
+      }
+      if (request.step === 1)
+        return {
+          ...calls(
+            {id: "d1", name: "delegate", input: {task: "ok"}},
+            {id: "d2", name: "delegate", input: {task: "fails"}},
+          ),
+          usage: usage(),
+        };
+      return {...final("Done"), usage: usage()};
+    },
+  });
+  const result = await execute(a.run("Go"));
+  assert.equal(result.status, "completed");
+  assert.equal(resultOf(result.messages, "d2")?.status, "error");
+  const sum = (key: keyof ModelUsage) =>
+    reported.reduce((total, one) => total + (one[key] ?? 0), 0);
+  assert.equal(reported.length, 5);
+  assert.deepEqual(result.usage, {
+    inputTokens: sum("inputTokens"),
+    outputTokens: sum("outputTokens"),
+    totalTokens: sum("inputTokens") + sum("outputTokens"),
+    cachedInputTokens: sum("cachedInputTokens"),
+    cacheWriteInputTokens: sum("cacheWriteInputTokens"),
+  });
 });
