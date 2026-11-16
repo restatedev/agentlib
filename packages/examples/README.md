@@ -34,6 +34,7 @@ string values correctly quoted in the Restate UI request editor, ready to send.
 | 17     | Tools from a remote MCP server        | [17_mcp_tools.ts](src/lessons/17_mcp_tools.ts)                     |
 | 18     | Serve an AG-UI client                 | [18_ag_ui.ts](src/lessons/18_ag_ui.ts)                             |
 | 19     | Give an agent skills from a folder    | [19_skills.ts](src/lessons/19_skills.ts)                           |
+| 20     | Fork sub-agents from the conversation | [20_forked_agents.ts](src/lessons/20_forked_agents.ts)             |
 
 If you have a specific goal, start here:
 
@@ -52,6 +53,7 @@ If you have a specific goal, start here:
 | Use tools from an MCP server         | [17](src/lessons/17_mcp_tools.ts)       |
 | Connect a UI such as CopilotKit      | [18](src/lessons/18_ag_ui.ts)           |
 | Teach an agent task-specific skills  | [19](src/lessons/19_skills.ts)          |
+| Give sub-agents the lead's context   | [20](src/lessons/20_forked_agents.ts)   |
 
 ## Start
 

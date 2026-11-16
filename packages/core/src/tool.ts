@@ -8,13 +8,12 @@ import {
 import {z} from "zod";
 import {guardrailDecision, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
 import {PARENT_USAGE} from "./run-usage.js";
-import {FORK_PREAMBLE, FORK_SOURCE, FORKED, type ForkSource} from "./fork.js";
+import {assertNotForked} from "./fork-source.js";
 import type {
   Agent,
   AsyncToolDefinition,
   GuardrailResult,
   JsonValue,
-  Message,
   RunOptions,
   RunResult,
   Tool,
@@ -214,52 +213,28 @@ export type AgentToolOptions = {
   background?: boolean;
   deferred?: boolean;
   needsApproval?: boolean;
-  /** Start the sub-agent from the parent's conversation instead of a fresh one:
-   * the messages of the parent's latest model request, then the task. A fork
-   * cannot fork again. Give the sub-agent the parent's instructions and tools
-   * so that providers serve the inherited messages from their prompt cache. */
-  fork?: boolean;
 };
 
 const delegatedTask = z.object({
   task: z.string().min(1).describe("A complete, self-contained description of the task."),
 });
 
-const forkedTask = z.object({
-  task: z
-    .string()
-    .min(1)
-    .describe("The task for the sub-agent, which sees your conversation up to this step."),
-});
-
 /** Delegate a task to another agent as one tool call. The sub-agent runs in this
- * invocation with a fresh conversation (or, with `fork`, a copy of the parent's),
- * its own limits, and the parent's context, and its answer (text or structured
- * output) becomes the tool result. Every step is journaled, and interrupting the
- * parent interrupts the sub-agent. */
+ * invocation with a fresh conversation, its own limits, and the parent's context,
+ * and its answer (text or structured output) becomes the tool result. Every step
+ * is journaled, and interrupting the parent interrupts the sub-agent. A fork
+ * cannot call it: a call from a fork returns a `fork_nested` error. */
 export function agentTool<C, O>(
   subAgent: Pick<Agent<C, O>, "run">,
   options: AgentToolOptions,
 ): Tool<C> {
-  const {fork, ...toolOptions} = options;
   return tool({
-    ...toolOptions,
-    input: fork ? forkedTask : delegatedTask,
+    ...options,
+    input: delegatedTask,
     *execute({task}, context) {
-      let forkOptions: {messages?: readonly Message[]; [FORKED]?: true} = {};
-      if (fork) {
-        const source = (context as {[FORK_SOURCE]?: ForkSource})[FORK_SOURCE];
-        if (!source)
-          throw new ToolError("This tool can only fork from an agent run", "fork_unavailable");
-        if (source.forked)
-          throw new ToolError(
-            "A forked sub-agent cannot delegate. Do this work yourself.",
-            "fork_nested",
-          );
-        forkOptions = {messages: source.view(), [FORKED]: true};
-      }
+      // A fork does its task itself; it cannot start a sub-agent that could fork again.
+      assertNotForked(context as ToolContext<unknown>);
       const runOptions = {
-        ...forkOptions,
         context: context.context,
         // A run name unique to this call keeps approval signals of concurrent sub-agents apart.
         name: `${context.name}/${context.callId}`,
@@ -274,7 +249,7 @@ export function agentTool<C, O>(
         input: string,
         options: RunOptions<C>,
       ) => Operation<RunResult<O>>;
-      const result = yield* run.call(subAgent, fork ? FORK_PREAMBLE + task : task, runOptions);
+      const result = yield* run.call(subAgent, task, runOptions);
       if (result.status === "completed") return jsonSchema.parse(result.output);
       if (result.status === "interrupted") throw new ToolCancelled(result.reason);
       throw new ToolError(

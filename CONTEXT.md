@@ -47,6 +47,13 @@ a fresh conversation and the parent's context. Its answer becomes the tool resul
 and interrupting the parent interrupts it.
 _Avoid_: Handoff
 
+**Fork**:
+A copy of a run that a tool call starts to do one task. It starts from the run's
+history as of the step that made the call, with the same agents, policies,
+configuration, and tools, and runs in the same invocation. Its answer becomes
+the tool result; it saves nothing and cannot start forks or sub-agents.
+_Avoid_: Sub-agent, handoff
+
 **Conversation**:
 The accumulated model context across runs, including user messages, assistant
 messages, tool exchanges, and runtime observations.
