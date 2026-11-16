@@ -1,4 +1,4 @@
-import {RetryableError, TerminalError} from "@restatedev/restate-sdk";
+import {PauseError, RetryableError, TerminalError} from "@restatedev/restate-sdk";
 import type {ClientFuture, RetryOptions} from "@restatedev/restate-sdk-gen";
 import {
   APICallError,
@@ -17,7 +17,7 @@ import {
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
-import {ContextOverflowError, ModelProtocolError} from "./errors.js";
+import {ContextOverflowError, ModelResponseError} from "./errors.js";
 import {journaledModel} from "./model.js";
 import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
@@ -36,6 +36,10 @@ type GenerateSettings = Parameters<typeof generateText>[0];
 
 export type ProviderOptions = {
   model: LanguageModel;
+  /** The model call's own retry policy. Without it, a failing call follows the
+   * invocation's retry policy, and a failure that retrying can't fix, such as a
+   * missing API key, pauses the invocation. With `maxAttempts` or `maxDuration`,
+   * the call fails instead. */
   retry?: RetryOptions;
   providerOptions?: GenerateSettings["providerOptions"];
   telemetry?: GenerateSettings["experimental_telemetry"];
@@ -53,9 +57,16 @@ export type ProviderOptions = {
     info: {step: number; signal: AbortSignal},
   ): Promise<void>;
 };
-function finished(reason: string | undefined) {
-  if (reason !== "stop" && reason !== "tool-calls")
-    throw new ModelProtocolError(`Incomplete model response: ${reason ?? "unknown"}`);
+/** A response that stopped before it finished, for example at the output token
+ * limit, goes back to the model as a note, with another step to try again. */
+function finished(reason: string | undefined, usage: ModelUsage | undefined) {
+  if (reason === "stop" || reason === "tool-calls") return;
+  let message = `The response ended before it was complete (${reason ?? "unknown"}).`;
+  if (reason === "length")
+    message =
+      "The response was cut off at the output token limit. Respond more briefly, or split the work into several steps.";
+  if (reason === "content-filter") message = "The provider's content filter stopped the response.";
+  throw new ModelResponseError(message, "incomplete_response", usage);
 }
 
 function contextOverflow(error: APICallError): boolean {
@@ -245,7 +256,10 @@ function toolCalls(
 ): ToolCall[] {
   return calls.map((call) => {
     if (call.providerExecuted)
-      throw new ModelProtocolError("Provider-executed tools are not supported by this executor");
+      throw new UnsupportedFunctionalityError({
+        functionality: "provider-executed tools",
+        message: "Provider-executed tools are not supported by this executor",
+      });
     return {
       id: call.toolCallId,
       name: call.toolName,
@@ -306,7 +320,8 @@ function settingsFor(
 
 async function generate(settings: GenerateSettings, wantsOutput: boolean): Promise<Generation> {
   const result = await generateText(settings);
-  finished(result.finishReason);
+  const usage = modelUsage(result.usage);
+  finished(result.finishReason, usage);
   const calls = toolCalls(result.toolCalls);
   const output = wantsOutput && !calls.length ? result.output : undefined;
   return {
@@ -315,7 +330,7 @@ async function generate(settings: GenerateSettings, wantsOutput: boolean): Promi
     calls,
     reasoning: responseReasoning(result.responseMessages, result.usage),
     output,
-    usage: modelUsage(result.usage),
+    usage,
   };
 }
 
@@ -334,14 +349,15 @@ async function stream(
     }
   }
   const finishReason = await result.finishReason;
-  finished(finishReason);
+  const rawUsage = await result.usage;
+  const usage = modelUsage(rawUsage);
+  finished(finishReason, usage);
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls);
   const output = wantsOutput && !calls.length ? await result.output : undefined;
-  const rawUsage = await result.usage;
   const reasoning = responseReasoning(await result.responseMessages, rawUsage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, reasoning, output, usage: modelUsage(rawUsage)};
+  return {finishReason, text, calls, reasoning, output, usage};
 }
 
 /** Gemini reuses a text-block ID across signed segments. Give each segment its
@@ -432,6 +448,13 @@ function modelUsage(
 
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */
 export function aiModel(options: ProviderOptions): Model {
+  // A missing API key, a feature the provider does not support and a rejected
+  // request fail the same way on every attempt. Calls bounded by `retry` fail at
+  // once; otherwise the invocation pauses, so it can resume once the cause is fixed.
+  const bounded =
+    options.retry?.maxAttempts !== undefined || options.retry?.maxDuration !== undefined;
+  const unfixable = (error: Error, errorCode?: number) =>
+    bounded ? new TerminalError(error.message, {errorCode}) : PauseError.from(error);
   async function complete(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
@@ -440,7 +463,11 @@ export function aiModel(options: ProviderOptions): Model {
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
-        throw new ModelProtocolError("Model indicated tool calls but returned none");
+        throw new ModelResponseError(
+          "The response announced tool calls but contained none. Call a tool, or respond with text.",
+          "invalid_response",
+          usage,
+        );
       const reported = {...(usage ? {usage} : {}), ...(reasoning ? {reasoning} : {})};
       if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
@@ -451,24 +478,22 @@ export function aiModel(options: ProviderOptions): Model {
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
-        finished(error.finishReason);
+        finished(error.finishReason, error.usage && modelUsage(error.usage));
         return {
           type: "final",
           text: error.text ?? "",
           validationError: "The response did not match the requested output schema.",
         };
       }
-      // Restate owns retries. A missing API key, a feature the provider does not
-      // support and a rejected request fail the same way on every attempt;
-      // throttling and transient provider failures stay retryable.
+      // Restate owns retries: throttling and transient provider failures stay retryable.
       if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
-        throw new TerminalError(error.message);
+        throw unfixable(error);
       // Use the SDK's parsed error code or HTTP 413, never provider-specific
       // message text. contextWindow avoids uncoded overflows up front.
       if (APICallError.isInstance(error) && contextOverflow(error))
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
-        throw new TerminalError(error.message, {errorCode: error.statusCode});
+        throw unfixable(error, error.statusCode);
       // Wait as long as the provider asks, so throttling does not use up the
       // retry attempts before its window has passed.
       const delay = APICallError.isInstance(error) ? retryAfter(error, options.model) : undefined;

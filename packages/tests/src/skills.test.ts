@@ -143,17 +143,21 @@ void test("a source without files offers no reader, and an empty one adds nothin
   assert.deepEqual(empty.requests[0]!.tools, []);
 });
 
-void test("a skill with an invalid name fails the run", async () => {
-  const bad = skills([{name: "PDF Forms", description: "Fill in PDF forms.", instructions: "-"}]);
-  const {model} = scripted([]);
-  const live = await runHandler(async (ctx: Context) => {
-    try {
-      return await r.execute(ctx, agent({model, skills: bad}).run("Go"));
-    } catch (error) {
-      return {failed: (error as Error).message};
-    }
-  });
-  assert.match(live.output.failed, /Invalid skill name "PDF Forms"/);
+void test("a skill the model could not use is skipped, and the others stay listed", async () => {
+  const listed = skills([
+    {name: "PDF Forms", description: "Fill in PDF forms.", instructions: "-"},
+    {name: "no-description", description: "", instructions: "-"},
+    forms,
+    {...forms, description: "A second skill with the same name."},
+  ]);
+  const {requests, model} = scripted([]);
+  const live = await runHandler((ctx: Context) =>
+    r.execute(ctx, agent({model, skills: listed}).run("Go")),
+  );
+  assert.equal(live.output.status, "completed");
+  const instructions = requests[0]!.instructions ?? "";
+  assert.match(instructions, /- pdf-forms: Fill in PDF forms\./);
+  assert.doesNotMatch(instructions, /PDF Forms|no-description|second skill/);
 });
 
 void test("a skill tool name cannot be taken by a run tool", async () => {

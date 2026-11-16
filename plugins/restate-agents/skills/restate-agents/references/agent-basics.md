@@ -162,7 +162,8 @@ const writer = agent({
   over something that changes, such as a branch, pins it per run. The model
   never sees it.
 - Skills belong to the run: they survive a handoff. Names must be unique and
-  must not clash with run tools; an invalid list fails the run.
+  must not clash with run tools. The run skips a skill with an invalid name, an
+  empty description, or a name already listed, and logs a warning.
 - Lesson 19 shows a source over a folder of `SKILL.md` files. Skill scripts need a shell, which the SDK does not provide.
 
 ## Limits
@@ -173,8 +174,14 @@ count. Using up `maxSteps` (default 10) or `maxToolCalls` (default 128,
 counting calls a program makes) stops the run with a summary rather than
 failing it. `maxToolDepth` (default 16) bounds nested tool calls,
 `maxOutputTokens` (default 4096) each model reply, and `maxOutputChars`
-(default 128000) the model's text, the final output, and a tool's display
-information and progress; passing it fails the run
-with a terminal `AgentLimitError`. Retries are configured on the model adapter
-and on each tool. For runs that outgrow the model's context, see `toolResults`,
+(default 128000) the model's text, a tool's output, the final output, and a
+tool's display information and progress. A nested call deeper than
+`maxToolDepth` fails with code `depth_limit`, and the tool that made it
+receives the error. A reply cut off at `maxOutputTokens`, or model text over
+`maxOutputChars`, goes back to the model with a note, and the model tries
+again in its next step. A tool's output over the limit fails the call with
+code `output_limit`. Display information, progress, or an `afterRun`
+replacement over the limit throws a `RangeError`: a mistake in your code,
+which Restate retries until you deploy a fix. Retries are configured on the
+model adapter and on each tool. For runs that outgrow the model's context, see `toolResults`,
 `compaction` and `contextWindow` in `conversations-and-controls.md`.

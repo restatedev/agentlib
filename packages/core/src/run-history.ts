@@ -154,8 +154,10 @@ export class RunHistory {
   }
 
   /** Replaces this run's input message, before any model call has seen it. */
-  replaceInput(message: string): void {
-    checkInput(message, "beforeRun must return a nonempty message");
+  replaceInput(message: unknown): void {
+    // The hook's mistake, not the caller's: a plain error lets a fix resume the run.
+    if (typeof message !== "string" || !message.trim())
+      throw new TypeError("beforeRun must return a nonempty message");
     this.inputText = message;
     this.messages[this.inputAt] = {role: "user", content: message};
   }

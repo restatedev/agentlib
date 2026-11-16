@@ -111,6 +111,7 @@ Restate journals. Move on only when the learner is ready.
 | A long run outgrows the model's context                        | `toolResults` (on by default), `compaction`, `contextWindow`                              |
 | Tools that depend on the request, such as a UI's own tools     | `run(input, {tools})`                                                                     |
 | Many task-specific instructions, loaded only when needed       | `agent({skills})` with a `SkillSource`, or `skills([...])` for skills in code             |
+| Decide what a failure does: model retries, run stops, or Restate retries | `TerminalError` / `ToolError`, `AgentTerminalError`, a plain error; see `references/error-handling.md` |
 
 ## Rules to check before finishing
 
@@ -126,9 +127,11 @@ Restate journals. Move on only when the learner is ready.
       `tool` generator outside those is replayed.
 - [ ] Give external writes an idempotency key (`context.callId` is stable
       across retries).
-- [ ] Throw `ToolError` for failures the model should see and recover from,
-      and `TerminalError` to stop retrying. A tool that fails terminally
-      reports an error to the model; the run continues.
+- [ ] Throw `TerminalError` for failures the model should handle, or
+      `ToolError` to also give the model an error code. From a tool or a hook,
+      the model receives the error and the run continues. Throw
+      `AgentTerminalError` to stop the run. Let other errors propagate:
+      Restate retries them. See `references/error-handling.md`.
 - [ ] Trusted values (prices, user IDs, limits) come from run `context`,
       never from model-supplied tool arguments.
 - [ ] Approval requests and active-turn IDs stored in state are cleared in a

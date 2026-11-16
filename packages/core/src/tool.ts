@@ -82,9 +82,7 @@ export function buildTool<Data, Context = unknown>(
         yield* context.describe(info);
       }
       if (lifecycle.before) {
-        const result = yield* lifecycle.before(data, context);
-        const failure = (message: string) => new ToolError(message, "guardrail_failed");
-        const decision = guardrailDecision("before", result, undefined, failure);
+        const decision = guardrailDecision("before", yield* lifecycle.before(data, context));
         if (decision && "reject" in decision) throw new ToolDenied(decision.reject);
       }
       const approval =
@@ -145,8 +143,10 @@ export function asyncTool<S extends z.ZodType, C = unknown>(
             });
             return {ok: true as const, value: toolOutput(output)};
           } catch (error) {
+            // Journaled as a value, as it was before ToolError became a
+            // TerminalError, so replaying an older journal gives the same result.
             if (error instanceof ToolError)
-              return {ok: false as const, message: error.message, code: error.code};
+              return {ok: false as const, message: error.message, code: error.toolCode};
             throw error;
           }
         },

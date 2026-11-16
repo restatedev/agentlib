@@ -3,6 +3,7 @@ import {test} from "node:test";
 import type {Context, TerminalError} from "@restatedev/restate-sdk";
 import {APICallError, LoadAPIKeyError, UnsupportedFunctionalityError} from "ai";
 import * as r from "@restatedev/restate-sdk-gen";
+import type {RetryOptions} from "@restatedev/restate-sdk-gen";
 import {MockLanguageModelV4, simulateReadableStream} from "ai/test";
 import {z} from "zod";
 import {agent, handoff, tool, type ModelResponse} from "@restatedev/agentlib";
@@ -132,30 +133,36 @@ void test("a failed tool-free finalizer preserves an honest stopped result", asy
   assert.match(result.output!, /final summary could not be generated/);
 });
 
-void test("a provider tool-calls finish reason without calls cannot become a final answer", async () => {
+void test("a response that announces tool calls without any gets another step", async () => {
+  const prompts: unknown[] = [];
   const provider = new MockLanguageModelV4({
-    doGenerate: async () => ({
-      content: [{type: "text", text: "apparently complete"}],
-      finishReason: {unified: "tool-calls", raw: "tool_calls"},
-      usage,
-      warnings: [],
-    }),
+    doGenerate: async (options) => {
+      prompts.push(options.prompt);
+      const announced = prompts.length === 1;
+      return {
+        content: [{type: "text", text: announced ? "apparently complete" : "the real answer"}],
+        finishReason: announced
+          ? {unified: "tool-calls", raw: "tool_calls"}
+          : {unified: "stop", raw: "stop"},
+        usage,
+        warnings: [],
+      };
+    },
   });
   const a = agent({model: aiModel({model: provider})});
-  const result = await runHandler((context) =>
-    r.execute(
-      context,
-      (function* () {
-        try {
-          yield* a.run("go");
-          return "unexpected success";
-        } catch (error) {
-          return String(error);
-        }
-      })(),
-    ),
+  const handler = (context: Context) => r.execute(context, a.run("go"));
+  const first = await runHandler(handler);
+  assert.equal(first.output.output, "the real answer");
+  assert.match(JSON.stringify(prompts[1]), /invalid_response/);
+  // Neither the rejected response nor the note is saved.
+  assert.doesNotMatch(
+    JSON.stringify(first.output.messages),
+    /apparently complete|invalid_response/,
   );
-  assert.match(result.output, /indicated tool calls but returned none/);
+  // The journal records the failed call, so a replay repeats it without the provider.
+  const replay = await runHandler(handler, {replay: first.journal});
+  assert.deepEqual(replay.output, first.output);
+  assert.equal(prompts.length, 2);
 });
 
 void test("handoff preserves completed history, changes tools/instructions, and keeps root guards/budgets", async () => {
@@ -321,31 +328,35 @@ void test("AI SDK provider adapter forwards instructions and schemas and replays
   assert.equal(requests, 1);
 });
 
-void test("provider truncation fails even when the response text is otherwise valid", async () => {
+void test("a truncated response gets another step, and its usage still counts", async () => {
+  const prompts: unknown[] = [];
   const provider = new MockLanguageModelV4({
-    doGenerate: async () => ({
-      content: [{type: "text", text: "partial"}],
-      finishReason: {unified: "length", raw: "length"},
-      usage,
-      warnings: [],
-    }),
+    doGenerate: async (options) => {
+      prompts.push(options.prompt);
+      const truncated = prompts.length === 1;
+      return {
+        content: [{type: "text", text: truncated ? "partial" : "complete"}],
+        finishReason: truncated
+          ? {unified: "length", raw: "length"}
+          : {unified: "stop", raw: "stop"},
+        usage,
+        warnings: [],
+      };
+    },
   });
   const a = agent({model: aiModel({model: provider})});
-  const first = await runHandler((context) =>
-    r.execute(
-      context,
-      (function* () {
-        try {
-          yield* a.run("go");
-          return {failed: false};
-        } catch (e) {
-          return {failed: true, message: String(e)};
-        }
-      })(),
-    ),
-  );
-  assert.equal(first.output.failed, true);
-  assert.match(first.output.message, /Incomplete model response: length/);
+  const handler = (context: Context) => r.execute(context, a.run("go"));
+  const first = await runHandler(handler);
+  assert.equal(first.output.output, "complete");
+  // The model learns why, but never sees the cut-off text as an answer.
+  const retried = JSON.stringify(prompts[1]);
+  assert.match(retried, /incomplete_response/);
+  assert.match(retried, /output token limit/);
+  assert.doesNotMatch(retried, /partial/);
+  assert.equal(first.output.usage.outputTokens, 2);
+  const replay = await runHandler(handler, {replay: first.journal});
+  assert.deepEqual(replay.output, first.output);
+  assert.equal(prompts.length, 2);
 });
 
 void test("live chunks occur only during provider I/O and are not replayed", async () => {
@@ -388,7 +399,7 @@ void test("live chunks occur only during provider I/O and are not replayed", asy
   assert.equal(live.length, 3);
 });
 
-const failing = (error: Error) => {
+const failing = (error: Error, retry?: RetryOptions) => {
   let calls = 0;
   const provider = new MockLanguageModelV4({
     doGenerate: async () => {
@@ -396,7 +407,7 @@ const failing = (error: Error) => {
       throw error;
     },
   });
-  const a = agent({model: aiModel({model: provider})});
+  const a = agent({model: aiModel({model: provider, retry})});
   const run = runHandler((context) =>
     r.execute(
       context,
@@ -421,17 +432,31 @@ const rejected = (statusCode: number, isRetryable: boolean) =>
     isRetryable,
   });
 
-void test("provider failures a retry cannot fix fail the run terminally", async () => {
-  const cases = [
-    {error: new LoadAPIKeyError({message: "OPENAI_API_KEY is not set"}), message: /OPENAI_API_KEY/},
-    {
-      error: new UnsupportedFunctionalityError({functionality: "structured outputs"}),
-      message: /structured outputs/,
-    },
-    {error: rejected(400, false), message: /status 400/, code: 400},
-  ];
-  for (const {error, message, code} of cases) {
+const unfixable = () => [
+  {error: new LoadAPIKeyError({message: "OPENAI_API_KEY is not set"}), message: /OPENAI_API_KEY/},
+  {
+    error: new UnsupportedFunctionalityError({functionality: "structured outputs"}),
+    message: /structured outputs/,
+  },
+  {error: rejected(400, false), message: /status 400/, code: 400},
+];
+
+void test("provider failures a retry cannot fix pause the invocation", async () => {
+  for (const {error, message} of unfixable()) {
     const {run, calls} = failing(error);
+    const failure = await run.then(
+      () => assert.fail("expected the invocation to pause"),
+      (e: Error & {pause?: boolean}) => e,
+    );
+    assert.equal(failure.pause, true);
+    assert.match(failure.message, message);
+    assert.equal(calls(), 1);
+  }
+});
+
+void test("with a bounded retry, provider failures a retry cannot fix fail the run", async () => {
+  for (const {error, message, code} of unfixable()) {
+    const {run, calls} = failing(error, {maxAttempts: 3});
     const {output} = await run;
     assert.equal(calls(), 1);
     assert.match(output.message, message);
@@ -442,6 +467,9 @@ void test("provider failures a retry cannot fix fail the run terminally", async 
 void test("a throttled provider call stays retryable", async () => {
   const {run, calls} = failing(rejected(429, true));
   // The harness surfaces a retryable failure instead of retrying it.
-  await assert.rejects(run, /SDK failure.*status 429/);
+  await assert.rejects(
+    run,
+    (e: Error & {pause?: boolean}) => /SDK failure.*status 429/.test(e.message) && !e.pause,
+  );
   assert.equal(calls(), 1);
 });

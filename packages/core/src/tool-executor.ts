@@ -1,4 +1,3 @@
-import {CancelledError, TerminalError} from "@restatedev/restate-sdk";
 import {
   InterruptedError,
   run as journal,
@@ -6,14 +5,14 @@ import {
   type Operation,
 } from "@restatedev/restate-sdk-gen";
 import {
-  AgentLimitError,
   guardrailDecision,
-  RunFailedError,
+  reachesModel,
   RunInterrupted,
   ToolBudgetExceeded,
   ToolCancelled,
   ToolDenied,
   ToolError,
+  toolErrorCode,
 } from "./errors.js";
 import type {
   AgentRuntime,
@@ -67,7 +66,9 @@ export function createToolExecutor<C>({
     depth = 0,
   ): Operation<ToolResult> {
     if (++calls > maxToolCalls) throw new ToolBudgetExceeded("Maximum tool calls reached");
-    if (depth > maxToolDepth) throw new AgentLimitError("Maximum nested tool depth exceeded");
+    // Only the nested call fails: the tool that made it gets the error and can recover.
+    if (depth > maxToolDepth)
+      return {status: "error", code: "depth_limit", message: "Maximum nested tool depth exceeded"};
     const definition = registry.registry.get(call.name);
     if (!definition)
       return {status: "error", code: "unknown_tool", message: `Unknown tool: ${call.name}`};
@@ -133,14 +134,14 @@ export function createToolExecutor<C>({
           ...(next.details === undefined ? {} : {details: jsonSchema.parse(next.details)}),
         };
         if (JSON.stringify(snapshot).length > maxOutputChars)
-          throw new AgentLimitError("Tool display information exceeds maxOutputChars");
+          throw new RangeError("Tool display information exceeds maxOutputChars");
         info = snapshot;
         yield* progress({type: "tool-info", callId: call.id, info: structuredClone(snapshot)});
       },
       *progress(value) {
         const snapshot = jsonSchema.parse(value);
         if (JSON.stringify(snapshot).length > maxOutputChars)
-          throw new AgentLimitError("Tool progress exceeds maxOutputChars");
+          throw new RangeError("Tool progress exceeds maxOutputChars");
         yield* progress({type: "tool-progress", callId: call.id, value: snapshot});
       },
       availableTools: () => [...registry.registry.keys()],
@@ -193,14 +194,14 @@ export function createToolExecutor<C>({
       for (const policy of policies) {
         if (!policy.beforeTool) continue;
         const shown = structuredClone({...call, input});
-        const result = yield* checked(policy.beforeTool(shown, toolContext));
-        const decision = guardrailDecision("beforeTool", result, "input", policyFailure);
+        const result = yield* policy.beforeTool(shown, toolContext);
+        const decision = guardrailDecision("beforeTool", result, "input");
         if (decision && "reject" in decision) throw new ToolDenied(decision.reject);
         if (decision) input = policyInput(decision.replace);
       }
       let output = yield* definition.execute(input, toolContext);
       for (const policy of policies.toReversed()) {
-        if (policy.afterTool) output = yield* checked(policy.afterTool(output, toolContext));
+        if (policy.afterTool) output = yield* policy.afterTool(output, toolContext);
       }
       output = toolOutput(output);
       if (JSON.stringify(output).length > maxOutputChars)
@@ -222,48 +223,24 @@ export function createToolExecutor<C>({
   };
 }
 
-/** A hook result that is not a decision fails the call, as a failed check does. */
-const policyFailure = (message: string) => new ToolError(message, "guardrail_failed");
-
 /** Input a `beforeTool` policy returned. The tool validates it like the model's. */
 function policyInput(value: unknown): JsonValue {
   const result = jsonSchema.safeParse(value);
-  if (!result.success) throw new ToolError("beforeTool must return JSON input", "guardrail_failed");
+  if (!result.success) throw new TypeError("beforeTool must return JSON input");
   return result.data;
 }
 
-/** A policy that fails terminally blocks the call, and tells the model the check
- * failed rather than the tool. */
-function* checked<T>(policy: Operation<T>): Operation<T> {
-  try {
-    return yield* policy;
-  } catch (error) {
-    if (terminalFailure(error))
-      throw new ToolError(`Policy check failed: ${error.message}`, "guardrail_failed");
-    throw error;
-  }
-}
-
-function terminalFailure(error: unknown): error is TerminalError {
-  return (
-    error instanceof TerminalError &&
-    !(error instanceof CancelledError) &&
-    !(error instanceof AgentLimitError) &&
-    !(error instanceof RunFailedError)
-  );
-}
-
-/** Maps settled tool failures to results the model can act on. A terminal
- * failure (including exhausted retries or a failed child handler) is final for
- * the tool, not the run. Native cancellation, run budgets, and retryable errors
- * still propagate: Restate owns those. */
+/** The result a failed call records. A `TerminalError` from any part of the call
+ * (its policies, the tool, or a handler or sub-agent it calls) fails the call, not
+ * the run: the model gets it with its `ToolError` code, or `tool_failed`.
+ * Cancellation, an `AgentTerminalError`, the spent tool budget and retryable errors
+ * propagate, because the run or Restate owns those. */
 function failedResult(error: unknown): ToolResult {
   if (error instanceof RunInterrupted || error instanceof ToolCancelled)
     return {status: "cancelled", message: error.message};
   if (error instanceof ToolDenied) return {status: "denied", message: error.message};
-  if (error instanceof ToolError)
-    return {status: "error", code: error.code, message: error.message};
-  if (terminalFailure(error)) return {status: "error", code: "tool_failed", message: error.message};
+  if (reachesModel(error))
+    return {status: "error", code: toolErrorCode(error) ?? "tool_failed", message: error.message};
   throw error;
 }
 

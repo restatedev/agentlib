@@ -24,7 +24,13 @@ export type CompactionPlan = {
 };
 export type CompactionResult = {plan: CompactionPlan; summary: string};
 type Meta = {count: number; summary?: {through: number; text: string}};
-export class ConversationConflictError extends TerminalError {}
+/** Another writer changed the conversation since this run loaded it. */
+export class ConversationConflictError extends TerminalError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConversationConflictError";
+  }
+}
 const CHUNK_SIZE = 32;
 const restateStore: ConversationStore = {
   *get<T>(key: string) {

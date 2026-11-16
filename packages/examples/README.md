@@ -241,7 +241,8 @@ instructions; change their `model` fields to compare providers.
 The planner returns 2–4 questions. Start a `ResearchWorker` RPC for each, await
 them concurrently, and synthesize the findings. Each worker gets its own source
 context and reads supplied evidence through tools. A guard rejects citations to
-sources it did not read. Parent cancellation also cancels unfinished worker calls.
+sources the worker did not read, and the worker's model gets the reason and
+another step to fix them. Parent cancellation also cancels unfinished worker calls.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/ResearchReport/generate" --json '{
@@ -574,9 +575,13 @@ function* performWithRetry() {
 }
 ```
 
-Without an explicit policy, `asyncTool` and the model adapters use three
-attempts. A supplied policy replaces that default; specify `maxAttempts` when
-you want a fixed attempt limit. The retry duration limits retries, not the
+Without an explicit policy, `asyncTool` uses three attempts. A model adapter
+has no attempt limit of its own: a failing model call follows the invocation's
+retry policy, which pauses the invocation once its retries run out, and a
+failure that retrying can't fix, such as a missing API key, pauses it at once.
+The lessons set `maxAttempts`, so their model calls fail instead. A supplied
+policy replaces the default; specify `maxAttempts` when you want a fixed
+attempt limit. The retry duration limits retries, not the
 execution time of one attempt. Pass `callId` as an idempotency key for external
 writes, since a retried attempt can repeat an effect.
 
@@ -587,15 +592,16 @@ replaces the backoff for that retry; the attempt limit and retry duration still
 apply.
 
 For `asyncTool`, an ordinary thrown `Error` follows the retry policy.
-`ToolError` is a business error returned to the model without retrying the
-callback; `TerminalError` stops retrying. The policy covers `execute`; SDK
+`TerminalError` stops retrying, and `ToolError` is a `TerminalError` with a
+code for the model, such as `not_found`. The policy covers `execute`; SDK
 operations in `before` and `after` configure their own retries. Exhausting an
 action's retry policy raises a `TerminalError`.
 
 A tool that ends with a `TerminalError` (thrown directly, after exhausted
 retries, or from a failed child handler) does not fail the agent. The model
-receives `{status: "error", code: "tool_failed", message}` and decides what to
-do next. Restate cancellation and agent limits still end the run.
+receives `{status: "error", code: "tool_failed", message}`, or the code of a
+`ToolError`, and decides what to do next. Restate cancellation and an
+`AgentTerminalError` still end the run.
 
 `handlerTool` relies on the called handler's invocation policy: set
 `retryPolicy` on the called service or handler, with `onMaxAttempts: "kill"`

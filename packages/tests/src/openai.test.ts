@@ -258,19 +258,39 @@ void test("defining an AI SDK model does not require credentials", () => {
   assert.equal(typeof aiModel({model: createOpenAI()("test-model")}), "function");
 });
 
-void test("permanent OpenAI errors fail once and replay without HTTP", async () => {
-  let requests = 0;
-  const client = createOpenAI({
-    apiKey: "test-only",
-    fetch: async () => {
-      requests++;
-      return Response.json(
-        {error: {message: "Function tools with reasoning_effort are not supported"}},
-        {status: 400},
-      );
-    },
-  });
-  const a = agent({model: aiModel({model: client.chat("gpt-5.6-luna")})});
+/** An OpenAI client whose every request fails as a request retrying cannot fix. */
+function rejectingClient() {
+  const client = {
+    requests: 0,
+    model: createOpenAI({
+      apiKey: "test-only",
+      fetch: async () => {
+        client.requests++;
+        return Response.json(
+          {error: {message: "Function tools with reasoning_effort are not supported"}},
+          {status: 400},
+        );
+      },
+    }).chat("gpt-5.6-luna"),
+  };
+  return client;
+}
+
+void test("permanent OpenAI errors pause the invocation after one request", async () => {
+  const client = rejectingClient();
+  const a = agent({model: aiModel({model: client.model})});
+  const failure = await runHandler((ctx) => execute(ctx, a.run("hello"))).then(
+    () => assert.fail("expected the invocation to pause"),
+    (error: Error & {pause?: boolean}) => error,
+  );
+  assert.equal(failure.pause, true);
+  assert.match(failure.message, /Function tools/);
+  assert.equal(client.requests, 1);
+});
+
+void test("with a bounded retry, permanent OpenAI errors fail once and replay without HTTP", async () => {
+  const client = rejectingClient();
+  const a = agent({model: aiModel({model: client.model, retry: {maxAttempts: 3}})});
   const handler = async (ctx: Parameters<typeof execute>[0]) => {
     try {
       return await execute(ctx, a.run("hello"));
@@ -280,10 +300,10 @@ void test("permanent OpenAI errors fail once and replay without HTTP", async () 
   };
   const live = await runHandler(handler);
   assert.match(live.output.error, /Function tools/);
-  assert.equal(requests, 1);
+  assert.equal(client.requests, 1);
   const replay = await runHandler(handler, {replay: live.journal});
   assert.deepEqual(replay.output, live.output);
-  assert.equal(requests, 1);
+  assert.equal(client.requests, 1);
 });
 
 void test("interrupting a run aborts the model request in flight", async () => {
@@ -343,7 +363,8 @@ void test("throttled, conflicting and server-side OpenAI errors stay retryable",
 
 void test("incomplete OpenAI chat responses never execute a tool", {timeout: 5000}, async () => {
   const validCall = {id: "one", type: "function", function: {name: "write", arguments: "{}"}};
-  // Each case fails its own protocol check, not some unrelated error.
+  // Each case fails its own protocol check, not some unrelated error, and the
+  // model gets a note saying which, then another step.
   const cases: [Record<string, unknown>, RegExp][] = [
     [
       {
@@ -355,34 +376,35 @@ void test("incomplete OpenAI chat responses never execute a tool", {timeout: 500
           },
         ],
       },
-      /Incomplete model response: length/,
+      /incomplete_response.*output token limit/,
     ],
     [
       {choices: [{index: 0, finish_reason: "content_filter", message: {content: "Partial"}}]},
-      /Incomplete model response: content-filter/,
+      /incomplete_response.*content filter/,
     ],
     [
       {choices: [{index: 0, finish_reason: "tool_calls", message: {tool_calls: []}}]},
-      /Model indicated tool calls but returned none/,
+      /invalid_response.*announced tool calls/,
     ],
     [
       {choices: [{index: 0, finish_reason: "stop", message: {content: ""}}]},
-      /Model returned an invalid response/,
+      /invalid_response.*empty or invalid/,
     ],
   ];
   let writes = 0;
   for (const [response, expected] of cases) {
-    let requests = 0;
+    const bodies: string[] = [];
     const client = createOpenAI({
       apiKey: "test-only",
-      fetch: async () => {
-        requests++;
+      fetch: async (_url, init) => {
+        bodies.push(init?.body as string);
+        const answer = {choices: [{index: 0, finish_reason: "stop", message: {content: "Done."}}]};
         return Response.json({
           id: "test",
           object: "chat.completion",
           created: 0,
           model: "test",
-          ...response,
+          ...(bodies.length === 1 ? response : answer),
         });
       },
     });
@@ -399,23 +421,15 @@ void test("incomplete OpenAI chat responses never execute a tool", {timeout: 500
         }),
       },
     });
-    const handler = async (ctx: Parameters<typeof execute>[0]) => {
-      try {
-        return await execute(ctx, a.run("Write"));
-      } catch (error) {
-        return {error: error instanceof Error ? error.message : String(error)};
-      }
-    };
+    const handler = (ctx: Parameters<typeof execute>[0]) => execute(ctx, a.run("Write"));
     const live = await runHandler(handler);
-    assert.match(live.output.error, expected);
-    assert.equal(
-      requests,
-      1,
-      "invalid model output should be a terminal error, not a provider retry",
-    );
+    assert.equal(live.output.output, "Done.");
+    assert.equal(bodies.length, 2, "the model gets one more step, not a provider retry");
+    assert.match(bodies[1]!, expected);
+    assert.doesNotMatch(JSON.stringify(live.output.messages), /Partial|_response/);
     const replay = await runHandler(handler, {replay: live.journal});
     assert.deepEqual(replay.output, live.output);
-    assert.equal(requests, 1);
+    assert.equal(bodies.length, 2);
   }
   assert.equal(writes, 0);
 });

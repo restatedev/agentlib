@@ -32,14 +32,20 @@ The result is journaled once `execute` succeeds. It must be JSON: cast
 `response.json()`, which is `unknown`, to the shape you return.
 
 - A thrown `Error` retries under `retry`; the default is three attempts.
-- A `ToolError` goes straight back to the model as a business error.
 - A `TerminalError` stops retrying. Exhausted retries end the same way.
+- A `ToolError` is a `TerminalError` with a code for the model, such as
+  `not_found`.
 - In every one of these cases the model receives
-  `{status: "error", code, message}`, and the run continues.
+  `{status: "error", code, message}`, with the `ToolError`'s code or
+  `tool_failed`, and the run continues.
 - To fail the whole run instead, for example when the request it serves is
-  no longer valid, throw `RunFailedError`.
+  no longer valid, throw `AgentTerminalError`. Every agent run that encloses
+  this one fails too.
 - Use `retry: {maxAttempts: 1}` for actions that must not repeat, such as
   running a shell command.
+
+`error-handling.md` covers the same rules for hooks, sub-agents, model calls,
+and handlers a tool calls.
 
 ## tool: compose Restate operations
 
@@ -80,8 +86,10 @@ sendEmail: handlerTool({
 refund: serviceTool(refundIface),
 ```
 
-Each call is a durable child invocation. Interrupting the run cancels it,
-and a failed handler is reported to the model as a tool error. Pass
+Each call is a durable child invocation. Interrupting the run cancels it.
+A handler that fails with a terminal error is reported to the model as a tool
+error, with the code of a `ToolError`; a handler that throws
+`AgentTerminalError` fails the run instead. Pass
 `{iface, handler: "issueRefund"}` to scope `serviceTool` to one handler.
 Objects and workflows also take a `key`. Configure retries with
 `retryPolicy` on the called handler.

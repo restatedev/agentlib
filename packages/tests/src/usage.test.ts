@@ -6,7 +6,8 @@ import {z} from "zod";
 import {
   agent,
   agentTool,
-  AgentLimitError,
+  AgentTerminalError,
+  isAgentTerminal,
   RunInputError,
   tool,
   usageOf,
@@ -268,9 +269,11 @@ void test("a sub-agent that fails terminally still counts, and the parent contin
 
 void test("nested sub-agents that fail the run are counted once in its error", async () => {
   const leaf = agent({
-    maxOutputChars: 5,
     *model() {
-      return final("Far too long");
+      return final("Account 1234");
+    },
+    *afterRun() {
+      throw new AgentTerminalError("The answer leaks an account number");
     },
   });
   const middle = agent({
@@ -285,9 +288,9 @@ void test("nested sub-agents that fail the run are counted once in its error", a
       return delegate("t1");
     },
   });
-  // AgentLimitError fails each parent instead of becoming a tool result.
+  // AgentTerminalError fails each parent instead of becoming a tool result.
   const failed = await execute(failure(top.run("Go")));
-  assert.ok(failed.error instanceof AgentLimitError);
+  assert.ok(isAgentTerminal(failed.error));
   assert.deepEqual(failed.usage, totals(3));
 });
 

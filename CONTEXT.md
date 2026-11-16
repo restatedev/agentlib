@@ -112,10 +112,29 @@ A hook that checks something as it enters the run: the input (`beforeRun`), a
 steering message (`beforeSteering`), a tool call (`beforeTool`, a tool's `before`),
 a tool's output (`afterTool`), or the final answer (`afterRun`). It allows, rejects
 with a reason, or returns a replacement, and what it returns is what the history
-records. A guardrail never changes what it receives.
+records. A rejection reaches the model, except that `beforeSteering` drops the
+message. A guardrail never changes what it receives.
 _Avoid_: Policy, retry policy
 
 **Output policy**:
 A rule (`afterRun`) that accepts, replaces, or rejects candidate output after
-inspecting the run's facts. It does not decide the run's lifecycle status or rewrite its history.
+inspecting the run's facts. A rejected answer goes back to the model for another
+step. It does not decide the run's lifecycle status or rewrite its history.
 _Avoid_: Result editor, lifecycle controller
+
+**Model-handled failure**:
+A `TerminalError`, including a `ToolError`, thrown inside a run: in a tool, in
+anything a tool calls, or in a hook. The nearest agent gives it to its model, as
+the tool call's result or as a note before the model's next step, and Restate
+never retries it. The note is provisional: it is never saved.
+_Avoid_: Guardrail failure, tool failure
+
+**Agent-terminal failure**:
+An `AgentTerminalError`, thrown anywhere in a run or in a handler a tool calls. No
+model receives it: the run fails, and so does every run that encloses it.
+_Avoid_: Run failure, fatal error
+
+**Retryable failure**:
+Any other error. Restate retries the step or the invocation, and by default pauses
+the invocation when its retries run out, so it can continue once the cause is fixed.
+_Avoid_: Transient error

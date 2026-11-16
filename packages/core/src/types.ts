@@ -291,10 +291,12 @@ export type AgentOptions<Context, Output = string> = {
   maxToolDepth?: number;
   maxOutputChars?: number;
   /** Checks the run's input before the first model call. It sees the loaded history
-   * and the input message. Return nothing or `true` to allow; a string or `false` fails
-   * the run with a `GuardrailError`, and nothing is saved. Return `{message}` to record
-   * that input instead, for example with personal data redacted: the original never
-   * enters the history. Restate's journal still keeps the handler's own input. */
+   * and the input message. Return nothing or `true` to allow. A string or `false`
+   * rejects the input: the model gets a note with the reason after the input, which
+   * stays in the history. Return `{message}` to record that input instead, for example
+   * with personal data redacted: the original never enters the history. Restate's
+   * journal still keeps the handler's own input. Throw `AgentTerminalError` to fail
+   * the run before any model call; nothing is saved. */
   beforeRun?(
     messages: readonly ReadonlyMessage[],
     context: RunContext<Context>,
@@ -308,9 +310,10 @@ export type AgentOptions<Context, Output = string> = {
     steering: SteeringRequest,
     context: RunContext<Context>,
   ): Operation<InputDecision>;
-  /** Checks each of the agent's own steps. Return nothing or `true` to allow; a string
-   * or `false` fails the run with a `GuardrailError`. Return `{messages}` to send those
-   * messages in this one request instead. The request shares the run's history and is
+  /** Checks each of the agent's own steps. Return nothing or `true` to allow. A string
+   * or `false` skips this step's model call, and the model gets a note with the reason
+   * before the next step. Return `{messages}` to send those messages in this one
+   * request instead. The request shares the run's history and is
    * typed read-only: build new messages rather than editing them, since an edit in place
    * would change the history, and keep the ones you do not change.
    *
@@ -335,9 +338,11 @@ export type AgentOptions<Context, Output = string> = {
    * when the tool returned it from a journaled step, as `asyncTool` does. */
   afterTool?(output: JsonValue, context: ToolContext<Context>): Operation<JsonValue>;
   /** Checks the run's result before it is returned and saved. Return nothing or `true`
-   * to accept; a string or `false` fails the run with a `GuardrailError`, and nothing is
-   * saved. Return `{output}` to replace the output: the replacement is recorded, returned
-   * and saved; the candidate never enters the history. */
+   * to accept. A string or `false` rejects a completed answer: the model gets the answer
+   * back with a note, for another step, and neither is saved. For a stopped or
+   * interrupted result, no model step follows, so a rejection fails the run with a
+   * `ToolError` whose code is `denied`. Return `{output}` to replace the output: the
+   * replacement is recorded, returned and saved; the candidate never enters the history. */
   afterRun?(
     candidate: OutputCandidate<Output>,
     context: RunContext<Context>,

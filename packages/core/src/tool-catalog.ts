@@ -1,6 +1,15 @@
 import {createToolSearch} from "./tool-search.js";
 import type {Tool} from "./types.js";
 
+/** Rejects a tool no run could list: an invalid name, or a handoff that runs in the
+ * background. `agent()` checks its own tools when it is defined; the catalog checks
+ * the tools a run adds. */
+export function checkTool(name: string, definition: {handoff?: unknown; background?: boolean}) {
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) throw new TypeError(`Invalid tool name: ${name}`);
+  if (definition.handoff && definition.background)
+    throw new TypeError(`Handoff tool must be foreground: ${name}`);
+}
+
 /** A run-local catalog owns validation, search, and schema visibility together. */
 export function createToolCatalog<C>(
   tools: Record<string, Tool<C>> = {},
@@ -12,9 +21,7 @@ export function createToolCatalog<C>(
     registry.set(name, definition);
   }
   const manifests = [...registry].map(([name, definition]) => {
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) throw new TypeError(`Invalid tool name: ${name}`);
-    if (definition.handoff && definition.background)
-      throw new TypeError(`Handoff tool must be foreground: ${name}`);
+    checkTool(name, definition);
     return {
       name,
       description: definition.description,

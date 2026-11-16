@@ -45,6 +45,10 @@ const result = yield* support.run(message, {conversation});
 
 Read it from a shared handler with `yield* new LazyStateConversation().page()`.
 
+When a run starts and the conversation compaction fails, the run logs a
+warning and continues with the history it loaded; the next run tries again.
+An `AgentTerminalError` from the compaction model fails the run instead.
+
 ## Long runs: large results and compaction
 
 Conversation compaction runs before a run starts. A single run can still
@@ -104,6 +108,7 @@ const researcher = agent({
 - Steering and interrupts wait until compaction finishes. If the compactor
   fails, the run stops summarizing and truncates instead: the older messages
   give way to a short note that restates the input and lists pending calls.
+  An `AgentTerminalError` from the compactor fails the run instead.
 
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
 that would not fit the window with `maxOutputTokens` is shrunk first:

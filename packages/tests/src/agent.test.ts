@@ -13,16 +13,14 @@ import {
 import {z} from "zod";
 import {
   agent,
-  AgentLimitError,
-  GuardrailError,
   handoff,
   summarizeConversation,
   tool,
   ToolError,
-  ModelProtocolError,
   RunInputError,
   type Message,
   type Model,
+  type ModelRequest,
   type ModelResponse,
   type ToolContext,
 } from "@restatedev/agentlib";
@@ -35,6 +33,12 @@ const call = (id: string, name: string, input = {}): ModelResponse => ({
   calls: [{id, name, input}],
 });
 const final: ModelResponse = {type: "final", text: "Done"};
+/** The runtime note the model received last, parsed. */
+function lastNote(request: ModelRequest): Record<string, unknown> {
+  const last = request.messages.at(-1);
+  assert.ok(last?.role === "user", JSON.stringify(last));
+  return JSON.parse(last.content) as Record<string, unknown>;
+}
 function scripted(...responses: ModelResponse[]): Model {
   let index = 0;
   return function* () {
@@ -303,13 +307,28 @@ void test("maxSteps stops a tool-only loop with a complete transcript", async ()
 void test("duplicate tool-call IDs reject the entire batch before any tool starts", async () => {
   let executed = 0;
   const a = agent({
-    model: scripted({
-      type: "tool_calls",
-      calls: [
-        {id: "same", name: "write", input: {}},
-        {id: "same", name: "write", input: {}},
-      ],
-    }),
+    *model(request) {
+      if (request.step === 1)
+        return {
+          type: "tool_calls",
+          calls: [
+            {id: "same", name: "write", input: {}},
+            {id: "same", name: "write", input: {}},
+          ],
+        };
+      if (request.step === 2) {
+        assert.deepEqual(lastNote(request), {
+          source: "agent-runtime",
+          type: "error",
+          origin: "model",
+          code: "invalid_response",
+          message: "Duplicate tool-call ID: same",
+        });
+        // The rejected batch claimed no IDs, so a corrected batch can reuse them.
+        return call("same", "write");
+      }
+      return final;
+    },
     tools: {
       write: tool({
         description: "Write",
@@ -321,18 +340,40 @@ void test("duplicate tool-call IDs reject the entire batch before any tool start
       }),
     },
   });
-  await assert.rejects(execute(context(), a.run("Go")), ModelProtocolError);
-  assert.equal(executed, 0);
+  const result = await execute(context(), a.run("Go"));
+  assert.equal(result.status, "completed");
+  assert.equal(result.steps, 3);
+  assert.equal(executed, 1);
+  assert.doesNotMatch(JSON.stringify(result.messages), /invalid_response/);
 });
 
-void test("empty model responses and tool batches fail instead of parking or looping", async () => {
+void test("empty model responses and tool batches get a note and another step", async () => {
   for (const response of [
     {type: "final", text: " "},
     {type: "tool_calls", calls: []},
   ]) {
-    const a = agent({model: scripted(response as ModelResponse)});
-    await assert.rejects(execute(context(), a.run("Go")), ModelProtocolError);
+    const a = agent({
+      *model(request): Generator<never, ModelResponse> {
+        if (request.step === 1) return response as ModelResponse;
+        assert.equal(lastNote(request).code, "invalid_response");
+        return final;
+      },
+    });
+    const result = await execute(context(), a.run("Go"));
+    assert.equal(result.output, "Done");
+    assert.equal(result.steps, 2);
   }
+  // A model that keeps making the mistake uses up its steps instead of looping.
+  const stuck = agent({
+    maxSteps: 3,
+    finalize: false,
+    model: function* () {
+      return {type: "final", text: " "};
+    },
+  });
+  const result = await execute(context(), stuck.run("Go"));
+  assert.equal(result.status, "stopped");
+  assert.equal(result.status === "stopped" && result.reason, "max_steps");
 });
 
 void test("non-JSON tool output is reported to the model instead of retried", async () => {
@@ -447,11 +488,24 @@ void test("maxOutputChars bounds tool output for the model and fails an oversize
     },
   });
   assert.equal((await execute(context(), a.run("Go"))).status, "completed");
+  // Model text over the limit gets a note and another step.
   const verbose = agent({
     maxOutputChars: 20,
-    model: scripted({type: "final", text: "z".repeat(21)}),
+    *model(request) {
+      if (request.step === 1) return {type: "final", text: "z".repeat(21)};
+      assert.deepEqual(lastNote(request), {
+        source: "agent-runtime",
+        type: "error",
+        origin: "model",
+        code: "output_limit",
+        message: "The response has 21 characters, more than the limit of 20. Respond more briefly.",
+      });
+      return {type: "final", text: "z".repeat(20)};
+    },
   });
-  await assert.rejects(execute(context(), verbose.run("Go")), AgentLimitError);
+  const brief = await execute(context(), verbose.run("Go"));
+  assert.equal(brief.output, "z".repeat(20));
+  assert.equal(brief.steps, 2);
 });
 
 void test("conversation summaries must be text, not tool calls", async () => {
@@ -536,7 +590,8 @@ void test("beforeStep messages that break the call order fail before the model c
       return calls === 1 ? call("one", "lookup") : final;
     },
   });
-  await assert.rejects(execute(context(), a.run("Go")), RunInputError);
+  // The hook's mistake: a plain error, which Restate retries until a fix is deployed.
+  await assert.rejects(execute(context(), a.run("Go")), /break the tool-call protocol/);
   assert.equal(calls, 1);
 });
 
@@ -547,7 +602,7 @@ void test("beforeStep messages it adds are validated", async () => {
     },
     model: scripted(final),
   });
-  await assert.rejects(execute(context(), a.run("Go")), RunInputError);
+  await assert.rejects(execute(context(), a.run("Go")), TypeError);
 });
 
 void test("the second beforeStep sees the first one's messages", async () => {
@@ -594,7 +649,7 @@ void test("beforeRun must return a nonempty message", async () => {
     },
     model: scripted(final),
   });
-  await assert.rejects(execute(context(), a.run("Go")), RunInputError);
+  await assert.rejects(execute(context(), a.run("Go")), TypeError);
 });
 
 const search = (seen: string[]) =>
@@ -658,7 +713,8 @@ void test("a rejected tool call reaches the model as the call's result, with the
 });
 
 void test("a hook result that is not a decision fails instead of allowing", async () => {
-  // An object other than the replacement is a mistake, not an approval: the call never runs.
+  // An object other than the replacement is a mistake in the hook, not an approval: the
+  // call never runs, and the run fails with a plain error, which Restate retries.
   const seen: string[] = [];
   const guarded = agent({
     tools: {search: search(seen)},
@@ -667,11 +723,11 @@ void test("a hook result that is not a decision fails instead of allowing", asyn
     },
     model: scripted(call("one", "search", {query: "x"}), final),
   });
-  const result = await execute(context(), guarded.run("Go"));
+  await assert.rejects(
+    execute(context(), guarded.run("Go")),
+    (error) => error instanceof TypeError && /beforeTool must return nothing/.test(error.message),
+  );
   assert.deepEqual(seen, []);
-  const failed = result.messages[2];
-  assert.ok(failed?.role === "tool" && failed.result.status === "error");
-  assert.equal(failed.result.code, "guardrail_failed");
 
   const checked = agent({
     model: scripted(final),
@@ -681,20 +737,39 @@ void test("a hook result that is not a decision fails instead of allowing", asyn
   });
   await assert.rejects(
     execute(context(), checked.run("Go")),
-    (error) =>
-      error instanceof GuardrailError && /beforeRun must return nothing/.test(error.message),
+    (error) => error instanceof TypeError && /beforeRun must return nothing/.test(error.message),
   );
 });
 
-void test("afterRun can reject the output with a reason; the run fails and nothing is saved", async () => {
+void test("afterRun can reject an answer with a reason, and the model revises it", async () => {
   const a = agent({
-    model: scripted(final),
-    *afterRun() {
-      return "The answer leaks an account number";
+    *model(request) {
+      if (request.step === 1) return {type: "final", text: "Your account is 1234"};
+      // The model sees its rejected answer, then why it was rejected.
+      assert.deepEqual(request.messages.at(-2), {
+        role: "assistant",
+        content: "Your account is 1234",
+      });
+      assert.deepEqual(lastNote(request), {
+        source: "agent-runtime",
+        type: "error",
+        origin: "afterRun",
+        code: "denied",
+        message: "The answer leaks an account number",
+      });
+      return final;
+    },
+    *afterRun(candidate) {
+      if (candidate.status === "completed" && candidate.output.includes("1234"))
+        return "The answer leaks an account number";
     },
   });
-  await assert.rejects(
-    execute(context(), a.run("Go")),
-    (error) => error instanceof GuardrailError && error.message.includes("leaks an account"),
-  );
+  const result = await execute(context(), a.run("Go"));
+  assert.equal(result.output, "Done");
+  assert.equal(result.steps, 2);
+  // Neither the rejected answer nor the note is saved.
+  assert.deepEqual(result.messages, [
+    {role: "user", content: "Go"},
+    {role: "assistant", content: "Done"},
+  ]);
 });

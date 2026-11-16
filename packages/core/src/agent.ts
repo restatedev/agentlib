@@ -3,9 +3,12 @@ import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {Agent, AgentOptions, RunOptions, RunResult} from "./types.js";
 import {runAgent, type RunConfiguration} from "./agent-run.js";
 import {positiveInteger} from "./limits.js";
+import {checkTool} from "./tool-catalog.js";
 
 /** Embeddable task loop. Definitions are reusable; every mutable object is run-local. */
 export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): Agent<C, O> {
+  // A tool no run could list fails here, at startup, rather than in every run.
+  for (const [name, definition] of Object.entries(options.tools ?? {})) checkTool(name, definition);
   const maxSteps = positiveInteger(options.maxSteps ?? 10, "maxSteps");
   const maxToolCalls = positiveInteger(options.maxToolCalls ?? 128, "maxToolCalls");
   const maxToolDepth = positiveInteger(options.maxToolDepth ?? 16, "maxToolDepth");

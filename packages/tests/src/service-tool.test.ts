@@ -44,7 +44,7 @@ void test("a multiplexed tool rejects names that are not handlers", async () => 
   for (const handler of ["toString", "constructor", "__proto__", "missing"]) {
     await assert.rejects(
       r.execute(testContext(), tool.execute({handler}, {} as Parameters<typeof tool.execute>[1])),
-      (error) => error instanceof ToolError && error.code === "invalid_input",
+      (error) => error instanceof ToolError && error.toolCode === "invalid_input",
     );
   }
 });
