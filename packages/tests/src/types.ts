@@ -139,3 +139,19 @@ serviceTool({iface: counterIface, handler: "add"});
 serviceTool({iface: counterIface, key: "c-1"});
 serviceTool({iface: counterIface, handler: "add", key: "c-1"});
 serviceTool({iface: counterIface, handler: "add", key: (input) => JSON.stringify(input)});
+
+agent<undefined>({
+  model,
+  // @ts-expect-error Only {input} replaces a tool call's input.
+  *beforeTool() {
+    return {query: "x"};
+  },
+});
+
+agent<undefined>({
+  model,
+  *beforeTool(call) {
+    if (call.name === "delete") return "Deleting is not allowed";
+    if (call.name === "search") return {input: {query: "[redacted]"}};
+  },
+});

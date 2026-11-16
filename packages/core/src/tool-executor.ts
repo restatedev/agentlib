@@ -7,7 +7,7 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {
   AgentLimitError,
-  denial,
+  guardrailDecision,
   RunFailedError,
   RunInterrupted,
   ToolBudgetExceeded,
@@ -19,6 +19,7 @@ import type {
   AgentRuntime,
   ApprovalHandler,
   ApprovalRequest,
+  JsonValue,
   ProgressEvent,
   RunContext,
   Tool,
@@ -187,14 +188,17 @@ export function createToolExecutor<C>({
       cancelOperation,
     };
     try {
+      // The tool runs with the last input a policy returned; the history keeps the call.
+      let input = call.input;
       for (const policy of policies) {
         if (!policy.beforeTool) continue;
-        const reason = denial(
-          yield* checked(policy.beforeTool(structuredClone(call), toolContext)),
-        );
-        if (reason !== undefined) throw new ToolDenied(reason);
+        const shown = structuredClone({...call, input});
+        const result = yield* checked(policy.beforeTool(shown, toolContext));
+        const decision = guardrailDecision("beforeTool", result, "input", policyFailure);
+        if (decision && "reject" in decision) throw new ToolDenied(decision.reject);
+        if (decision) input = policyInput(decision.replace);
       }
-      let output = yield* definition.execute(call.input, toolContext);
+      let output = yield* definition.execute(input, toolContext);
       for (const policy of policies.toReversed()) {
         if (policy.afterTool) output = yield* checked(policy.afterTool(output, toolContext));
       }
@@ -216,6 +220,16 @@ export function createToolExecutor<C>({
       return executeCall(call, step, owner, catalog);
     },
   };
+}
+
+/** A hook result that is not a decision fails the call, as a failed check does. */
+const policyFailure = (message: string) => new ToolError(message, "guardrail_failed");
+
+/** Input a `beforeTool` policy returned. The tool validates it like the model's. */
+function policyInput(value: unknown): JsonValue {
+  const result = jsonSchema.safeParse(value);
+  if (!result.success) throw new ToolError("beforeTool must return JSON input", "guardrail_failed");
+  return result.data;
 }
 
 /** A policy that fails terminally blocks the call, and tells the model the check
