@@ -162,6 +162,7 @@ repeat a completed model call.
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
 | Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |
+| Usage totals                 | `result.usage`, and `usageOf(error)` for a failed run                      | —                                                           |
 | Custom model adapters        | `journaledModel`                                                           | —                                                           |
 | Models                       | `aiModel`, `modelGateway` (`/provider`)                                    | [01_hello.ts](packages/examples/src/lessons/01_hello.ts)    |
 

@@ -7,6 +7,7 @@ import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
   agent,
+  agentTool,
   asyncTool,
   cancelOperationTool,
   handoff,
@@ -16,6 +17,7 @@ import {
   LazyStateConversation,
   sleepTool,
   tool,
+  usageOf,
   type JsonValue,
   type ModelResponse,
   type ToolCall,
@@ -28,6 +30,33 @@ import {aiSession} from "@restatedev/agentlib-examples/support-session";
 const final: ModelResponse = {type: "final", text: "done"};
 const base = {description: "fixture", input: z.object({})};
 const effects = new Map<string, number>();
+const reported = {
+  inputTokens: 100,
+  outputTokens: 10,
+  cachedInputTokens: 60,
+  cacheWriteInputTokens: 20,
+};
+/** The run totals of `count` model calls that each report `reported`. */
+const usageTotals = (count: number) => ({
+  inputTokens: 100 * count,
+  outputTokens: 10 * count,
+  totalTokens: 110 * count,
+  cachedInputTokens: 60 * count,
+  cacheWriteInputTokens: 20 * count,
+});
+/** Counts each execution of `key`, then answers like a model reporting `reported`. */
+function countedCall(key: string, response: ModelResponse): ModelResponse {
+  effects.set(key, (effects.get(key) ?? 0) + 1);
+  return {...response, usage: reported};
+}
+const sleepyRead = tool({
+  ...base,
+  *execute() {
+    // A timer suspends the invocation, so the rest of the run replays.
+    yield* r.sleep(5);
+    return "page";
+  },
+});
 const child = r.object({
   name: "SdkChild",
   handlers: {
@@ -447,6 +476,48 @@ const runner = r.service({
     *gateway() {
       return yield* agent({model: modelGateway(() => r.client(gateway).generate())}).run("go");
     },
+    *subAgentUsage() {
+      const researcher = agent({
+        tools: {read: sleepyRead},
+        model: journaledModel(async (request): Promise<ModelResponse> => {
+          if (request.step === 1)
+            return countedCall("usage-research-1", {
+              type: "tool_calls",
+              calls: [{id: "s1", name: "read", input: {}}],
+            });
+          countedCall("usage-research-2", final);
+          throw new TerminalError("Provider unavailable");
+        }),
+      });
+      return yield* agent({
+        tools: {research: agentTool(researcher, {description: "Research"})},
+        model: journaledModel(async (request): Promise<ModelResponse> => {
+          if (request.step !== 1) return countedCall("usage-lead-2", final);
+          return countedCall("usage-lead-1", {
+            type: "tool_calls",
+            calls: [{id: "d1", name: "research", input: {task: "Look it up"}}],
+          });
+        }),
+      }).run("Go");
+    },
+    *failedRunUsage() {
+      try {
+        return yield* agent({
+          tools: {read: sleepyRead},
+          model: journaledModel(async (request): Promise<ModelResponse> => {
+            if (request.step === 1)
+              return countedCall("usage-failed-1", {
+                type: "tool_calls",
+                calls: [{id: "r1", name: "read", input: {}}],
+              });
+            countedCall("usage-failed-2", final);
+            throw new TerminalError("Provider unavailable");
+          }),
+        }).run("Go");
+      } catch (error) {
+        return usageOf(error);
+      }
+    },
     *repairToolInput() {
       const a = agent({
         model: journaledModel(async (request): Promise<ModelResponse> => {
@@ -556,6 +627,35 @@ const session = r.object({
         },
       }).run("go", {conversation});
       return {result, history: yield* conversation.page()};
+    },
+    *reasoningPolicy(redact: boolean) {
+      const conversation = new LazyStateConversation();
+      const reasoning = {
+        items: [{type: "reasoning", text: "private thought"}],
+        text: [
+          {
+            text: "private answer",
+            providerOptions: {google: {thoughtSignature: "private signature"}},
+          },
+        ],
+      };
+      const a = agent({
+        model: journaledModel(async (request): Promise<ModelResponse> => {
+          const previous = request.messages.find((message) => message.role === "assistant");
+          if (previous?.role === "assistant") {
+            assert.deepEqual(previous.reasoning, redact ? undefined : reasoning);
+            return {type: "final", text: "next answer"};
+          }
+          return {type: "final", text: "private answer", reasoning};
+        }),
+        *afterRun(candidate) {
+          yield* r.sleep(1);
+          if (redact && candidate.output === "private answer") return {output: "public answer"};
+        },
+      });
+      const first = yield* a.run("first", {conversation});
+      yield* a.run("next", {conversation});
+      return {first, history: yield* conversation.page()};
     },
     *interruptGuard() {
       const conversation = new LazyStateConversation();
@@ -743,6 +843,19 @@ before(
 after(async () => {
   await env?.stop();
 });
+void test("native always-replay: a failed sub-agent's usage counts once", async () => {
+  const result = await connect({url: env.baseUrl()}).client(runner).subAgentUsage();
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.usage, usageTotals(3));
+  for (const key of ["usage-lead-1", "usage-lead-2", "usage-research-1", "usage-research-2"])
+    assert.equal(effects.get(key), 1, key);
+});
+void test("native always-replay: a failed run's error carries its usage", async () => {
+  const usage = await connect({url: env.baseUrl()}).client(runner).failedRunUsage();
+  assert.deepEqual(usage, usageTotals(1));
+  assert.equal(effects.get("usage-failed-1"), 1);
+  assert.equal(effects.get("usage-failed-2"), 1);
+});
 void test("native always-replay: only the invalid tool call needs correction", async () => {
   const result = await connect({url: env.baseUrl()}).client(runner).repairToolInput();
   assert.equal(result.status, "completed");
@@ -928,6 +1041,25 @@ void test(
     assert.equal(response.result.status, "interrupted");
     assert.doesNotMatch(JSON.stringify(response), /unapproved candidate/);
     assert.deepEqual(response.history.messages, [{role: "user", content: "go"}]);
+  },
+);
+
+void test(
+  "native always-replay: output policies drop reasoning only for changed answers",
+  {timeout: 20000},
+  async () => {
+    for (const redact of [false, true]) {
+      const response = await connect({url: env.baseUrl()})
+        .client(session, `reasoning-policy-${redact}`)
+        .reasoningPolicy(redact);
+      const answer = response.first.messages.at(-1);
+      assert.equal(answer?.role, "assistant");
+      if (answer?.role !== "assistant") throw new Error("Missing answer");
+      assert.equal(answer.content, redact ? "public answer" : "private answer");
+      assert.equal(answer.reasoning !== undefined, !redact);
+      if (redact) assert.doesNotMatch(JSON.stringify(response), /private/);
+      assert.deepEqual(response.history.messages[1], answer);
+    }
   },
 );
 

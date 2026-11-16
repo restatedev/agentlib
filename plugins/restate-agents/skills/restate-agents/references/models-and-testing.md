@@ -18,7 +18,9 @@ Which adapter to use:
 
 All providers come through the [Vercel AI SDK](https://ai-sdk.dev). The
 SDK supplies the provider protocol only; Restate still owns the loop, tools,
-retries, and journaling (`aiModel` sets the SDK's own retries to zero).
+retries, and journaling (`aiModel` sets the SDK's own retries to zero). A
+throttled call waits as long as the provider asks (`retry-after` headers, or
+Gemini's `RetryInfo`) before Restate retries it.
 
 1. Install the provider package, for example `@ai-sdk/openai`, `@ai-sdk/anthropic`,
    `@ai-sdk/amazon-bedrock`, `@ai-sdk/google`, `@ai-sdk/mistral`, or
@@ -60,6 +62,10 @@ export const model = aiModel({model: bedrock("<bedrock model id>")});
 `aiModel` also accepts `providerOptions` (passed through to the provider), an
 OpenTelemetry `tracer`, and `onChunk` for streaming text to a UI.
 
+With a reasoning model, `aiModel` keeps the model's reasoning and sends it back on
+later requests; for OpenAI it sets `store: false` unless you set `store`. See
+`references/reasoning.md`.
+
 
 Prompt caching is on by default. `aiModel` marks the instructions (which
 follow the tools), the newest message, and the message before the newest
@@ -71,11 +77,31 @@ prompt caching. `aiModel` reports `usage` when the provider gives counts:
 `inputTokens` includes cached reads and writes, `cachedInputTokens` counts the
 reads, and `cacheWriteInputTokens` the writes.
 
-`aiModel` sends a tool schema in strict mode when it has an exact strict
-form, so the model's arguments always match it: every property is required
-(use `.nullable()` rather than `.optional()`) and there are no free-form maps.
-Other tool schemas are sent as they are. Structured output is handled by
-AI SDK and validated against the agent's `output` schema.
+`result.usage` sums the usage of every model call a run makes: its steps,
+in-run compaction, and the summary of a stopped or interrupted run, including
+responses the run discards, such as an answer superseded by steering. It also
+includes each sub-agent run by `agentTool`, whether the sub-agent completes,
+stops, or fails. `totalTokens` is `inputTokens + outputTokens`. Calls that
+report no usage add nothing. Model calls made by other tools or by hooks,
+conversation-store compaction, and calls cancelled before they return are not
+counted.
+
+When `run()` throws, `usageOf(error)` returns the totals up to the failure (see
+the example in `agent-basics.md`). Record them only for terminal errors: after
+a retryable error, Restate retries the invocation, and the replay counts the
+same calls again. The totals are attached to the error object in the handler,
+so a remote caller of the handler does not receive them. When several runs
+throw the same error object, such as two runs in one handler that is
+cancelled, `usageOf` returns the totals of the run that threw it last.
+
+`aiModel` passes tool and `output` schemas to AI SDK as they are, so AI SDK's
+defaults apply: tool strictness follows provider defaults, and OpenAI
+structured output is strict.
+OpenAI strict mode requires every property, so use `.nullable()` rather than
+`.optional()` in an `output` schema. It also rejects open-ended keys, such as
+`z.record()` or `.passthrough()`, and `.nullable()` does not help there. For
+those, pass `providerOptions: {openai: {strictJsonSchema: false}}`. Tool input
+and output are validated against their Zod schemas either way.
 
 `modelGateway(call)` sends model requests to another Restate handler. Use it
 to centralize keys, quotas, or routing in one service:

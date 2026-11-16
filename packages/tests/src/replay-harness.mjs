@@ -114,8 +114,13 @@ export async function runHandler(handler, {replay = [], onProposal} = {}) {
           output = JSON.parse(decode(data.get(14)).get(1).toString());
           controller.close();
         } else if (type === 2) {
-          throw new Error(
-            "SDK failure: " + [...data].map(([k, v]) => [k, Buffer.isBuffer(v) ? v.toString() : v]),
+          throw Object.assign(
+            new Error(
+              "SDK failure: " +
+                [...data].map(([k, v]) => [k, Buffer.isBuffer(v) ? v.toString() : v]),
+            ),
+            // ErrorMessage.next_retry_delay: how long Restate waits before the next attempt.
+            {nextRetryDelay: data.get(8)},
           );
         } else if (type !== 3) {
           throw new Error("Unsupported test protocol frame: " + type.toString(16));

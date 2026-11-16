@@ -131,7 +131,8 @@ const lead = agent({
 
 - **`agentTool`**: the sub-agent gets the task as a fresh conversation plus
   the parent's `context`. Its answer becomes the tool result. Its approvals
-  and progress flow through the parent. A sub-agent that stops early
+  and progress flow through the parent, and its token usage counts toward
+  the parent's `result.usage`, also when it fails. A sub-agent that stops early
   becomes a tool error with code `agent_stopped` carrying its summary; an
   interrupted one, a cancelled call. Pass `background: true` to let the
   parent keep working meanwhile.

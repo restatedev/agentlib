@@ -51,7 +51,8 @@ apply to agent handlers and tools too.
 - A model adapter. All providers, including OpenAI, go through the
   [Vercel AI SDK](https://ai-sdk.dev): install the provider package (for example
   `@ai-sdk/openai`) and wrap its model with `aiModel` from
-  `@restatedev/agentlib/provider`. See `references/models-and-testing.md`.
+  `@restatedev/agentlib/provider`. See `references/models-and-testing.md`, and
+  `references/reasoning.md` for reasoning models.
 - Serve the handlers with `serve({services, port: 9080})` from
   `@restatedev/restate-sdk` and register them, as in the `restate-gen-sdk`
   skill.

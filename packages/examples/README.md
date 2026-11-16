@@ -578,6 +578,12 @@ you want a fixed attempt limit. The retry duration limits retries, not the
 execution time of one attempt. Pass `callId` as an idempotency key for external
 writes, since a retried attempt can repeat an effect.
 
+A throttled model call waits as long as the provider asks before its next
+attempt: `aiModel` reads the `retry-after-ms` and `retry-after` response
+headers, and for Gemini the `RetryInfo` delay in the error body. That wait
+replaces the backoff for that retry; the attempt limit and retry duration still
+apply.
+
 For `asyncTool`, an ordinary thrown `Error` follows the retry policy.
 `ToolError` is a business error returned to the model without retrying the
 callback; `TerminalError` stops retrying. The policy covers `execute`; SDK

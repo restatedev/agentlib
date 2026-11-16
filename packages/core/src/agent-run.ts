@@ -22,6 +22,7 @@ import {
 import {RunHistory} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
+import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
@@ -39,6 +40,7 @@ import type {
   ModelResponse,
   ModelToolCallsResponse,
   ReadonlyMessage,
+  Reasoning,
   ToolManifest,
   ProgressEvent,
   RunContext,
@@ -66,8 +68,20 @@ export function* runAgent<C, O>(
   config: RunConfiguration,
   options?: RunOptions<C>,
 ): Operation<RunResult<O>> {
-  const history = yield* RunHistory.load(input, options, config.toolResults);
-  return yield* new AgentRun(root, config, history, options).run();
+  // Set by agentTool when this run is a sub-agent of another run.
+  const parent = (options as {[PARENT_USAGE]?: RunUsageTracker} | undefined)?.[PARENT_USAGE];
+  const usage = new RunUsageTracker();
+  try {
+    const history = yield* RunHistory.load(input, options, config.toolResults);
+    return yield* new AgentRun(root, config, history, usage, options).run();
+  } catch (error) {
+    // Rethrow the same value: Restate's retry and cancellation handling depend on its type.
+    recordFailedRun(error, usage.snapshot());
+    throw error;
+  } finally {
+    // A sub-agent counts toward its parent, whatever its outcome.
+    parent?.add(usage.snapshot());
+  }
 }
 
 /** The agent's instructions followed by its skills section. */
@@ -123,6 +137,7 @@ class AgentRun<C, O> {
     private readonly root: AgentOptions<C, O>,
     private readonly config: RunConfiguration,
     private readonly history: RunHistory,
+    private readonly usage: RunUsageTracker,
     private readonly options?: RunOptions<C>,
   ) {
     this.active = root;
@@ -131,7 +146,9 @@ class AgentRun<C, O> {
       context: options?.context as C,
       invocationId: handlerRequest().id,
       name: options?.name ?? root.name ?? "agent",
-    };
+      // Tool contexts copy this context, so agentTool can link a sub-agent run to this one.
+      [PARENT_USAGE]: usage,
+    } as RunContext<C>;
     this.tools = new RunTools(
       root,
       this.context,
@@ -293,7 +310,10 @@ class AgentRun<C, O> {
           ? {...this.lastRequest, maxOutputTokens}
           : undefined;
       try {
-        if (yield* summarizeContext(this.history, {model, retainTokens, prefix}, pending)) {
+        const counted = this.usage.count(model);
+        if (
+          yield* summarizeContext(this.history, {model: counted, retainTokens, prefix}, pending)
+        ) {
           yield* this.emit({type: "compaction", mode: "summary", status: "applied", reason});
           return true;
         }
@@ -401,7 +421,7 @@ class AgentRun<C, O> {
       if (decision)
         request.messages = stepMessages(request.messages, decision.replace as ReadonlyMessage[]);
     }
-    const response = modelResponse(yield* this.active.model(request));
+    const response = modelResponse(yield* this.usage.counted(this.active.model(request)));
     if ((response.text?.length ?? 0) > this.config.maxOutputChars)
       throw new AgentLimitError("Model output exceeds maxOutputChars");
     return response;
@@ -453,7 +473,11 @@ class AgentRun<C, O> {
     if (!parsed) {
       // The model needs its rejected answer to correct it; the turn must not keep it.
       this.history.appendProvisional(
-        {role: "assistant", content: action.text},
+        {
+          role: "assistant",
+          content: action.text,
+          ...(action.reasoning ? {reasoning: structuredClone(action.reasoning)} : {}),
+        },
         {
           role: "user",
           content: JSON.stringify({
@@ -471,9 +495,16 @@ class AgentRun<C, O> {
         output: parsed.output,
         steps: this.step,
         messages: this.history.committed(),
+        usage: this.usage.snapshot(),
       }),
     );
-    return result && (yield* this.finish(result));
+    // Reasoning can contain readable details the output policy removed. Keep it
+    // only when the policy leaves the answer unchanged, including structured output.
+    const reasoning =
+      result && JSON.stringify(result.output) === JSON.stringify(parsed.output)
+        ? action.reasoning
+        : undefined;
+    return result && (yield* this.finish(result, reasoning));
   }
 
   /** Returns undefined when the model should retry against the output schema. */
@@ -528,8 +559,11 @@ class AgentRun<C, O> {
     const finalize = this.root.finalize ?? this.root.model;
     if (finalize && result.status !== "completed") {
       yield* this.compactContext();
-      result = yield* summarizeStoppedRun(result, finalize, this.history.finalContext());
+      const counted = this.usage.count(finalize);
+      result = yield* summarizeStoppedRun(result, counted, this.history.finalContext());
     }
+    // Compaction and the summary add usage; the policy and the caller see it.
+    result = {...result, usage: this.usage.snapshot()};
     if (this.root.afterRun) {
       const decision = yield* this.root.afterRun(createOutputCandidate(result), this.context);
       result = applyOutputDecision(result, decision);
@@ -550,6 +584,7 @@ class AgentRun<C, O> {
     const end = {
       steps: Math.min(this.step, this.config.maxSteps),
       messages: this.history.committed(),
+      usage: this.usage.snapshot(),
     };
     let result: RunResult<O>;
     if (cause instanceof RunInterrupted)
@@ -560,7 +595,7 @@ class AgentRun<C, O> {
   }
 
   /** Validates the accepted result, commits its output, and saves the turn. */
-  private *finish(result: RunResult<O>): Operation<RunResult<O>> {
+  private *finish(result: RunResult<O>, reasoning?: Reasoning): Operation<RunResult<O>> {
     if (result.status === "completed") {
       if (this.root.output) {
         const parsed = this.root.output.safeParse(result.output);
@@ -581,6 +616,7 @@ class AgentRun<C, O> {
       this.history.append({
         role: "assistant",
         content: typeof output === "string" ? output : JSON.stringify(output),
+        ...(reasoning ? {reasoning: structuredClone(reasoning)} : {}),
       });
     }
     yield* this.history.save();

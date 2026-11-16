@@ -100,6 +100,7 @@ export class RunTools<C> {
       role: "assistant",
       content: action.text ?? "",
       calls: structuredClone(action.calls),
+      ...(action.reasoning ? {reasoning: structuredClone(action.reasoning)} : {}),
     });
 
     const batch: Batch<C> = {foreground: []};

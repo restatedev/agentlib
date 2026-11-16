@@ -1,4 +1,4 @@
-import {TerminalError} from "@restatedev/restate-sdk";
+import {RetryableError, TerminalError} from "@restatedev/restate-sdk";
 import type {ClientFuture, RetryOptions} from "@restatedev/restate-sdk-gen";
 import {
   APICallError,
@@ -9,8 +9,11 @@ import {
   Output,
   streamText,
   UnsupportedFunctionalityError,
+  wrapLanguageModel,
+  type AssistantModelMessage,
   type LanguageModel,
   type ModelMessage,
+  type ProviderMetadata,
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
@@ -25,9 +28,9 @@ import type {
   ModelRequest,
   ModelResponse,
   ModelUsage,
+  Reasoning,
   ToolCall,
 } from "./types.js";
-import {strictSchema} from "./strict-schema.js";
 
 type GenerateSettings = Parameters<typeof generateText>[0];
 
@@ -67,6 +70,42 @@ function contextOverflow(error: APICallError): boolean {
     detail.code === "context_length_exceeded"
   );
 }
+
+/** The wait a throttled provider asks for, in whole milliseconds. Read from
+ * `retry-after-ms`, else `retry-after` in seconds or as an HTTP date, else,
+ * for Google models, `RetryInfo` in the body. A negative or infinite value
+ * falls through to the next source. */
+function retryAfter(error: APICallError, model: LanguageModel): number | undefined {
+  const headers = error.responseHeaders ?? {};
+  const header = headers["retry-after"] ?? "";
+  const seconds = parseFloat(header);
+  const google = typeof model !== "string" && model.provider.startsWith("google.");
+  return (
+    wait(parseFloat(headers["retry-after-ms"] ?? "")) ??
+    wait(Number.isNaN(seconds) ? Date.parse(header) - Date.now() : seconds * 1000) ??
+    (google ? wait(retryInfo(error.responseBody)) : undefined)
+  );
+}
+
+const wait = (ms: number) => (Number.isFinite(ms) && ms >= 0 ? Math.ceil(ms) : undefined);
+
+const RETRY_INFO = "type.googleapis.com/google.rpc.RetryInfo";
+/** Gemini sends the wait in the body instead, as a `RetryInfo` detail with a
+ * duration such as "30s". */
+function retryInfo(body: string | undefined): number {
+  type Detail = {"@type"?: unknown; retryDelay?: unknown} | null;
+  try {
+    const parsed = JSON.parse(body ?? "") as {error?: {details?: Detail[]}} | null;
+    const details = parsed?.error?.details;
+    const info = Array.isArray(details)
+      ? details.find((detail) => detail?.["@type"] === RETRY_INFO)
+      : undefined;
+    const delay = /^(\d+(?:\.\d+)?)s$/.exec(String(info?.retryDelay));
+    return delay ? Number(delay[1]) * 1000 : NaN;
+  } catch {
+    return NaN;
+  }
+}
 // Namespaced: each provider reads its own key, so no provider detection is needed.
 const CACHE_POINT = {
   anthropic: {cacheControl: {type: "ephemeral"}},
@@ -103,18 +142,95 @@ function renderMessage(message: ModelRequest["messages"][number]): ModelMessage 
         },
       ],
     };
+  // Reasoning goes back as the model produced it: first, and each tool call with its metadata.
+  const {reasoning} = message;
   return {
     role: "assistant",
     content: [
-      ...(message.content ? [{type: "text" as const, text: message.content}] : []),
-      ...(message.calls ?? []).map((call) => ({
-        type: "tool-call" as const,
-        toolCallId: call.id,
-        toolName: call.name,
-        input: call.input,
-      })),
+      ...((reasoning?.items ?? []) as unknown as ReasoningPart[]),
+      ...textParts(message.content, reasoning?.text),
+      ...(message.calls ?? []).map((call) => {
+        const metadata = reasoning?.calls?.[call.id];
+        return {
+          type: "tool-call" as const,
+          toolCallId: call.id,
+          toolName: call.name,
+          input: call.input,
+          ...(metadata ? {providerOptions: metadata as ProviderMetadata} : {}),
+        };
+      }),
     ],
   };
+}
+
+type ReasoningPart = Extract<
+  Exclude<AssistantModelMessage["content"], string>[number],
+  {type: "reasoning"}
+>;
+
+/** Replay signed text as returned by the model, including its original formatting. */
+function textParts(
+  content: string,
+  parts: Reasoning["text"],
+): Extract<Exclude<AssistantModelMessage["content"], string>[number], {type: "text"}>[] {
+  if (!parts?.length) return content ? [{type: "text", text: content}] : [];
+  return parts.map(({text, providerOptions}) => ({
+    type: "text",
+    text,
+    ...(providerOptions ? {providerOptions: providerOptions as ProviderMetadata} : {}),
+  }));
+}
+
+/** A response's reasoning, taken from the messages the AI SDK builds to send it back: the
+ * reasoning parts as they are, and each tool call's provider options by call id. Its
+ * tokens: the reported reasoning count, or for providers that report none, such as
+ * Anthropic, the response's output, the closest bound. */
+function responseReasoning(
+  messages: readonly ModelMessage[],
+  usage: Awaited<ReturnType<typeof generateText>>["usage"],
+): Reasoning | undefined {
+  const parts = messages.flatMap((m) =>
+    m.role === "assistant" && typeof m.content !== "string" ? m.content : [],
+  );
+  const items = parts.filter((part) => part.type === "reasoning");
+  const calls = Object.fromEntries(
+    parts.flatMap((part) =>
+      part.type === "tool-call" && part.providerOptions
+        ? [[part.toolCallId, part.providerOptions]]
+        : [],
+    ),
+  );
+  const hasCalls = Object.keys(calls).length > 0;
+  // Gemini can sign ordinary text, including the final answer. Keep every text
+  // part with its text if any part has a signature. Message IDs aren't reasoning metadata:
+  // replaying an OpenAI text itemId with store:true would restore the original
+  // answer even if an output policy had replaced it.
+  const text = parts
+    .filter((part) => part.type === "text")
+    .map((part) => {
+      const providerOptions = Object.fromEntries(
+        Object.entries(part.providerOptions ?? {}).filter(
+          ([, options]) => typeof options.thoughtSignature === "string",
+        ),
+      );
+      return {
+        text: part.text,
+        ...(Object.keys(providerOptions).length ? {providerOptions} : {}),
+      };
+    });
+  const hasText = text.some((part) => part.providerOptions !== undefined);
+  if (!items.length && !hasCalls && !hasText) return undefined;
+  const tokens =
+    usage.outputTokenDetails?.reasoningTokens || (items.length ? usage.outputTokens : undefined);
+  const reasoning = {
+    items,
+    ...(hasCalls ? {calls} : {}),
+    ...(hasText ? {text} : {}),
+    ...(tokens ? {tokens} : {}),
+  };
+  // As the journal stores it: JSON, without undefined fields.
+  const parsed = jsonSchema.safeParse(JSON.parse(JSON.stringify(reasoning)));
+  return parsed.success ? (parsed.data as Reasoning) : undefined;
 }
 
 function toolCalls(
@@ -144,6 +260,7 @@ type Generation = {
   finishReason: string;
   text: string;
   calls: ToolCall[];
+  reasoning?: Reasoning;
   output: unknown;
   usage?: ModelUsage;
 };
@@ -155,19 +272,12 @@ function settingsFor(
   signal: AbortSignal,
 ): GenerateSettings {
   const caching = options.caching ?? true;
-  const strictOutput = request.outputSchema ? strictSchema(request.outputSchema) : undefined;
+  // Schemas go to AI SDK as they are, with its defaults for strict mode.
   const tools: ToolSet = Object.fromEntries(
-    request.tools.map((t) => {
-      const strict = strictSchema(t.inputSchema);
-      return [
-        t.name,
-        {
-          description: t.description,
-          inputSchema: aiSchema(strict ?? t.inputSchema),
-          strict: strict !== undefined,
-        },
-      ];
-    }),
+    request.tools.map((t) => [
+      t.name,
+      {description: t.description, inputSchema: aiSchema(t.inputSchema)},
+    ]),
   );
   return {
     model: options.model,
@@ -181,18 +291,15 @@ function settingsFor(
     maxOutputTokens: request.maxOutputTokens,
     maxRetries: 0,
     abortSignal: signal,
-    providerOptions: request.outputSchema
-      ? {
-          ...options.providerOptions,
-          openai: {
-            strictJsonSchema: strictOutput !== undefined,
-            ...options.providerOptions?.openai,
-          },
-        }
-      : options.providerOptions,
+    // OpenAI keeps nothing: its reasoning comes back encrypted and lives in the history,
+    // so it never depends on what OpenAI stores and deletes. The caller's options win.
+    providerOptions: {
+      ...options.providerOptions,
+      openai: {store: false, ...options.providerOptions?.openai},
+    },
     experimental_telemetry: options.telemetry,
     ...(request.outputSchema
-      ? {output: Output.object({schema: aiSchema(strictOutput ?? request.outputSchema)})}
+      ? {output: Output.object({schema: aiSchema(request.outputSchema)})}
       : {}),
   };
 }
@@ -206,6 +313,7 @@ async function generate(settings: GenerateSettings, wantsOutput: boolean): Promi
     finishReason: result.finishReason,
     text: result.text,
     calls,
+    reasoning: responseReasoning(result.responseMessages, result.usage),
     output,
     usage: modelUsage(result.usage),
   };
@@ -218,7 +326,7 @@ async function stream(
   info: ChunkInfo,
 ): Promise<Generation> {
   await options.onChunk?.({type: "start"}, info);
-  const result = streamText(settings);
+  const result = streamText({...settings, model: preserveGeminiTextMetadata(settings.model)});
   for await (const part of result.fullStream) {
     if (part.type === "error") throw part.error;
     if (part.type === "text-delta" || part.type === "reasoning-delta") {
@@ -230,9 +338,80 @@ async function stream(
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls);
   const output = wantsOutput && !calls.length ? await result.output : undefined;
-  const usage = modelUsage(await result.usage);
+  const rawUsage = await result.usage;
+  const reasoning = responseReasoning(await result.responseMessages, rawUsage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, output, usage};
+  return {finishReason, text, calls, reasoning, output, usage: modelUsage(rawUsage)};
+}
+
+/** Gemini reuses a text-block ID across signed segments. Give each segment its
+ * own start/end pair so AI SDK aggregation keeps its text and signature together.
+ * Empty trailing deltas sign the preceding text; carry their metadata onto text-end
+ * because AI SDK 7.0.26 filters empty deltas before building responseMessages. */
+function preserveGeminiTextMetadata(model: LanguageModel): LanguageModel {
+  // String model IDs are resolved internally by the SDK's configured gateway.
+  // Only Google's adapters (including Vertex) need this stream workaround.
+  if (typeof model === "string" || !model.provider.startsWith("google.")) return model;
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      specificationVersion: "v4",
+      async wrapStream({doStream}) {
+        const result = await doStream();
+        const blocks = new Map<string, {metadata?: ProviderMetadata; hasText: boolean}>();
+        const signed = (metadata?: ProviderMetadata) =>
+          Object.values(metadata ?? {}).some(
+            (options) => typeof options.thoughtSignature === "string",
+          );
+        return {
+          ...result,
+          stream: result.stream.pipeThrough(
+            new TransformStream({
+              transform(chunk, controller) {
+                if (chunk.type === "text-start")
+                  blocks.set(chunk.id, {metadata: chunk.providerMetadata, hasText: false});
+                if (chunk.type === "text-delta") {
+                  const block = blocks.get(chunk.id);
+                  if (block) {
+                    if (
+                      chunk.delta.length > 0 &&
+                      block.hasText &&
+                      (signed(block.metadata) || signed(chunk.providerMetadata))
+                    ) {
+                      controller.enqueue({
+                        type: "text-end",
+                        id: chunk.id,
+                        providerMetadata: block.metadata,
+                      });
+                      // The SDK's output transform also remembers metadata by ID.
+                      // Explicitly clear it when the next segment is unsigned.
+                      chunk = {...chunk, providerMetadata: chunk.providerMetadata ?? {}};
+                      controller.enqueue({
+                        type: "text-start",
+                        id: chunk.id,
+                        providerMetadata: chunk.providerMetadata,
+                      });
+                      block.metadata = undefined;
+                      block.hasText = false;
+                    }
+                    block.metadata = chunk.providerMetadata ?? block.metadata;
+                    block.hasText ||= chunk.delta.length > 0;
+                  }
+                }
+                if (chunk.type === "text-end") {
+                  const previous = blocks.get(chunk.id)?.metadata;
+                  if (previous)
+                    chunk = {...chunk, providerMetadata: {...previous, ...chunk.providerMetadata}};
+                  blocks.delete(chunk.id);
+                }
+                controller.enqueue(chunk);
+              },
+            }),
+          ),
+        };
+      },
+    },
+  });
 }
 
 /** Providers that report no counts leave usage out; compaction then estimates. */
@@ -257,12 +436,12 @@ export function aiModel(options: ProviderOptions): Model {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
     try {
-      const {finishReason, text, calls, output, usage} = options.onChunk
+      const {finishReason, text, calls, reasoning, output, usage} = options.onChunk
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
         throw new ModelProtocolError("Model indicated tool calls but returned none");
-      const reported = usage ? {usage} : {};
+      const reported = {...(usage ? {usage} : {}), ...(reasoning ? {reasoning} : {})};
       if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
         type: "final",
@@ -290,6 +469,10 @@ export function aiModel(options: ProviderOptions): Model {
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
         throw new TerminalError(error.message, {errorCode: error.statusCode});
+      // Wait as long as the provider asks, so throttling does not use up the
+      // retry attempts before its window has passed.
+      const delay = APICallError.isInstance(error) ? retryAfter(error, options.model) : undefined;
+      if (delay !== undefined) throw RetryableError.from(error, {retryAfter: delay});
       throw error;
     }
   }
