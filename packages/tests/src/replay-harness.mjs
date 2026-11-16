@@ -64,11 +64,11 @@ export async function runHandler(handler, {replay = [], onProposal} = {}) {
   let controller, output;
   const endpoint = createEndpointHandler({
     bidirectional: true,
-    services: [service({name: "PTCTest", handlers: {run: handler}})],
+    services: [service({name: "ReplayTest", handlers: {run: handler}})],
   });
   const start = frame(
     0,
-    pb([1, Buffer.alloc(16, 1)], [2, "ptc-test-invocation"], [3, journal.length], [9, 42]),
+    pb([1, Buffer.alloc(16, 1)], [2, "replay-test-invocation"], [3, journal.length], [9, 42]),
   );
   const body = new ReadableStream({
     start(c) {
@@ -77,7 +77,7 @@ export async function runHandler(handler, {replay = [], onProposal} = {}) {
     },
   });
   const response = await endpoint(
-    new Request("http://local/invoke/PTCTest/run", {
+    new Request("http://local/invoke/ReplayTest/run", {
       method: "POST",
       headers: {"content-type": "application/vnd.restate.invocation.v7"},
       body,

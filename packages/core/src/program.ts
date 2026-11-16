@@ -1,7 +1,7 @@
 import {z} from "zod";
 import {ToolError} from "./errors.js";
-import {guestLimits, ProgramError, type GuestLimits, type Json} from "./ptc/guest.js";
-import {executeProgram} from "./ptc/runtime.js";
+import {guestLimits, ProgramError, type GuestLimits, type Json} from "./code-mode/guest.js";
+import {executeProgram} from "./code-mode/runtime.js";
 import type {BuiltinToolOptions} from "./builtins.js";
 import {tool} from "./tool.js";
 
@@ -28,6 +28,9 @@ function callSummary(calls: {name: string; status: CallStatus}[]): string {
   });
   return `Tool calls made before the failure, which are not undone: ${tools.join(", ")}.`;
 }
+
+/** The name of the tool a run adds for code mode when an agent has tools to call. */
+export const PROGRAM_TOOL = "run_program";
 
 /** QuickJS orchestrates the same permitted, policy-checked tools as direct calls. */
 export function programTool(
@@ -97,4 +100,4 @@ export function programTool(
   });
   return {...program, program: true as const};
 }
-export type {GuestLimits} from "./ptc/guest.js";
+export type {GuestLimits} from "./code-mode/guest.js";

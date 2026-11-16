@@ -6,10 +6,13 @@ import MiniSearch from "minisearch";
 import {z} from "zod";
 import {
   agent,
+  type AgentOptions,
   cancelOperationTool,
+  handoff,
+  type ModelResponse,
+  type RunOptions,
   searchToolsTool,
   tool,
-  type ModelResponse,
   ToolError,
   type ToolResult,
 } from "@restatedev/agentlib";
@@ -17,7 +20,7 @@ import {programTool} from "@restatedev/agentlib/program";
 import {runHandler} from "./replay-harness.mjs";
 import {testContext} from "./helpers.js";
 const done: ModelResponse = {type: "final", text: "done"};
-const context = () => testContext("ptc");
+const context = () => testContext("code-mode");
 
 void test("tool search loads permitted schemas, resets between runs, and journals ranking", async (t) => {
   const a = agent({
@@ -37,7 +40,7 @@ void test("tool search loads permitted schemas, resets between runs, and journal
       if (!req.messages.some((m) => m.role === "tool")) {
         assert.deepEqual(
           req.tools.map((t) => t.name),
-          ["find", "read_tool_result"],
+          ["find", "run_program", "read_tool_result"],
         );
         return {
           type: "tool_calls",
@@ -46,7 +49,7 @@ void test("tool search loads permitted schemas, resets between runs, and journal
       }
       assert.deepEqual(
         req.tools.map((t) => t.name),
-        ["find", "github_notifications", "read_tool_result"],
+        ["find", "github_notifications", "run_program", "read_tool_result"],
       );
       return done;
     },
@@ -62,10 +65,11 @@ void test("tool search loads permitted schemas, resets between runs, and journal
   assert.deepEqual(replay.output, first.output);
 });
 
-void test("deferred tools stay visible when search is not installed", async () => {
+void test("deferred tools stay visible when toolSearch is false", async () => {
   await r.execute(
     context(),
     agent({
+      toolSearch: false,
       tools: {
         lookup: tool({
           description: "find",
@@ -84,7 +88,131 @@ void test("deferred tools stay visible when search is not installed", async () =
   );
 });
 
-void test("PTC shares approval and output policies while keeping intermediate results out of model context", async () => {
+void test("a run searches deferred tools and turns on code mode by default", async () => {
+  let step = 0;
+  const a = agent({
+    tools: {
+      weather: tool({
+        description: "Current weather in a city",
+        deferred: true,
+        input: z.object({city: z.string()}),
+        *execute({city}) {
+          return `${city}: sunny`;
+        },
+      }),
+      cities: tool({
+        description: "List the cities to report on",
+        input: z.object({}),
+        *execute() {
+          return ["Ghent", "Berlin"];
+        },
+      }),
+    },
+    *model(req) {
+      const names = req.tools.map((t) => t.name);
+      if (++step === 1) {
+        // The deferred tool stays hidden until a search loads it.
+        assert.deepEqual(names, ["cities", "search_tools", "run_program", "read_tool_result"]);
+        return {
+          type: "tool_calls",
+          calls: [{id: "s", name: "search_tools", input: {query: "weather"}}],
+        };
+      }
+      if (step === 2) {
+        assert.deepEqual(names, [
+          "weather",
+          "cities",
+          "search_tools",
+          "run_program",
+          "read_tool_result",
+        ]);
+        const source =
+          "const cities = await tools.cities({}); return await Promise.all(cities.map((city) => tools.weather({city})));";
+        return {type: "tool_calls", calls: [{id: "p", name: "run_program", input: {source}}]};
+      }
+      const program = req.messages.find((m) => m.role === "tool" && m.callId === "p");
+      assert.deepEqual(program?.role === "tool" && program.result, {
+        status: "success",
+        output: ["Ghent: sunny", "Berlin: sunny"],
+      });
+      return done;
+    },
+  });
+  // Search journals its ranking, so this run needs a journal.
+  const handler = (ctx: Context) => r.execute(ctx, a.run("go"));
+  const first = await runHandler(handler);
+  assert.equal(first.output.status, "completed");
+  step = 0;
+  const replay = await runHandler(handler, {replay: first.journal});
+  assert.deepEqual(replay.output, first.output);
+});
+
+void test("an agent turns the default tools off or replaces them with its own", async () => {
+  const lookup = tool({
+    description: "find",
+    deferred: true,
+    input: z.object({}),
+    *execute() {
+      return 1;
+    },
+  });
+  const listed = async (
+    options: Omit<AgentOptions<undefined>, "model">,
+    tools?: RunOptions<undefined>["tools"],
+  ) => {
+    let names: string[] = [];
+    const a = agent({
+      ...options,
+      *model(req) {
+        names = req.tools.map((t) => t.name);
+        return done;
+      },
+    });
+    await r.execute(context(), a.run("go", {tools}));
+    return names;
+  };
+  assert.deepEqual(await listed({tools: {lookup}, toolSearch: false, codeMode: false}), [
+    "lookup",
+    "read_tool_result",
+  ]);
+  assert.deepEqual(
+    await listed({tools: {find: searchToolsTool(), program: programTool(), lookup}}),
+    ["find", "program", "read_tool_result"],
+  );
+  // Deferred tools passed to the run, such as MCP tools, are searched too.
+  assert.deepEqual(await listed({}, {lookup}), ["search_tools", "run_program", "read_tool_result"]);
+  // Without tools, or with only a handoff, a program has nothing to call.
+  assert.deepEqual(await listed({}), []);
+  const specialist = agent({
+    *model() {
+      return done;
+    },
+  });
+  assert.deepEqual(await listed({tools: {transfer: handoff(specialist)}}), [
+    "transfer",
+    "read_tool_result",
+  ]);
+});
+
+void test("a tool that takes a default tool's name fails the run", async () => {
+  const a = agent({
+    tools: {
+      run_program: tool({
+        description: "Run a TV program",
+        input: z.object({}),
+        *execute() {
+          return null;
+        },
+      }),
+    },
+    *model() {
+      return done;
+    },
+  });
+  await assert.rejects(r.execute(context(), a.run("go")), /Duplicate tool name: run_program/);
+});
+
+void test("Code mode shares approval and output policies while keeping intermediate results out of model context", async () => {
   let calls = 0,
     step = 0,
     approvals = 0;
@@ -212,7 +340,7 @@ void test("a program that fails before calling a tool says so", async () => {
   assert.match(message ?? "", /SyntaxError[^]*\n\nNo tool calls were made\.$/);
 });
 
-void test("PTC failure and child cleanup remain native through the full agent dispatcher", async () => {
+void test("Code mode failure and child cleanup remain native through the full agent dispatcher", async () => {
   let cleaned = false,
     step = 0;
   const a = agent({
@@ -258,7 +386,7 @@ void test("PTC failure and child cleanup remain native through the full agent di
   assert.equal(cleaned, true);
 });
 
-void test("PTC runs and nested durable effects replay without invoking the host again", async () => {
+void test("Code mode runs and nested durable effects replay without invoking the host again", async () => {
   let effects = 0;
   const a = agent({
     tools: {

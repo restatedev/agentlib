@@ -30,6 +30,8 @@ import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
 import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result-preview.js";
 import {listSkills, skillsSection, skillTools} from "./skills.js";
+import {SEARCH_TOOL, searchToolsTool} from "./builtins.js";
+import {PROGRAM_TOOL, programTool} from "./program.js";
 import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
@@ -61,6 +63,10 @@ export type RunConfiguration = ToolExecutionLimits &
     toolResults?: PreviewSettings;
     contextWindow?: number;
   }>;
+
+// The tools a run adds by default hold no state, so every run shares them.
+const defaultSearch = searchToolsTool();
+const defaultProgram = programTool();
 
 export function* runAgent<C, O>(
   input: string,
@@ -356,17 +362,41 @@ class AgentRun<C, O> {
     return readerOnly && !this.history.hasPreviews() ? [] : tools;
   }
 
-  /** Tools that belong to the run rather than an agent, so they survive a handoff. */
+  /** Tools that belong to the run rather than an agent, so they survive a handoff.
+   * Search and code mode depend on the active agent's tools, so the run
+   * decides on them again after a handoff. */
   private runTools(): Record<string, Tool<C>> {
     const tools = {...this.options?.tools};
-    for (const [name, skillTool] of Object.entries(this.skills?.tools ?? {})) {
+    const own = [...Object.values(this.active.tools ?? {}), ...Object.values(tools)];
+    const added = {...this.skills?.tools, ...this.defaultTools(own)};
+    for (const [name, runTool] of Object.entries(added)) {
       if (name in tools) throw new TypeError(`Duplicate tool name: ${name}`);
-      tools[name] = skillTool;
+      tools[name] = runTool;
     }
     const settings = this.config.toolResults;
     if (!settings) return tools;
     if (READ_TOOL in tools) throw new TypeError(`Duplicate tool name: ${READ_TOOL}`);
     tools[READ_TOOL] = readToolResultTool<C>(() => this.history.events(), settings);
+    return tools;
+  }
+
+  /** Search when a tool is deferred, and code mode when a program has a tool
+   * to call. An agent turns either off, or brings its own tool in its tools. */
+  private defaultTools(own: Tool<C>[]): Record<string, Tool<C>> {
+    const tools: Record<string, Tool<C>> = {};
+    if (
+      this.root.toolSearch !== false &&
+      !own.some((definition) => definition.search) &&
+      own.some((definition) => definition.deferred)
+    )
+      tools[SEARCH_TOOL] = defaultSearch;
+    // A program cannot hand off, and has no use for search on its own.
+    if (
+      this.root.codeMode !== false &&
+      !own.some((definition) => definition.program) &&
+      own.some((definition) => !definition.handoff && !definition.search)
+    )
+      tools[PROGRAM_TOOL] = defaultProgram;
     return tools;
   }
 
@@ -447,7 +477,8 @@ class AgentRun<C, O> {
     if (transfer) {
       this.active = transfer();
       yield* this.emit({type: "handoff", agent: this.active.name});
-      // Run-level tools belong to the run, not the agent, so they survive a handoff.
+      // Run-level tools belong to the run, not the agent, so they survive a handoff;
+      // search and code mode follow the new agent's tools.
       this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
   }
