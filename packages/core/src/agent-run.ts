@@ -23,6 +23,7 @@ import {RunHistory} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
 import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
+import {FORK_SOURCE, FORKED, type ForkSource} from "./fork.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
@@ -131,6 +132,8 @@ class AgentRun<C, O> {
   /** The last request without its messages: the prefix a provider cached.
    * Its instructions may come from a function. */
   private lastRequest: Pick<ModelRequest, "instructions" | "tools"> | undefined;
+  /** The messages of the latest model request, which a forked sub-agent starts from. */
+  private forkView: readonly Message[] = [];
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
   /** The root agent's skills, listed once at the start of the run. */
@@ -154,6 +157,10 @@ class AgentRun<C, O> {
       name: options?.name ?? root.name ?? "agent",
       // Tool contexts copy this context, so agentTool can link a sub-agent run to this one.
       [PARENT_USAGE]: usage,
+      [FORK_SOURCE]: {
+        view: () => this.forkView,
+        forked: (options as {[FORKED]?: boolean} | undefined)?.[FORKED] === true,
+      } satisfies ForkSource,
     } as RunContext<C>;
     this.tools = new RunTools(
       root,
@@ -451,6 +458,8 @@ class AgentRun<C, O> {
       if (decision)
         request.messages = stepMessages(request.messages, decision.replace as ReadonlyMessage[]);
     }
+    // A copy: the run's history grows in place after this request.
+    this.forkView = [...request.messages];
     const response = modelResponse(yield* this.usage.counted(this.active.model(request)));
     if ((response.text?.length ?? 0) > this.config.maxOutputChars)
       throw new AgentLimitError("Model output exceeds maxOutputChars");
