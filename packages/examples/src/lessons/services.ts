@@ -18,6 +18,7 @@ import {inventoryAudit, progressFeed} from "./16_progress_feed.js";
 import {docsGuide} from "./17_mcp_tools.js";
 import {agUiThread} from "./18_ag_ui.js";
 import {skilledWriter} from "./19_skills.js";
+import {incidentInvestigation} from "./20_forked_agents.js";
 
 export const services = [
   hello,
@@ -44,4 +45,5 @@ export const services = [
   docsGuide,
   agUiThread,
   skilledWriter,
+  incidentInvestigation,
 ];

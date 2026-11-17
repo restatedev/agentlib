@@ -10,6 +10,7 @@ import {
   type Model,
   type ModelRequest,
   type ModelResponse,
+  type ToolResult,
 } from "@restatedev/agentlib";
 
 const sources = [
@@ -185,8 +186,73 @@ const tutorialModel = journaledModel(async (request): Promise<ModelResponse> => 
   return {type: "final", text: turns.map((message) => message.content).join(" | ")};
 });
 
+/** Lesson 20's investigator and its forks, which share its instructions. Each
+ * fork checks that it starts from the logs the lead read. */
+function investigation(request: ModelRequest): ModelResponse {
+  const results = new Map<string, ToolResult>();
+  for (const message of request.messages)
+    if (message.role === "tool") results.set(message.callId, message.result);
+  const copy = request.messages.find(
+    (message) => message.role === "user" && message.content.startsWith("[Forked sub-agent]"),
+  );
+  if (copy?.role === "user") {
+    // The lead's request: the logs it read, but not the calls that started the copies.
+    assert.deepEqual(results.get("logs-payments"), {
+      status: "success",
+      output:
+        "11:58 deployed payments v2.3.0\n12:00 database connection pool exhausted (10 of 10 in use)",
+    });
+    assert.equal(results.has("pool"), false);
+    if (copy.content.includes("connection pool")) {
+      if (!results.has("deeper"))
+        return {
+          type: "tool_calls",
+          calls: [{id: "deeper", name: "investigate", input: {task: "Check the database"}}],
+        };
+      const nested = results.get("deeper");
+      assert.equal(nested?.status === "error" && nested.code, "fork_nested");
+      return {type: "final", text: "Supported: the pool ran out two minutes after the deploy."};
+    }
+    // A fork calls tools of its own; the lead never sees these calls.
+    if (!results.has("logs-inventory"))
+      return {
+        type: "tool_calls",
+        calls: [{id: "logs-inventory", name: "readLogs", input: {service: "inventory"}}],
+      };
+    return {type: "final", text: "Rejected: inventory answers within 80ms."};
+  }
+  if (!results.has("logs-payments"))
+    return {
+      type: "tool_calls",
+      calls: [
+        {id: "logs-checkout", name: "readLogs", input: {service: "checkout"}},
+        {id: "logs-payments", name: "readLogs", input: {service: "payments"}},
+      ],
+    };
+  if (!results.has("pool"))
+    return {
+      type: "tool_calls",
+      calls: [
+        {
+          id: "pool",
+          name: "investigate",
+          input: {task: "The deploy exhausted the connection pool"},
+        },
+        {id: "stock", name: "investigate", input: {task: "Inventory is slow"}},
+      ],
+    };
+  assert.equal(results.has("logs-inventory"), false);
+  const reply = (id: string) => {
+    const result = results.get(id);
+    assert.ok(result?.status === "success" && typeof result.output === "string");
+    return result.output;
+  };
+  return {type: "final", text: `Payments v2.3.0. ${reply("pool")} ${reply("stock")}`};
+}
+
 const fixtureModel: Model = function* (request) {
   const instructions = request.instructions ?? "";
+  if (instructions.startsWith("Investigate production incidents.")) return investigation(request);
   if (instructions.startsWith("Ticket approval lesson.")) {
     const result = request.messages.find((message) => message.role === "tool");
     if (!result) {
@@ -353,6 +419,7 @@ const [
   {peerAuthor, peerReviewer, peerReview},
   {progressFeed, inventoryAudit},
   {skilledWriter},
+  {incidentInvestigation},
 ] = await Promise.all([
   import("@restatedev/agentlib-examples/hello"),
   import("@restatedev/agentlib-examples/tools"),
@@ -368,6 +435,7 @@ const [
   import("@restatedev/agentlib-examples/peer-review-rpc"),
   import("@restatedev/agentlib-examples/progress-feed"),
   import("@restatedev/agentlib-examples/skills"),
+  import("@restatedev/agentlib-examples/forked-agents"),
 ]);
 
 let env: RestateTestEnvironment;
@@ -394,6 +462,7 @@ before(
         progressFeed,
         inventoryAudit,
         skilledWriter,
+        incidentInvestigation,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -684,4 +753,15 @@ void test(
 void test("19: the agent loads a skill from the folder and reads its file", async () => {
   const notes = await ingress().client(skilledWriter).write({request: "Release notes for 2.4.0"});
   assert.equal(notes, "## <version> — <date>");
+});
+
+void test("20: forks start from the lead's conversation and cannot start forks", async () => {
+  const report = await ingress()
+    .client(incidentInvestigation)
+    .investigate({incident: "Checkout returns 502 errors since 12:00."});
+  assert.equal(
+    report,
+    "Payments v2.3.0. Supported: the pool ran out two minutes after the deploy. " +
+      "Rejected: inventory answers within 80ms.",
+  );
 });

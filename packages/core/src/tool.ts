@@ -8,6 +8,7 @@ import {
 import {z} from "zod";
 import {guardrailDecision, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
 import {PARENT_USAGE} from "./run-usage.js";
+import {assertNotForked} from "./fork-source.js";
 import type {
   Agent,
   AsyncToolDefinition,
@@ -221,7 +222,8 @@ const delegatedTask = z.object({
 /** Delegate a task to another agent as one tool call. The sub-agent runs in this
  * invocation with a fresh conversation, its own limits, and the parent's context,
  * and its answer (text or structured output) becomes the tool result. Every step
- * is journaled, and interrupting the parent interrupts the sub-agent. */
+ * is journaled, and interrupting the parent interrupts the sub-agent. A fork
+ * cannot call it: a call from a fork returns a `fork_nested` error. */
 export function agentTool<C, O>(
   subAgent: Pick<Agent<C, O>, "run">,
   options: AgentToolOptions,
@@ -230,6 +232,8 @@ export function agentTool<C, O>(
     ...options,
     input: delegatedTask,
     *execute({task}, context) {
+      // A fork does its task itself; it cannot start a sub-agent that could fork again.
+      assertNotForked(context as ToolContext<unknown>);
       const runOptions = {
         context: context.context,
         // A run name unique to this call keeps approval signals of concurrent sub-agents apart.

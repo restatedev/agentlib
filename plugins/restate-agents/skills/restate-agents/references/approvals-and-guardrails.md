@@ -208,6 +208,10 @@ const support = agent({
   root's checks run first, and its `afterTool` last.
 - For a sub-agent called through `agentTool`, its `beforeRun` checks the input
   the parent model sends.
+- A fork started with `forkAgentTool` keeps the run's policies: the root's and the
+  active agent's checks apply to its calls, and its approval requests reach the
+  run's handlers. It skips the root's `beforeRun` and `afterRun`: its input and
+  answer are a tool call of the parent run and its result.
 
 If `beforeTool` or `afterTool` throws a terminal error, for example because a
 policy model is down, the call is blocked and the model gets an error with

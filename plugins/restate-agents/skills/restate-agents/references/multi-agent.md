@@ -5,7 +5,8 @@ Lessons:
 [07_racing_agents.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/07_racing_agents.ts),
 [08_research_report.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/08_research_report.ts),
 [12_routing.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/12_routing.ts),
-[15_peer_review_rpc.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/15_peer_review_rpc.ts)
+[15_peer_review_rpc.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/15_peer_review_rpc.ts),
+[20_forked_agents.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/20_forked_agents.ts)
 
 Multi-agent systems are ordinary Restate composition. The handler decides
 the control flow in plain code. Agents are steps that return typed output.
@@ -16,6 +17,7 @@ the control flow in plain code. Agents are steps that return typed output.
 | ---------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
 | Code decides the flow                                      | Run several agents in one handler               | a step in one invocation                                       |
 | The model decides to delegate a subtask                    | `agentTool(subAgent, {description})`            | a tool call; fresh history; result returned to the parent      |
+| The model splits work across copies of itself              | `forkAgentTool({description})`                       | a tool call; the history so far; result returned to the parent |
 | The model hands over the conversation                      | `handoff(specialist)`                           | the same run, continued by another agent with the full history |
 | Independent, retried, observable, or owned by another team | One Restate service per agent, `restate.client` | a separate durable invocation                                  |
 
@@ -139,3 +141,54 @@ const lead = agent({
 - **`handoff`**: after the current tool batch settles, the target agent's
   instructions and tools take over the same run and history. Run-level
   tools stay available.
+
+## Forks: copies that share the conversation
+
+`forkAgentTool` starts a copy of the running agent to do one task. A sub-agent from
+`agentTool` starts with only its task; a fork starts from the conversation up
+to the step that called the tool, so it builds on what the run already found.
+
+```ts
+const investigator = agent({
+  model,
+  instructions: "Investigate incidents. Check plausible causes in parallel with investigate.",
+  tools: {
+    readLogs,
+    investigate: forkAgentTool({
+      description: "Check one hypothesis with a copy of yourself that sees this conversation.",
+    }),
+  },
+});
+```
+
+- **What a fork copies**: the run as it stood at the step of the call: its
+  history, root and active agent, instructions, policies, limits, run-level
+  tools, skills, and the deferred tools search loaded. Its first request
+  repeats that step's request plus the task, so the provider serves the
+  shared part from its prompt cache. Results the run saw as previews, or that
+  compaction folded into a note, stay readable with `read_tool_result`.
+- **Fork or sub-agent**: fork when the subtask needs what the run already
+  learned and the same model and tools. Use `agentTool` for a specialist with
+  its own model, instructions, or tools, or for work that needs a clean context.
+- **Only the reply returns**: the fork's answer becomes the tool result. It
+  replies in plain text, also when the agent has an `output` schema: the schema
+  describes the run's final answer, and the fork's reply is a report for the
+  parent. Its own tool calls stay out of the parent's history, and it saves
+  nothing to the conversation. Its token usage counts toward the parent's `result.usage`, its
+  approval requests reach the run's handlers, and interrupting the parent
+  interrupts it. `background: true` and `needsApproval` work as on any tool.
+- **One level**: a fork cannot start forks or sub-agents. `forkAgentTool` and
+  `agentTool` called from a fork return an error with code `fork_nested`.
+- **Concurrency**: `maxConcurrent` (default 6) bounds how many forks one fork
+  tool runs at once in a run. Each fork tool counts only its own forks. A call
+  past the limit returns an error with code `fork_limit`; the model can fork
+  again once one finishes.
+- **Hooks**: a fork skips the root's `beforeRun` and `afterRun`, because its
+  input and answer are a tool call of the parent and its result. `beforeStep`,
+  `beforeTool`, and `afterTool` apply as in the parent. `beforeStep` and an
+  `instructions` function run again for the fork and see its own step numbers
+  and run name: keep them deterministic so the fork's request matches the cache.
+- **Limits to know**: a fork sees the parent's pending background calls but
+  cannot cancel them or receive their results. It runs inside the parent's
+  invocation, so its steps add to the parent's journal; for long, independent
+  work, use one service per agent instead.

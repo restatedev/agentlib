@@ -79,6 +79,10 @@
     "./skills": {
       "types": "./dist/lessons/19_skills.d.ts",
       "import": "./dist/lessons/19_skills.js"
+    },
+    "./forked-agents": {
+      "types": "./dist/lessons/20_forked_agents.d.ts",
+      "import": "./dist/lessons/20_forked_agents.js"
     }
   },
   "scripts": {

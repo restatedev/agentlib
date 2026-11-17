@@ -19,6 +19,16 @@ function checkInput(input: unknown, error: string): asserts input is string {
 
 /** Where the model's view stood when a request was built from it. */
 export type ViewMark = {events: number; from: number};
+/** Where a fork of the run starts: the events recorded so far, the compacted
+ * part of the model's view, and the input tokens the model reported for the
+ * request built from them, when it did. Later events and compactions do not move it. */
+export type BranchPoint = {
+  readonly events: number;
+  readonly view: View | undefined;
+  readonly measured?: Measured;
+};
+type View = {readonly from: number; readonly note: NoteMessage};
+type Measured = {readonly mark: ViewMark; readonly inputTokens: number};
 type ToolMessage = Extract<Message, {role: "tool"}>;
 export type NoteMessage = Extract<Message, {role: "user"}>;
 
@@ -61,11 +71,11 @@ export class RunHistory {
   /** Steering notes and their messages, so a truncation can restate what it drops. */
   private readonly steering = new WeakMap<Message, string>();
   /** Set by in-run compaction: the model sees `note` instead of the events before `from`. */
-  private view: {from: number; note: NoteMessage} | undefined;
+  private view: View | undefined;
   /** Index of this run's input message among the events. */
   private inputAt: number;
   /** The input tokens the model reported for a request built at `mark`. */
-  private measured: {mark: ViewMark; inputTokens: number} | undefined;
+  private measured: Measured | undefined;
   private previews: PreviewSettings | undefined;
   /** Each event as the model sees it, so a step does not preview every result again. */
   private readonly previewed = new WeakMap<Message, Message>();
@@ -101,6 +111,41 @@ export class RunHistory {
     run.previews = previews;
     run.append({role: "user", content: input});
     return run;
+  }
+
+  /** Where the history stands now, for a fork started from it later. */
+  branchPoint(): BranchPoint {
+    const {measured} = this;
+    // Only a report for the current view applies: the same events and compaction.
+    const current =
+      measured?.mark.events === this.messages.length &&
+      measured.mark.from === (this.view?.from ?? 0);
+    return {events: this.messages.length, view: this.view, ...(current ? {measured} : {})};
+  }
+
+  /** A history for a fork: this run's events up to `point`, seen as this run's
+   * model saw them, then the fork's `input`. The events are shared, not copied:
+   * neither run changes a recorded message. Every event stays readable, including
+   * the full results behind previews and events a compaction folded into the
+   * note. The fork saves nothing. */
+  branch(point: BranchPoint, input: string): RunHistory {
+    checkInput(input, "Fork input must be a nonempty string");
+    const events = this.messages.slice(0, point.events);
+    const fork = new RunHistory(input, events, 0, events.length);
+    fork.previews = this.previews;
+    fork.view = point.view;
+    // The fork's first request repeats the one the model measured, plus its input,
+    // so it sizes its view as this run would have, not from an estimate alone.
+    fork.measured = point.measured;
+    for (const event of events) {
+      if (this.provisional.has(event)) fork.provisional.add(event);
+      const steering = this.steering.get(event);
+      if (steering !== undefined) fork.steering.set(event, steering);
+      const shown = this.previewed.get(event);
+      if (shown) fork.previewed.set(event, shown);
+    }
+    fork.append({role: "user", content: input});
+    return fork;
   }
 
   /** This run's input message. */

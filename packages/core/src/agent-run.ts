@@ -18,11 +18,14 @@ import {
   RunInputError,
   RunInterrupted,
   ToolBudgetExceeded,
+  ToolError,
 } from "./errors.js";
-import {RunHistory} from "./run-history.js";
+import {RunHistory, type BranchPoint} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
 import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
+import {FORK_PREAMBLE, FORK_SOURCE, type ForkSource} from "./fork.js";
+import type {ForkLimits} from "./fork-source.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
@@ -36,6 +39,7 @@ import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validat
 import type {
   AgentOptions,
   AgentRuntime,
+  JsonValue,
   Message,
   ModelFinalResponse,
   ModelRequest,
@@ -52,6 +56,7 @@ import type {
   SteeringSource,
   SteeringUpdate,
   Tool,
+  ToolContext,
 } from "./types.js";
 
 export type RunConfiguration = ToolExecutionLimits &
@@ -89,6 +94,23 @@ export function* runAgent<C, O>(
     parent?.add(usage.snapshot());
   }
 }
+
+type Skills<C> = {section: string; tools: Record<string, Tool<C>>};
+
+/** The run state a fork copies, as it stood when a step's tool batch started. */
+type ForkPoint<C> = {
+  history: BranchPoint;
+  active: AgentRuntime<C>;
+  /** Deferred tools that search had loaded. */
+  loaded: readonly string[];
+};
+
+/** What a fork's run starts with instead of listing skills and running beforeRun. */
+type ForkOrigin<C> = {
+  active: AgentRuntime<C>;
+  skills: Skills<C> | undefined;
+  loaded: readonly string[];
+};
 
 /** The agent's instructions followed by its skills section. */
 function withSkills(instructions: string | undefined, section: string | undefined) {
@@ -134,7 +156,12 @@ class AgentRun<C, O> {
   private active: AgentRuntime<C>;
   private catalog: ToolCatalog<C>;
   /** The root agent's skills, listed once at the start of the run. */
-  private skills: {section: string; tools: Record<string, Tool<C>>} | undefined;
+  private skills: Skills<C> | undefined;
+  /** Each step's fork point, by step: a fork started by a call in that step
+   * copies the run as it stood then, even when the call starts later. */
+  private readonly forkPoints = new Map<number, ForkPoint<C>>();
+  /** Forks of this run that are running now, by the limits of the tool that started them. */
+  private readonly runningForks = new Map<ForkLimits, number>();
   private readonly context: RunContext<C>;
   private readonly tasks = new RunTasks();
   private readonly tools: RunTools<C>;
@@ -145,15 +172,24 @@ class AgentRun<C, O> {
     private readonly history: RunHistory,
     private readonly usage: RunUsageTracker,
     private readonly options?: RunOptions<C>,
+    /** Set when this run is a fork of another run. */
+    private readonly origin?: ForkOrigin<C>,
   ) {
-    this.active = root;
-    this.catalog = createToolCatalog(root.tools, this.runTools());
+    this.active = origin?.active ?? root;
+    this.skills = origin?.skills;
+    this.catalog = createToolCatalog(this.active.tools, this.runTools());
+    for (const name of origin?.loaded ?? []) this.catalog.search.loaded.add(name);
     this.context = {
       context: options?.context as C,
       invocationId: handlerRequest().id,
       name: options?.name ?? root.name ?? "agent",
-      // Tool contexts copy this context, so agentTool can link a sub-agent run to this one.
+      // Tool contexts copy this context, so agentTool can link a sub-agent run to
+      // this one, and the fork tool can copy this run.
       [PARENT_USAGE]: usage,
+      [FORK_SOURCE]: {
+        forked: origin !== undefined,
+        fork: (task, call, limits) => this.fork(task, call as ToolContext<C>, limits),
+      } satisfies ForkSource,
     } as RunContext<C>;
     this.tools = new RunTools(
       root,
@@ -184,8 +220,11 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Startup has no model work to supersede, so controls attach afterwards. */
+  /** Startup has no model work to supersede, so controls attach afterwards.
+   * A fork continues a run that already started: its input is a tool call's,
+   * and it keeps the skills the run listed. */
   private *start(): Operation<void> {
+    if (this.origin) return;
     if (this.root.beforeRun) {
       const result = yield* this.root.beforeRun(this.history.snapshot(), this.context);
       const decision = guardrailDecision("beforeRun", result, "message");
@@ -462,6 +501,12 @@ class AgentRun<C, O> {
    * acknowledged as pending and report later through collectBackground().
    * Steering does not wait for a running program: it continues in the background. */
   private *toolPhase(action: ModelToolCallsResponse): Operation<void> {
+    // Before the batch records its call: a fork must not inherit a call without its result.
+    this.forkPoints.set(this.step, {
+      history: this.history.branchPoint(),
+      active: this.active,
+      loaded: [...this.catalog.search.loaded],
+    });
     const foreground = this.tools.startBatch(action, this.step, this.active, this.catalog);
     while (Object.keys(foreground).length > 0) {
       const {tag} = yield* this.race({...foreground, ...this.tools.pendingTasks()});
@@ -540,7 +585,7 @@ class AgentRun<C, O> {
 
   /** Returns undefined when the model should retry against the output schema. */
   private parseOutput(action: ModelFinalResponse): {output: O} | undefined {
-    if (!this.root.output) {
+    if (!this.output) {
       if (action.validationError) throw new ModelProtocolError(action.validationError);
       return {output: action.text as O};
     }
@@ -550,7 +595,7 @@ class AgentRun<C, O> {
         candidate = JSON.parse(action.text);
       } catch {}
     }
-    const parsed = this.root.output.safeParse(candidate);
+    const parsed = this.output.safeParse(candidate);
     if (action.validationError || !parsed.success) return undefined;
     return {output: parsed.data};
   }
@@ -595,7 +640,8 @@ class AgentRun<C, O> {
     }
     // Compaction and the summary add usage; the policy and the caller see it.
     result = {...result, usage: this.usage.snapshot()};
-    if (this.root.afterRun) {
+    // A fork's answer is a tool result of the parent run, not the run's output.
+    if (this.root.afterRun && !this.origin) {
       const decision = yield* this.root.afterRun(createOutputCandidate(result), this.context);
       result = applyOutputDecision(result, decision);
     }
@@ -625,11 +671,59 @@ class AgentRun<C, O> {
     return yield* this.finish(yield* this.review(result));
   }
 
+  /** The schema the run's answer must match. A fork answers in plain text: its
+   * reply is a tool result for the parent, not the run's output. */
+  private get output(): AgentOptions<C, O>["output"] {
+    return this.origin ? undefined : this.root.output;
+  }
+
+  /** Runs a copy of this run on `task`, from the fork point of the call's step.
+   * The fork has its own steps, tool budget, and history, and saves nothing.
+   * Its usage counts toward this run; its approval requests reach this run's
+   * handlers, and its progress arrives as progress of the call. Interrupting
+   * the call interrupts the fork. */
+  private *fork(task: string, call: ToolContext<C>, limits: ForkLimits): Operation<RunResult<O>> {
+    const point = this.forkPoints.get(call.step);
+    if (!point) throw new ToolError("No model step to fork from", "fork_unavailable");
+    // Checked and counted with no yield in between, so concurrent calls see each other.
+    const running = this.runningForks.get(limits) ?? 0;
+    if (running >= limits.maxConcurrent)
+      throw new ToolError(
+        `At most ${limits.maxConcurrent} forks of ${call.toolName} can run at once. ` +
+          "Fork again after one finishes, or do this work yourself.",
+        "fork_limit",
+      );
+    this.runningForks.set(limits, running + 1);
+    const usage = new RunUsageTracker();
+    try {
+      const options = {
+        context: this.options?.context,
+        tools: this.options?.tools,
+        // A run name unique to this call keeps approval signals of concurrent forks apart.
+        name: `${call.name}/${call.callId}`,
+        // The fork has this run's policies, which publish approval requests themselves.
+        onApproval: this.options?.onApproval?.bind(this.options),
+        onProgress: (event: ProgressEvent) => call.progress(event as unknown as JsonValue),
+      } as RunOptions<C>;
+      const history = this.history.branch(point.history, FORK_PREAMBLE + task);
+      const origin = {active: point.active, skills: this.skills, loaded: point.loaded};
+      // Without the output schema, the fork's requests ask for a plain reply.
+      const config = {...this.config, outputSchema: undefined};
+      return yield* new AgentRun<C, O>(this.root, config, history, usage, options, origin).run();
+    } catch (error) {
+      recordFailedRun(error, usage.snapshot());
+      throw error;
+    } finally {
+      this.runningForks.set(limits, this.runningForks.get(limits)! - 1);
+      this.usage.add(usage.snapshot());
+    }
+  }
+
   /** Validates the accepted result, commits its output, and saves the turn. */
   private *finish(result: RunResult<O>, reasoning?: Reasoning): Operation<RunResult<O>> {
     if (result.status === "completed") {
-      if (this.root.output) {
-        const parsed = this.root.output.safeParse(result.output);
+      if (this.output) {
+        const parsed = this.output.safeParse(result.output);
         if (!parsed.success)
           throw new GuardrailError(
             `Run output does not match the output schema: ${parsed.error.message}`,
