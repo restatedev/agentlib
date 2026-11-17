@@ -114,9 +114,10 @@ every step ends the run as `stopped` with reason `max_steps`, with the usual
 summary.
 
 When a run fails with a `TerminalError` and that run is a sub-agent called
-through `agentTool`, the parent's model receives the error as the call's
-result. A sub-agent that stops early becomes a result with code
-`agent_stopped`, and an interrupted one a cancelled call.
+through `agentTool` or a fork started by `forkAgentTool`, the parent's model
+receives the error as the call's result. A sub-agent or fork that stops early
+becomes a result with code `agent_stopped`, and an interrupted one a cancelled
+call.
 
 ### Codes the SDK uses
 
@@ -129,14 +130,15 @@ result. A sub-agent that stops early becomes a result with code
 | `output_limit`        | A tool's output, or the model's text, is longer than `maxOutputChars`.                        |
 | `unknown_tool`        | The model called a tool the agent doesn't have.                                               |
 | `depth_limit`         | A nested call went deeper than `maxToolDepth`. Only that call fails.                          |
-| `agent_stopped`       | A sub-agent stopped before finishing; the message carries its summary.                        |
+| `agent_stopped`       | A sub-agent or fork stopped before finishing; the message carries its summary.                |
 | `denied`              | `beforeRun`, `beforeStep` or `afterRun` rejected the input, a step, or an answer.             |
 | `invalid_response`    | The model's response was empty, announced tool calls without any, or had an invalid batch.    |
 | `incomplete_response` | The model's response was cut off at `maxOutputTokens` or stopped by a content filter.         |
 
 Some built-in tools add their own codes, such as `program_error` for a failed
-code-mode program and `unknown_ref` for a tool result reference that doesn't
-exist.
+code-mode program, `unknown_ref` for a tool result reference that doesn't
+exist, and `fork_limit` and `fork_nested` from `forkAgentTool` (see
+`multi-agent.md`).
 
 ## Stop the run with `AgentTerminalError`
 
@@ -146,8 +148,8 @@ the run:
 - The other calls running in the same batch are interrupted.
 - Nothing is saved to the conversation, as for any run that throws.
 - Every agent run that encloses this one fails too: a parent that called this
-  agent through `agentTool`, and the agent whose tool called the handler that
-  threw it.
+  agent through `agentTool`, the run a fork was started from, and the agent
+  whose tool called the handler that threw it.
 - The handler fails with the error, unless it catches it.
 
 ```ts

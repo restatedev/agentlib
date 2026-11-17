@@ -13,6 +13,7 @@ import {
   asyncTool,
   ContextOverflowError,
   ConversationConflictError,
+  forkAgentTool,
   handoff,
   isAgentTerminal,
   isContextOverflow,
@@ -641,6 +642,32 @@ void test("an AgentTerminalError from a sub-agent's tool fails the parent run to
   });
   await assert.rejects(r.execute(ctx(), lead.run("go")), {name: "AgentTerminalError"});
   assert.equal(parentCalls, 1);
+});
+
+void test("an AgentTerminalError from a fork's tool fails the parent run too", async () => {
+  let parentCalls = 0;
+  let forkCalls = 0;
+  const a = agent({
+    tools: {
+      fork: forkAgentTool(),
+      stop: tool({
+        ...base,
+        *execute() {
+          return stop();
+        },
+      }),
+    },
+    *model(request) {
+      if (JSON.stringify(request.messages).includes("[Forked sub-agent]")) {
+        forkCalls++;
+        return batch("stop");
+      }
+      parentCalls++;
+      return {type: "tool_calls", calls: [{id: "f", name: "fork", input: {task: "Check it"}}]};
+    },
+  });
+  await assert.rejects(r.execute(ctx(), a.run("go")), {name: "AgentTerminalError"});
+  assert.deepEqual({parentCalls, forkCalls}, {parentCalls: 1, forkCalls: 1});
 });
 
 void test("an AgentTerminalError with code 413 is not a context overflow", async () => {
