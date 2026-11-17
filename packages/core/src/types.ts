@@ -409,7 +409,9 @@ export type SkillSummary = {
  * and a replay reads the journal instead of calling it again.
  */
 export type SkillSource = {
-  /** The skills to offer. Called once per run; the list holds for the run. */
+  /** The skills to offer. Called once per run; the list holds for the run. A
+   * skill with an invalid name, an empty description, or the name of an earlier
+   * skill is skipped with a warning. */
   list(options: {signal: AbortSignal}): Promise<SkillSummary[]>;
   /** A skill's instructions, such as the body of its SKILL.md. */
   load(skill: SkillSummary, options: {signal: AbortSignal}): Promise<string>;

@@ -24,7 +24,8 @@ const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_NAME = 64;
 
 /** Lists a source's skills once, journaled. A skill the model could not use is
- * skipped with a warning, so one bad skill leaves the others usable. */
+ * skipped with a warning, so one bad skill leaves the others usable. Of two
+ * skills with the same name, the first is kept, and `load` and `read` receive it. */
 export function* listSkills(source: SkillSource): Operation<SkillSummary[]> {
   const listed = yield* run(
     async ({signal}) =>
@@ -119,8 +120,17 @@ export type SkillDefinition = SkillSummary & {
   files?: Record<string, string>;
 };
 
-/** A source for skills defined in code. */
+/** A source for skills defined in code. An invalid name, an empty description
+ * or a duplicate name throws a `TypeError` here, where the skills are defined. */
 export function skills(definitions: SkillDefinition[]): SkillSource {
+  // The source finds a skill by name, so a duplicate would let the model load
+  // instructions other than the ones whose description it chose.
+  const names = new Set<string>();
+  for (const {name, description} of definitions) {
+    const problem = skillProblem(name, description, names);
+    if (problem) throw new TypeError(problem);
+    names.add(name);
+  }
   const byName = new Map(definitions.map((skill) => [skill.name, skill]));
   const find = (name: string) => {
     const skill = byName.get(name);

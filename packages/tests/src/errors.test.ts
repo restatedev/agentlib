@@ -15,6 +15,7 @@ import {
   ConversationConflictError,
   handoff,
   isAgentTerminal,
+  isContextOverflow,
   journaledModel,
   LazyStateConversation,
   RunFailedError,
@@ -630,6 +631,42 @@ void test("an AgentTerminalError from a sub-agent's tool fails the parent run to
   });
   const lead = agent({
     tools: {research: agentTool(researcher, {description: "Research"})},
+    *model() {
+      parentCalls++;
+      return {
+        type: "tool_calls",
+        calls: [{id: "r", name: "research", input: {task: "Look it up"}}],
+      };
+    },
+  });
+  await assert.rejects(r.execute(ctx(), lead.run("go")), {name: "AgentTerminalError"});
+  assert.equal(parentCalls, 1);
+});
+
+void test("an AgentTerminalError with code 413 is not a context overflow", async () => {
+  const tooLarge = () => new AgentTerminalError("The upload is too large", {errorCode: 413});
+  assert.ok(!isContextOverflow(tooLarge()));
+  // The same metadata after a journaled step or an RPC.
+  assert.ok(
+    !isContextOverflow(new TerminalError("m", {errorCode: 413, metadata: tooLarge().metadata})),
+  );
+  assert.ok(isContextOverflow(new ContextOverflowError("m")));
+
+  // An overflow would compact the conversation and call the model again.
+  let calls = 0;
+  const direct = agent({
+    *model() {
+      calls++;
+      throw tooLarge();
+    },
+  });
+  await assert.rejects(r.execute(ctx(), direct.run("go")), {name: "AgentTerminalError"});
+  assert.equal(calls, 1);
+
+  // In a sub-agent, an overflow would become the parent's tool_failed result.
+  let parentCalls = 0;
+  const lead = agent({
+    tools: {research: agentTool(direct, {description: "Research"})},
     *model() {
       parentCalls++;
       return {

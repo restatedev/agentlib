@@ -162,8 +162,10 @@ const writer = agent({
   over something that changes, such as a branch, pins it per run. The model
   never sees it.
 - Skills belong to the run: they survive a handoff. Names must be unique and
-  must not clash with run tools. The run skips a skill with an invalid name, an
-  empty description, or a name already listed, and logs a warning.
+  must not clash with run tools. `skills()` throws a `TypeError` for an invalid
+  name, an empty description, or a duplicate name. For any other source, the
+  run skips such a skill and logs a warning; of two skills with the same name,
+  it keeps the first, and `load` receives it.
 - Lesson 19 shows a source over a folder of `SKILL.md` files. Skill scripts need a shell, which the SDK does not provide.
 
 ## Limits

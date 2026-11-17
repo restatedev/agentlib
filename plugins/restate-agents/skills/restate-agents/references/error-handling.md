@@ -168,7 +168,9 @@ import {isAgentTerminal} from "@restatedev/agentlib";
 Use `isAgentTerminal(error)` rather than `instanceof` when the error may have
 crossed a journaled step or an RPC call, as described below. Pass
 `{errorCode}` to set the status the handler's caller receives; the default is
-500. `RunFailedError` is a deprecated alias of `AgentTerminalError`.
+500. Any code works, including 413: the run never treats an
+`AgentTerminalError` as a context overflow. `RunFailedError` is a deprecated
+alias of `AgentTerminalError`.
 
 ## Let Restate retry everything else
 
@@ -197,6 +199,9 @@ the invocation instead of failing it:
   than `maxOutputChars` (`TypeError`, `RangeError`).
 - A tool's display information or progress is longer than `maxOutputChars`
   (`RangeError`).
+- `skills()` receives a skill with an invalid name, an empty description, or
+  the name of another skill (`TypeError`). It throws when it's called, usually
+  when the service starts.
 
 Invalid input from the caller, such as an empty input or invalid stored
 history, fails the run with a `RunInputError`: no deploy can fix it.
@@ -311,8 +316,10 @@ Some failures have a fallback instead of an outcome:
 - If the summary of a stopped run fails, or is longer than `maxOutputChars`,
   the result gets a fixed text instead, or no summary when even that text is
   too long.
-- A skill with an invalid name, an empty description, or a name already listed
-  is skipped with a warning.
+- A skill source other than `skills()` that lists a skill with an invalid
+  name, an empty description, or a name already listed: the run skips that
+  skill and logs a warning. Of two skills with the same name, the run keeps the
+  first, and `load` receives it.
 
 An `AgentTerminalError` and cancellation skip these fallbacks and fail the run.
 

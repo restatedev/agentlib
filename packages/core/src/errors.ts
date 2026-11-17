@@ -83,8 +83,14 @@ export class ContextOverflowError extends TerminalError {
     this.name = "ContextOverflowError";
   }
 }
+/** Whether `error` reports a context overflow. An `AgentTerminalError` never
+ * does, whatever its code, because the run must not recover from it. */
 export function isContextOverflow(error: unknown): boolean {
-  return error instanceof TerminalError && error.code === CONTEXT_OVERFLOW_CODE;
+  return (
+    error instanceof TerminalError &&
+    error.code === CONTEXT_OVERFLOW_CODE &&
+    !isAgentTerminal(error)
+  );
 }
 
 const metadataOf = (error: unknown) =>

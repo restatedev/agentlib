@@ -143,21 +143,49 @@ void test("a source without files offers no reader, and an empty one adds nothin
   assert.deepEqual(empty.requests[0]!.tools, []);
 });
 
-void test("a skill the model could not use is skipped, and the others stay listed", async () => {
-  const listed = skills([
-    {name: "PDF Forms", description: "Fill in PDF forms.", instructions: "-"},
-    {name: "no-description", description: "", instructions: "-"},
-    forms,
-    {...forms, description: "A second skill with the same name."},
+void test("skills() rejects a skill the model could not use where it is defined", () => {
+  assert.throws(
+    () => skills([{name: "PDF Forms", description: "Fill in PDF forms.", instructions: "-"}]),
+    {name: "TypeError", message: /Invalid skill name "PDF Forms"/},
+  );
+  assert.throws(() => skills([{name: "forms", description: "", instructions: "-"}]), {
+    name: "TypeError",
+    message: /needs a description/,
+  });
+  // The source finds skills by name, so a duplicate could load other instructions
+  // than the ones whose description the model chose.
+  assert.throws(() => skills([forms, {...forms, instructions: "Other instructions."}]), {
+    name: "TypeError",
+    message: /Duplicate skill name: pdf-forms/,
+  });
+});
+
+void test("a source's skill the model could not use is skipped; of duplicates, the first loads", async () => {
+  const loaded: (string | undefined)[] = [];
+  const source: SkillSource = {
+    list: async () => [
+      {name: "PDF Forms", description: "Fill in PDF forms."},
+      {name: "no-description", description: ""},
+      {name: "pdf-forms", description: "Fill in PDF forms.", location: "first"},
+      {name: "pdf-forms", description: "A second skill with the same name.", location: "second"},
+    ],
+    async load(skill) {
+      loaded.push(skill.location);
+      return "List the fields first.";
+    },
+  };
+  const {requests, model} = scripted([
+    {type: "tool_calls", calls: [{id: "1", name: "load_skill", input: {name: "pdf-forms"}}]},
   ]);
-  const {requests, model} = scripted([]);
   const live = await runHandler((ctx: Context) =>
-    r.execute(ctx, agent({model, skills: listed}).run("Go")),
+    r.execute(ctx, agent({model, skills: source}).run("Go")),
   );
   assert.equal(live.output.status, "completed");
   const instructions = requests[0]!.instructions ?? "";
   assert.match(instructions, /- pdf-forms: Fill in PDF forms\./);
   assert.doesNotMatch(instructions, /PDF Forms|no-description|second skill/);
+  // load receives the summary the model saw.
+  assert.deepEqual(loaded, ["first"]);
 });
 
 void test("a skill tool name cannot be taken by a run tool", async () => {
