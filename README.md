@@ -150,7 +150,7 @@ repeat a completed model call.
 | Progress events              | `run(input, {onProgress})`, `context.progress`                             | [16](packages/examples/src/lessons/16_progress_feed.ts)     |
 | Handoffs                     | `handoff`                                                                  | —                                                           |
 | Sub-agents as tools          | `agentTool`                                                                | —                                                           |
-| Forks of the running agent   | `forkTool`                                                                 | [20](packages/examples/src/lessons/20_forked_agents.ts)     |
+| Forks of the running agent   | `forkAgentTool`                                                            | [20](packages/examples/src/lessons/20_forked_agents.ts)     |
 | Restate services as tools    | `serviceTool`, `handlerTool`, `restateTools` (`/discovery`)                | [10](packages/examples/src/lessons/10_service_tool.ts)      |
 | Background tools             | `background: true`, `sleepTool`, `cancelOperationTool`                     | —                                                           |
 | Tool search                  | `deferred: true`; `agent({toolSearch})`, on by default                     | —                                                           |

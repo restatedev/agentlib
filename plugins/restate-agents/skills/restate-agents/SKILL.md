@@ -6,7 +6,7 @@ description: >
   result, approval, and sub-agent step is journaled, so work survives crashes,
   deploys, and long waits. Use when the user wants to build, extend, or debug
   an AI agent on Restate; mentions @restatedev/agentlib, agent(), asyncTool,
-  handoff, agentTool, forkTool, serviceTool, mcpTools, needsApproval, steering, or
+  handoff, agentTool, forkAgentTool, serviceTool, mcpTools, needsApproval, steering, or
   interrupting an agent; or wants multi-agent workflows (routing, racing,
   orchestrator-workers, evaluator-optimizer, peer review) composed from Restate
   services. Also use when teaching someone the SDK step by step.
@@ -105,7 +105,7 @@ Restate journals. Move on only when the learner is ready.
 | Keep personal data from the model                              | `beforeRun`, `beforeSteering`, `afterTool`, `afterRun`: they set what is recorded         |
 | Check or reject steering messages                              | `beforeSteering`                                                                          |
 | Delegate a subtask, keep control                               | `agentTool(subAgent, {description})`                                                      |
-| Split work across copies that share the conversation           | `forkTool({description})`                                                                 |
+| Split work across copies that share the conversation           | `forkAgentTool({description})`                                                                 |
 | Hand over the conversation                                     | `handoff(specialist)`                                                                     |
 | Independent, separately retried agents                         | one Restate service per agent, called with `restate.client`                               |
 | A long run outgrows the model's context                        | `toolResults` (on by default), `compaction`, `contextWindow`                              |

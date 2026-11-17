@@ -1,13 +1,13 @@
 // 20: Fork the agent to check hypotheses in parallel.
 //
-// A sub-agent from agentTool starts with only its task. A fork from forkTool is
+// A sub-agent from agentTool starts with only its task. A fork from forkAgentTool is
 // a copy of the running agent instead: it starts from the conversation up to the
 // step that called the tool, so each copy builds on the logs the lead already
 // read. Its first request repeats that step's request, which a provider can serve
 // from its prompt cache. A fork has the run's tools, policies, and limits. Only
 // its reply reaches the lead, and it cannot start forks or sub-agents.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, forkTool, tool} from "@restatedev/agentlib";
+import {agent, forkAgentTool, tool} from "@restatedev/agentlib";
 import {z} from "zod";
 import {openai} from "@ai-sdk/openai";
 import {aiModel} from "@restatedev/agentlib/provider";
@@ -44,7 +44,7 @@ const investigator = agent({
         return logs[service];
       },
     }),
-    investigate: forkTool({
+    investigate: forkAgentTool({
       description:
         "Check one hypothesis with a copy of yourself that sees this conversation. " +
         "Call it several times in one step to check hypotheses in parallel.",

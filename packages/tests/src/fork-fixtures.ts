@@ -3,7 +3,7 @@
 import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
-  forkTool,
+  forkAgentTool,
   type Agent,
   type AgentOptions,
   type JsonValue,
@@ -61,7 +61,7 @@ type ForkingOptions<O> = Omit<AgentOptions<undefined, O>, "model"> & {
   script?: (request: ModelRequest) => ModelResponse | r.Operation<ModelResponse>;
   model?: AgentOptions<undefined, O>["model"];
   /** Extra options for the `delegate` tool. */
-  forkOptions?: Parameters<typeof forkTool>[0];
+  forkOptions?: Parameters<typeof forkAgentTool>[0];
 };
 
 /** An agent with a `delegate` tool that forks the running agent. */
@@ -71,7 +71,7 @@ export function forkingAgent<O = string>(options: ForkingOptions<O>): Agent<unde
     ...rest,
     tools: {
       ...tools,
-      delegate: forkTool({description: "Fork yourself to do a subtask", ...forkOptions}),
+      delegate: forkAgentTool({description: "Fork yourself to do a subtask", ...forkOptions}),
     },
     model:
       model ??

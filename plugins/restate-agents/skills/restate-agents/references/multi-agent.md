@@ -17,7 +17,7 @@ the control flow in plain code. Agents are steps that return typed output.
 | ---------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
 | Code decides the flow                                      | Run several agents in one handler               | a step in one invocation                                       |
 | The model decides to delegate a subtask                    | `agentTool(subAgent, {description})`            | a tool call; fresh history; result returned to the parent      |
-| The model splits work across copies of itself              | `forkTool({description})`                       | a tool call; the history so far; result returned to the parent |
+| The model splits work across copies of itself              | `forkAgentTool({description})`                       | a tool call; the history so far; result returned to the parent |
 | The model hands over the conversation                      | `handoff(specialist)`                           | the same run, continued by another agent with the full history |
 | Independent, retried, observable, or owned by another team | One Restate service per agent, `restate.client` | a separate durable invocation                                  |
 
@@ -144,7 +144,7 @@ const lead = agent({
 
 ## Forks: copies that share the conversation
 
-`forkTool` starts a copy of the running agent to do one task. A sub-agent from
+`forkAgentTool` starts a copy of the running agent to do one task. A sub-agent from
 `agentTool` starts with only its task; a fork starts from the conversation up
 to the step that called the tool, so it builds on what the run already found.
 
@@ -154,7 +154,7 @@ const investigator = agent({
   instructions: "Investigate incidents. Check plausible causes in parallel with investigate.",
   tools: {
     readLogs,
-    investigate: forkTool({
+    investigate: forkAgentTool({
       description: "Check one hypothesis with a copy of yourself that sees this conversation.",
     }),
   },
@@ -177,11 +177,12 @@ const investigator = agent({
   nothing to the conversation. Its token usage counts toward the parent's `result.usage`, its
   approval requests reach the run's handlers, and interrupting the parent
   interrupts it. `background: true` and `needsApproval` work as on any tool.
-- **One level**: a fork cannot start forks or sub-agents. `forkTool` and
+- **One level**: a fork cannot start forks or sub-agents. `forkAgentTool` and
   `agentTool` called from a fork return an error with code `fork_nested`.
-- **Concurrency**: `maxConcurrent` (default 6) bounds the forks of one run
-  that run at once. A call past it returns an error with code `fork_limit`;
-  the model can fork again once a fork finishes.
+- **Concurrency**: `maxConcurrent` (default 6) bounds how many forks one fork
+  tool runs at once in a run. Each fork tool counts only its own forks. A call
+  past the limit returns an error with code `fork_limit`; the model can fork
+  again once one finishes.
 - **Hooks**: a fork skips the root's `beforeRun` and `afterRun`, because its
   input and answer are a tool call of the parent and its result. `beforeStep`,
   `beforeTool`, and `afterTool` apply as in the parent. `beforeStep` and an

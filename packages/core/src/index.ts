@@ -68,7 +68,7 @@ export type {
   AgentRuntime,
 } from "./types.js";
 export {sleepTool, humanApprovalTool, cancelOperationTool, searchToolsTool} from "./builtins.js";
-export {forkTool} from "./fork.js";
+export {forkAgentTool} from "./fork.js";
 export type {BuiltinToolOptions} from "./builtins.js";
 
 export {

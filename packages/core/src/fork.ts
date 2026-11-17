@@ -10,7 +10,7 @@
 // journal; a replay rebuilds it by running the same steps again.
 import {z} from "zod";
 import {ToolCancelled, ToolError} from "./errors.js";
-import {assertNotForked, forkSource} from "./fork-source.js";
+import {assertNotForked, forkSource, type ForkLimits} from "./fork-source.js";
 import {tool} from "./tool.js";
 import {positiveInteger} from "./limits.js";
 import {jsonSchema} from "./validation.js";
@@ -46,20 +46,23 @@ const DEFAULT_MAX_CONCURRENT = 6;
  * in plain text even when the agent has an output schema: its input and answer
  * belong to the parent run, as a tool call and its result.
  *
- * `maxConcurrent` (default 6) bounds how many forks of one run run at once,
- * counting every fork tool of the run; a call past it returns a `fork_limit`
- * error, and the model can fork again once a fork finishes. */
-export function forkTool<C = unknown>(
+ * `maxConcurrent` (default 6) bounds how many forks this tool runs at once in
+ * one run. Each fork tool counts only its own forks. A call past the limit
+ * returns a `fork_limit` error, and the model can fork again once one finishes. */
+export function forkAgentTool<C = unknown>(
   options: {
     background?: boolean;
     needsApproval?: boolean;
     maxConcurrent?: number;
   } & BuiltinToolOptions<{task: string}> = {},
 ): Tool<C> {
-  const maxConcurrent = positiveInteger(
-    options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
-    "maxConcurrent",
-  );
+  // One object for every call of this tool: runs count running forks per object.
+  const limits: ForkLimits = {
+    maxConcurrent: positiveInteger(
+      options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+      "maxConcurrent",
+    ),
+  };
   return tool<typeof forkedTask, C>({
     description:
       options.description ??
@@ -74,7 +77,7 @@ export function forkTool<C = unknown>(
       const source = forkSource(call);
       if (!source) throw new ToolError("This tool can only fork an agent run", "fork_unavailable");
       assertNotForked(call);
-      const result = yield* source.fork(task, call, {maxConcurrent});
+      const result = yield* source.fork(task, call, limits);
       if (result.status === "completed") return jsonSchema.parse(result.output);
       if (result.status === "interrupted") throw new ToolCancelled(result.reason);
       throw new ToolError(

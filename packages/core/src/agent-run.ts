@@ -25,6 +25,7 @@ import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
 import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
 import {FORK_PREAMBLE, FORK_SOURCE, type ForkSource} from "./fork.js";
+import type {ForkLimits} from "./fork-source.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
 import type {ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
@@ -159,8 +160,8 @@ class AgentRun<C, O> {
   /** Each step's fork point, by step: a fork started by a call in that step
    * copies the run as it stood then, even when the call starts later. */
   private readonly forkPoints = new Map<number, ForkPoint<C>>();
-  /** Forks of this run that are running now. */
-  private runningForks = 0;
+  /** Forks of this run that are running now, by the limits of the tool that started them. */
+  private readonly runningForks = new Map<ForkLimits, number>();
   private readonly context: RunContext<C>;
   private readonly tasks = new RunTasks();
   private readonly tools: RunTools<C>;
@@ -681,21 +682,18 @@ class AgentRun<C, O> {
    * Its usage counts toward this run; its approval requests reach this run's
    * handlers, and its progress arrives as progress of the call. Interrupting
    * the call interrupts the fork. */
-  private *fork(
-    task: string,
-    call: ToolContext<C>,
-    limits: {maxConcurrent: number},
-  ): Operation<RunResult<O>> {
+  private *fork(task: string, call: ToolContext<C>, limits: ForkLimits): Operation<RunResult<O>> {
     const point = this.forkPoints.get(call.step);
     if (!point) throw new ToolError("No model step to fork from", "fork_unavailable");
     // Checked and counted with no yield in between, so concurrent calls see each other.
-    if (this.runningForks >= limits.maxConcurrent)
+    const running = this.runningForks.get(limits) ?? 0;
+    if (running >= limits.maxConcurrent)
       throw new ToolError(
-        `At most ${limits.maxConcurrent} forks can run at once. ` +
+        `At most ${limits.maxConcurrent} forks of ${call.toolName} can run at once. ` +
           "Fork again after one finishes, or do this work yourself.",
         "fork_limit",
       );
-    this.runningForks++;
+    this.runningForks.set(limits, running + 1);
     const usage = new RunUsageTracker();
     try {
       const options = {
@@ -716,7 +714,7 @@ class AgentRun<C, O> {
       recordFailedRun(error, usage.snapshot());
       throw error;
     } finally {
-      this.runningForks--;
+      this.runningForks.set(limits, this.runningForks.get(limits)! - 1);
       this.usage.add(usage.snapshot());
     }
   }

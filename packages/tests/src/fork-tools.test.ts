@@ -13,7 +13,7 @@ import {
   agent,
   agentTool,
   cancelOperationTool,
-  forkTool,
+  forkAgentTool,
   handoff,
   tool,
   type Message,
@@ -687,7 +687,7 @@ void test("a fork reads a result the parent's compaction folded into its note", 
   assert.equal((read.output as {text: string}).text, largePage.slice(20000, 20100));
 });
 
-void test("forkTool runs at most maxConcurrent forks of a run at once", async () => {
+void test("forkAgentTool runs at most maxConcurrent forks of a run at once", async () => {
   let release!: Channel<void>;
   const a = forkingAgent({
     tools: {
@@ -740,8 +740,63 @@ void test("forkTool runs at most maxConcurrent forks of a run at once", async ()
   assert.deepEqual(resultOf(result.messages, "d4"), {status: "success", output: "done D"});
 });
 
+void test("each fork tool holds its own maxConcurrent", async () => {
+  let release!: Channel<void>;
+  const a = forkingAgent({
+    tools: {
+      hold: tool({
+        description: "Wait for the signal",
+        input: z.object({}),
+        *execute() {
+          yield* release.receive;
+          return "released";
+        },
+      }),
+      small: forkAgentTool({description: "Fork, one at a time", maxConcurrent: 1}),
+      big: forkAgentTool({description: "Fork, up to three at a time", maxConcurrent: 3}),
+    },
+    script(request) {
+      if (isFork(request)) {
+        const task = forkTask(request)!;
+        if (request.step === 1) return call(`${task}-hold`, "hold");
+        return final(`done ${task}`);
+      }
+      if (request.step === 1)
+        return calls(
+          // The big tool's forks start first: a count shared across tools would
+          // then refuse the small tool's first fork.
+          {id: "b1", name: "big", input: {task: "b1"}},
+          {id: "b2", name: "big", input: {task: "b2"}},
+          {id: "s1", name: "small", input: {task: "s1"}},
+          {id: "s2", name: "small", input: {task: "s2"}},
+        );
+      return final("Done");
+    },
+  });
+  const result = await execute(
+    gen(function* () {
+      release = channel<void>();
+      return yield* a.run("Go", {
+        *onProgress(event) {
+          // Three forks hold their slots until the small tool's second call is refused.
+          if (event.type === "tool-end" && event.callId === "s2")
+            for (let i = 0; i < 3; i++) yield* release.send();
+        },
+      });
+    }),
+  );
+  assert.equal(result.status, "completed");
+  assert.deepEqual(resultOf(result.messages, "s1"), {status: "success", output: "done s1"});
+  const refused = resultOf(result.messages, "s2");
+  assert.equal(refused?.status === "error" && refused.code, "fork_limit");
+  assert.match(refused?.status === "error" ? refused.message : "", /At most 1 forks of small/);
+  // Forks of one tool do not count against another tool's limit.
+  assert.deepEqual(resultOf(result.messages, "b1"), {status: "success", output: "done b1"});
+  assert.deepEqual(resultOf(result.messages, "b2"), {status: "success", output: "done b2"});
+});
+
 void test("maxConcurrent must be a positive integer", () => {
-  assert.throws(() => forkTool({maxConcurrent: 0}), /maxConcurrent/);
+  assert.throws(() => forkAgentTool({maxConcurrent: 0}), /maxConcurrent/);
 });
 
 void test("a run's usage is the sum of every model call, including forks that fail", async () => {
