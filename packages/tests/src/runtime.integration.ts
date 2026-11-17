@@ -8,15 +8,18 @@ import {z} from "zod";
 import {
   agent,
   agentTool,
+  AgentTerminalError,
   asyncTool,
   cancelOperationTool,
   handoff,
   handlerTool,
+  isAgentTerminal,
   journaledModel,
   serviceTool,
   LazyStateConversation,
   sleepTool,
   tool,
+  ToolError,
   usageOf,
   type JsonValue,
   type ModelResponse,
@@ -84,9 +87,73 @@ const gateway = r.service({
     },
   },
 });
+type RemoteFailure = "agent-terminal" | "tool-code";
+/** A remote handler that a tool calls, failing with one of the agent errors. */
+const failingChild = r.service({
+  name: "SdkFailingChild",
+  handlers: {
+    *fail(kind: RemoteFailure): r.Operation<string> {
+      yield* r.sleep(5);
+      if (kind === "agent-terminal") throw new AgentTerminalError("stop the agent");
+      throw new ToolError("ticket not found", "not_found");
+    },
+  },
+});
+/** Calls the failing child without catching, like an intermediate service. */
+const relay = r.service({
+  name: "SdkRelay",
+  handlers: {
+    *relay(kind: RemoteFailure): r.Operation<string> {
+      return yield* r.client(failingChild).fail(kind);
+    },
+  },
+});
 const runner = r.service({
   name: "SdkHarness",
   handlers: {
+    /** An agent whose tool calls the failing child, directly or through the relay. */
+    *remoteAgentFailure({kind, via}: {kind: RemoteFailure; via: "direct" | "relay"}) {
+      const a = agent({
+        tools: {
+          remote: handlerTool({
+            ...base,
+            call: () =>
+              via === "direct" ? r.client(failingChild).fail(kind) : r.client(relay).relay(kind),
+          }),
+        },
+        *model(request): r.Operation<ModelResponse> {
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "remote", name: "remote", input: {}}]};
+          return final;
+        },
+      });
+      try {
+        const result = yield* a.run("go");
+        const call = result.messages.find((message) => message.role === "tool");
+        return {failed: false, result: call?.role === "tool" ? call.result : null};
+      } catch (error) {
+        const message = (error as Error).message;
+        return {failed: true, agentTerminal: isAgentTerminal(error), message};
+      }
+    },
+    *remoteFailures() {
+      const seen = [];
+      for (const kind of ["agent-terminal", "tool-code"] as const) {
+        for (const via of ["direct", "relay"] as const) {
+          try {
+            yield* via === "direct"
+              ? r.client(failingChild).fail(kind)
+              : r.client(relay).relay(kind);
+            seen.push({kind, via, failed: false});
+          } catch (error) {
+            if (!(error instanceof TerminalError)) throw error;
+            const {code, message, metadata} = error;
+            seen.push({kind, via, failed: true, code, message, metadata: metadata ?? null});
+          }
+        }
+      }
+      return seen;
+    },
     *concurrentRuns() {
       const a = agent<{owner: string}>({
         maxToolCalls: 1,
@@ -276,7 +343,12 @@ const runner = r.service({
       });
       try {
         const result = yield* a.run("go");
-        return {executed, stopped: result.status === "stopped" ? result.reason : undefined};
+        const outer = result.messages.find((m) => m.role === "tool" && m.callId === "outer");
+        return {
+          executed,
+          stopped: result.status === "stopped" ? result.reason : undefined,
+          outer: outer?.role === "tool" ? outer.result : undefined,
+        };
       } catch (error) {
         return {executed, error: String(error)};
       }
@@ -834,6 +906,8 @@ before(
         refundService,
         counterService,
         serviceToolHarness,
+        failingChild,
+        relay,
       ],
       container: () => new RestateContainer().alwaysReplay().disableRetries(),
     });
@@ -843,6 +917,41 @@ before(
 after(async () => {
   await env?.stop();
 });
+void test("terminal error metadata survives an RPC, directly and through a relay", async () => {
+  const seen = await connect({url: env.baseUrl()}).client(runner).remoteFailures();
+  const stop = {
+    code: 500,
+    message: "stop the agent",
+    metadata: {"agentlib.kind": "agent-terminal"},
+  };
+  const missing = {
+    code: 500,
+    message: "ticket not found",
+    metadata: {"agentlib.code": "not_found"},
+  };
+  assert.deepEqual(seen, [
+    {kind: "agent-terminal", via: "direct", failed: true, ...stop},
+    {kind: "agent-terminal", via: "relay", failed: true, ...stop},
+    {kind: "tool-code", via: "direct", failed: true, ...missing},
+    {kind: "tool-code", via: "relay", failed: true, ...missing},
+  ]);
+});
+for (const via of ["direct", "relay"] as const) {
+  void test(`a remote handler's agent errors keep their meaning (${via})`, async () => {
+    const client = connect({url: env.baseUrl()}).client(runner);
+    // An AgentTerminalError fails the agent run that called the handler.
+    assert.deepEqual(await client.remoteAgentFailure({kind: "agent-terminal", via}), {
+      failed: true,
+      agentTerminal: true,
+      message: "stop the agent",
+    });
+    // A ToolError reaches the model with its code.
+    assert.deepEqual(await client.remoteAgentFailure({kind: "tool-code", via}), {
+      failed: false,
+      result: {status: "error", code: "not_found", message: "ticket not found"},
+    });
+  });
+}
 void test("native always-replay: a failed sub-agent's usage counts once", async () => {
   const result = await connect({url: env.baseUrl()}).client(runner).subAgentUsage();
   assert.equal(result.status, "completed");
@@ -908,9 +1017,16 @@ for (const limit of ["calls", "depth"] as const) {
   void test(`native always-replay: shared tool ${limit} limit`, {timeout: 20000}, async () => {
     const result = await connect({url: env.baseUrl()}).client(runner).toolLimits(limit);
     assert.deepEqual(result.executed, ["outer", "nested"]);
-    // A spent budget stops the run; nesting past the depth limit fails it.
-    if (limit === "calls") assert.equal(result.stopped, "max_tool_calls");
-    else assert.match(result.error ?? "", /Maximum nested tool depth exceeded/);
+    // A spent budget stops the run. Nesting past the depth limit fails only the
+    // nested call, and its error reaches the model through the calls around it;
+    // the run continues until its budget is spent too.
+    assert.equal(result.stopped, "max_tool_calls");
+    if (limit === "depth")
+      assert.deepEqual(result.outer, {
+        status: "error",
+        code: "depth_limit",
+        message: "Maximum nested tool depth exceeded",
+      });
     assert.equal(effects.get(`limit-${limit}`) ?? 0, 0);
   });
 }

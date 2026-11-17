@@ -5,6 +5,8 @@ import type {ConversationStore} from "@restatedev/agentlib";
 export function testContext(id = "test"): Context {
   return {
     request: () => ({id, attemptCompletedSignal: new AbortController().signal}),
+    // What the SDK's logger() writes to, as on a real context.
+    console,
   } as unknown as Context;
 }
 

@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {ModelProtocolError, RunInputError, ToolError} from "./errors.js";
+import {ModelResponseError, RunInputError, ToolError} from "./errors.js";
 import type {JsonValue, Message, ModelResponse, ModelUsage, ReadonlyMessage} from "./types.js";
 
 export const jsonSchema = z.json();
@@ -76,10 +76,16 @@ const responseSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+/** Validates a model's response. An invalid one is a problem the model can fix by
+ * trying again, so the run gives it a note and another step. */
 export function modelResponse(value: unknown): ModelResponse {
   const result = responseSchema.safeParse(value);
   if (!result.success)
-    throw new ModelProtocolError("Model returned an invalid response or empty tool batch");
+    throw new ModelResponseError(
+      "The response was empty or invalid. Respond with text, or with at least one tool call.",
+      "invalid_response",
+      reportedUsage(value),
+    );
   return result.data;
 }
 
@@ -109,45 +115,53 @@ export function history(value: readonly Message[]): Message[] {
 
 /** Rejects a history whose tool results do not answer the calls before them, in
  * order. Structural only: callers pass messages that were already validated. */
-export function checkProtocol(messages: readonly Message[]): void {
+export function checkProtocol(
+  messages: readonly Message[],
+  fail: (message: string) => Error = (message) => new RunInputError(message),
+): void {
   const ids = new Set<string>();
   const pending = new Map<string, string>();
   for (const message of messages) {
     if (message.role === "tool") {
       if (pending.get(message.callId) !== message.name) {
-        throw new RunInputError("History contains an unmatched or duplicate tool result");
+        throw fail("History contains an unmatched or duplicate tool result");
       }
       pending.delete(message.callId);
       continue;
     }
-    if (pending.size > 0)
-      throw new RunInputError("History must answer every tool call before the next message");
+    if (pending.size > 0) throw fail("History must answer every tool call before the next message");
     if (message.role === "assistant") {
       for (const call of message.calls ?? []) {
-        if (ids.has(call.id)) throw new RunInputError("History contains duplicate tool-call IDs");
+        if (ids.has(call.id)) throw fail("History contains duplicate tool-call IDs");
         ids.add(call.id);
         pending.set(call.id, call.name);
       }
     }
   }
-  if (pending.size > 0) throw new RunInputError("History contains unfinished tool calls");
+  if (pending.size > 0) throw fail("History contains unfinished tool calls");
 }
 
 /** The messages a `beforeStep` hook returned for one request. Messages it kept from
- * the request were validated when they were recorded; only new ones are parsed. */
+ * the request were validated when they were recorded; only new ones are parsed.
+ * Invalid messages are the hook's mistake, so they fail with a plain error, which
+ * Restate retries until a fix is deployed. */
 export function stepMessages(
   sent: readonly Message[],
   returned: readonly ReadonlyMessage[],
 ): Message[] {
-  if (!Array.isArray(returned)) throw new RunInputError("beforeStep must return a messages array");
+  if (!Array.isArray(returned)) throw new TypeError("beforeStep must return a messages array");
   const recorded = new Set<unknown>(sent);
   const messages = returned.map((message) => {
     if (recorded.has(message)) return message as Message;
     const parsed = messageSchema.safeParse(message);
     if (!parsed.success)
-      throw new RunInputError(`beforeStep returned an invalid message: ${parsed.error.message}`);
+      throw new TypeError(`beforeStep returned an invalid message: ${parsed.error.message}`);
     return parsed.data;
   });
-  checkProtocol(messages);
+  checkProtocol(
+    messages,
+    (problem) =>
+      new TypeError(`beforeStep returned messages that break the tool-call protocol: ${problem}`),
+  );
   return messages;
 }

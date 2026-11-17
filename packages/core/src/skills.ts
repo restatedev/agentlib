@@ -10,8 +10,7 @@
 // The source is the application's: files, a repository, state, or code. The
 // run lists it once, so the instructions, and with them the cached prefix,
 // stay the same all run. Every call is journaled.
-import {TerminalError} from "@restatedev/restate-sdk";
-import {run, type Operation} from "@restatedev/restate-sdk-gen";
+import {logger, run, type Operation} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {ToolError} from "./errors.js";
 import {asyncTool} from "./tool.js";
@@ -24,7 +23,9 @@ const DEFAULT_RETRY = {maxAttempts: 3};
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_NAME = 64;
 
-/** Lists a source's skills once, journaled, and checks the list. */
+/** Lists a source's skills once, journaled. A skill the model could not use is
+ * skipped with a warning, so one bad skill leaves the others usable. Of two usable
+ * skills with the same name, the first is kept, and `load` and `read` receive it. */
 export function* listSkills(source: SkillSource): Operation<SkillSummary[]> {
   const listed = yield* run(
     async ({signal}) =>
@@ -34,18 +35,27 @@ export function* listSkills(source: SkillSource): Operation<SkillSummary[]> {
     {name: "skills:list", retry: source.retry ?? DEFAULT_RETRY},
   );
   const names = new Set<string>();
-  for (const {name, description} of listed) {
-    if (!NAME.test(name) || name.length > MAX_NAME)
-      throw new TerminalError(
-        `Invalid skill name "${name}": use up to ${MAX_NAME} lowercase letters, digits and hyphens`,
-      );
-    // The model picks skills by description, so each needs one. Its length is
-    // the source's choice: published skills exceed the format's 1024 characters.
-    if (!description) throw new TerminalError(`Skill "${name}" needs a description`);
-    if (names.has(name)) throw new TerminalError(`Duplicate skill name: ${name}`);
+  return listed.filter(({name, description}) => {
+    const problem = skillProblem(name, description, names);
+    if (problem) {
+      logger().warn(`Skipped skill: ${problem}`);
+      return false;
+    }
+    // Only a listed skill takes its name: a skipped one must not hide a later one.
     names.add(name);
-  }
-  return listed;
+    return true;
+  });
+}
+
+/** Why the model could not use a skill, or undefined when it can. */
+function skillProblem(name: string, description: string, names: Set<string>): string | undefined {
+  if (!NAME.test(name) || name.length > MAX_NAME)
+    return `Invalid skill name "${name}": use up to ${MAX_NAME} lowercase letters, digits and hyphens`;
+  // The model picks skills by description, so each needs one. Its length is
+  // the source's choice: published skills exceed the format's 1024 characters.
+  if (!description) return `Skill "${name}" needs a description`;
+  if (names.has(name)) return `Duplicate skill name: ${name}`;
+  return undefined;
 }
 
 /** The section the run appends to the agent's instructions. */
@@ -114,8 +124,17 @@ export type SkillDefinition = SkillSummary & {
   files?: Record<string, string>;
 };
 
-/** A source for skills defined in code. */
+/** A source for skills defined in code. An invalid name, an empty description
+ * or a duplicate name throws a `TypeError` here, where the skills are defined. */
 export function skills(definitions: SkillDefinition[]): SkillSource {
+  // The source finds a skill by name, so a duplicate would let the model load
+  // instructions other than the ones whose description it chose.
+  const names = new Set<string>();
+  for (const {name, description} of definitions) {
+    const problem = skillProblem(name, description, names);
+    if (problem) throw new TypeError(problem);
+    names.add(name);
+  }
   const byName = new Map(definitions.map((skill) => [skill.name, skill]));
   const find = (name: string) => {
     const skill = byName.get(name);

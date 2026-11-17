@@ -5,9 +5,9 @@ import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
   agent,
+  AgentTerminalError,
   asyncTool,
   cancelOperationTool,
-  GuardrailError,
   humanApprovalTool,
   RunFailedError,
   sleepTool,
@@ -496,22 +496,29 @@ void test("run and tool denials precede effects, and approval denial is recovera
     result.messages.some((m) => m.role === "tool" && m.result.status === "denied"),
     true,
   );
-  await assert.rejects(
-    r.execute(
-      ctx(),
-      agent({
-        *model() {
-          touched = true;
-          return done;
-        },
-        *beforeRun() {
-          return false;
-        },
-      }).run("go"),
-    ),
-    GuardrailError,
+  // A rejected input reaches the model as a note after it, so the model can answer.
+  const seen: string[] = [];
+  const answered = await r.execute(
+    ctx(),
+    agent({
+      *model(request) {
+        seen.push(...request.messages.map((m) => (m.role === "tool" ? m.name : m.content)));
+        return done;
+      },
+      *beforeRun() {
+        return false;
+      },
+    }).run("go"),
   );
-  assert.equal(touched, false);
+  assert.deepEqual(seen, [
+    "go",
+    '{"source":"agent-runtime","type":"error","origin":"beforeRun","code":"denied","message":"Rejected by guardrail"}',
+  ]);
+  // The note is not saved.
+  assert.deepEqual(answered.messages, [
+    {role: "user", content: "go"},
+    {role: "assistant", content: "done"},
+  ]);
 });
 
 void test("async business errors and background results survive full journal replay", async () => {
@@ -852,26 +859,29 @@ void test("a nested call that spends the tool-call budget stops the run instead 
   assert.equal(parent?.role === "tool" && parent.result.status, "cancelled");
 });
 
-void test("a tool fails the whole run with RunFailedError", async () => {
-  const a = agent({
-    tools: {
-      stale: tool({
-        ...base,
-        *execute() {
-          throw new RunFailedError("the turn is no longer active");
-        },
-      }),
-    },
-    *model() {
-      return batch(call("stale"));
-    },
+for (const Stop of [AgentTerminalError, RunFailedError]) {
+  void test(`a tool fails the whole run with ${Stop === RunFailedError ? "the RunFailedError alias" : "AgentTerminalError"}`, async () => {
+    const a = agent({
+      tools: {
+        stale: tool({
+          ...base,
+          *execute() {
+            throw new Stop("the turn is no longer active");
+          },
+        }),
+      },
+      *model() {
+        return batch(call("stale"));
+      },
+    });
+    await assert.rejects(r.execute(ctx(), a.run("go")), {
+      name: "AgentTerminalError",
+      message: "the turn is no longer active",
+    });
   });
-  await assert.rejects(r.execute(ctx(), a.run("go")), {
-    message: "the turn is no longer active",
-  });
-});
+}
 
-void test("a failing policy blocks the call and is reported as a guardrail failure", async () => {
+void test("a failing policy blocks the call, and the model gets the failure", async () => {
   let step = 0;
   let executed = false;
   const a = agent({

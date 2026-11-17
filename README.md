@@ -129,8 +129,9 @@ crash or redeploy, an invocation replays completed steps and continues from the
 next one. Your agent does not have to reconstruct its place in a workflow or
 repeat a completed model call.
 
-- **Retries are explicit.** Set retry policies on model calls and tools; a terminal
-  tool failure becomes a result the agent can handle.
+- **Retries are explicit.** Set retry policies on model calls and tools. A
+  terminal failure in a tool or a hook goes to the model, which decides what to
+  do next, and an `AgentTerminalError` stops the run.
 - **Cancellation propagates.** An interrupted run cancels unfinished tools and
   child invocations.
 - **Waiting does not occupy a process.** Approvals, sleeps, and slow work

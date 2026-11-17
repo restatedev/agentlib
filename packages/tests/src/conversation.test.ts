@@ -4,8 +4,8 @@ import {TerminalError, type Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
+  AgentTerminalError,
   ConversationConflictError,
-  GuardrailError,
   LazyStateConversation,
   type Message,
   type Model,
@@ -279,33 +279,74 @@ void test("a failed compactor never removes history or installs a partial checkp
   );
 });
 
-void test("beforeRun rejection precedes all model work, including automatic compaction", async () => {
-  let summarized = false;
+/** A conversation long enough that a run compacts it before its first step. */
+function* compactingConversation(onSummary: () => void) {
   const {store} = memoryStore();
   const convo = new LazyStateConversation({
     store,
     compaction: {
       model: function* () {
-        summarized = true;
+        onSummary();
         return {type: "final", text: "summary"};
       },
       policy: {maxMessages: 2, retainMessages: 1},
     },
   });
-  await r.execute(
-    context(),
-    (function* () {
-      yield* convo.append(pairs(3), 0);
-    })(),
-  );
+  yield* convo.append(pairs(3), 0);
+  return convo;
+}
+
+void test("beforeRun can stop the run before all model work, including automatic compaction", async () => {
+  let summarized = false;
   const a = agent({
     *beforeRun() {
-      return false;
+      throw new AgentTerminalError("This request is out of scope");
     },
     *model() {
       assert.fail("blocked model");
     },
   });
-  await assert.rejects(r.execute(context(), a.run("go", {conversation: convo})), GuardrailError);
+  await assert.rejects(
+    r.execute(
+      context(),
+      (function* () {
+        const convo = yield* compactingConversation(() => (summarized = true));
+        return yield* a.run("go", {conversation: convo});
+      })(),
+    ),
+    {name: "AgentTerminalError", message: "This request is out of scope"},
+  );
   assert.equal(summarized, false);
+});
+
+void test("a beforeRun rejection reaches the model after automatic compaction", async () => {
+  let summarized = false;
+  let seen: Message[] = [];
+  const a = agent({
+    *beforeRun() {
+      return "Not today";
+    },
+    *model(request) {
+      seen = request.messages;
+      return {type: "final", text: "Sorry, I can't help with that."};
+    },
+  });
+  const result = await r.execute(
+    context(),
+    (function* () {
+      const convo = yield* compactingConversation(() => (summarized = true));
+      return yield* a.run("go", {conversation: convo});
+    })(),
+  );
+  assert.equal(summarized, true);
+  // Compaction rebuilt the history, and the note still follows the input.
+  assert.deepEqual(seen.slice(-2), [
+    {role: "user", content: "go"},
+    {
+      role: "user",
+      content:
+        '{"source":"agent-runtime","type":"error","origin":"beforeRun","code":"denied","message":"Not today"}',
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result.messages), /Not today/);
 });

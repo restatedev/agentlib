@@ -1,5 +1,5 @@
 import {type InterruptedError, type Operation, type Task} from "@restatedev/restate-sdk-gen";
-import {ModelProtocolError, ToolCancelled, ToolError} from "./errors.js";
+import {ToolCancelled, ToolError} from "./errors.js";
 import {createToolExecutor, type ToolExecutionLimits, type ToolExecutor} from "./tool-executor.js";
 import type {ToolCatalog} from "./tool-catalog.js";
 import type {RunHistory} from "./run-history.js";
@@ -78,24 +78,29 @@ export class RunTools<C> {
     );
   }
 
-  /** Validates and starts a batch. Returns its foreground tasks; each records
-   * its own result when it finishes. Background calls are acknowledged now. */
+  /** Why a batch cannot run, or undefined when it can. Changes nothing, so the
+   * model can send a corrected batch, even with the same call IDs. */
+  rejectBatch(action: ModelToolCallsResponse, catalog: ToolCatalog<C>): string | undefined {
+    if (handoffs(action, catalog).length > 1) return "Only one handoff is allowed per batch";
+    const ids = new Set<string>();
+    for (const {id} of action.calls) {
+      if (this.usedIds.has(id) || ids.has(id)) return `Duplicate tool-call ID: ${id}`;
+      ids.add(id);
+    }
+    return undefined;
+  }
+
+  /** Starts a batch `rejectBatch` accepted. Returns its foreground tasks; each
+   * records its own result when it finishes. Background calls are acknowledged now. */
   startBatch(
     action: ModelToolCallsResponse,
     step: number,
     owner: AgentRuntime<C>,
     catalog: ToolCatalog<C>,
   ): FutureBranches {
-    const transfers = action.calls.filter(
-      (call) => !call.validationError && catalog.registry.get(call.name)?.handoff,
-    );
-    if (transfers.length > 1) throw new ModelProtocolError("Only one handoff is allowed per batch");
+    const transfers = handoffs(action, catalog);
     this.executor.assertCapacity(action.calls.length);
-    for (const call of action.calls) {
-      if (this.usedIds.has(call.id))
-        throw new ModelProtocolError(`Duplicate tool-call ID: ${call.id}`);
-      this.usedIds.add(call.id);
-    }
+    for (const call of action.calls) this.usedIds.add(call.id);
     this.history.append({
       role: "assistant",
       content: action.text ?? "",
@@ -212,4 +217,11 @@ export class RunTools<C> {
   private record(call: ToolCall, result: ToolResult): void {
     this.history.append({role: "tool", callId: call.id, name: call.name, result});
   }
+}
+
+/** The calls in a batch that hand off to another agent. */
+function handoffs<C>(action: ModelToolCallsResponse, catalog: ToolCatalog<C>): ToolCall[] {
+  return action.calls.filter(
+    (call) => !call.validationError && catalog.registry.get(call.name)?.handoff,
+  );
 }

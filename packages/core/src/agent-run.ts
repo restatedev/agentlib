@@ -1,7 +1,7 @@
-import {CancelledError} from "@restatedev/restate-sdk";
 import {
   handlerRequest,
   InterruptedError,
+  logger,
   select,
   signal,
   type Future,
@@ -9,16 +9,17 @@ import {
   type Task,
 } from "@restatedev/restate-sdk-gen";
 import {
-  AgentLimitError,
   ContextOverflowError,
-  guardrailDecision,
   GuardrailError,
+  guardrailDecision,
   isContextOverflow,
-  ModelProtocolError,
-  RunInputError,
+  isResponseProblem,
+  mustPropagate,
+  reachesModel,
   RunInterrupted,
   ToolBudgetExceeded,
   ToolError,
+  toolErrorCode,
 } from "./errors.js";
 import {RunHistory, type BranchPoint} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
@@ -27,7 +28,7 @@ import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
 import {FORK_PREAMBLE, FORK_SOURCE, type ForkSource} from "./fork.js";
 import type {ForkLimits} from "./fork-source.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
-import type {ToolExecutionLimits} from "./tool-executor.js";
+import {forwardProgress, type ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
@@ -39,7 +40,6 @@ import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validat
 import type {
   AgentOptions,
   AgentRuntime,
-  JsonValue,
   Message,
   ModelFinalResponse,
   ModelRequest,
@@ -111,6 +111,43 @@ type ForkOrigin<C> = {
   skills: Skills<C> | undefined;
   loaded: readonly string[];
 };
+
+/** Where a failure the model receives as a note came from. */
+type NoteOrigin = ErrorNoteEvent["origin"];
+type ErrorNoteEvent = Extract<ProgressEvent, {type: "error-note"}>;
+/** Work that failed in a way the model receives: the note it gets instead, and
+ * the progress event that reports it. */
+type Rejection = {rejected: Message; event: ErrorNoteEvent};
+
+/** The note for an error the model receives; any other error propagates. The note
+ * tells the model why a step produced nothing, so it can try again. It is
+ * provisional: the model sees it for the rest of the run, but it is never saved. */
+function rejection(origin: NoteOrigin, error: unknown): Rejection {
+  if (!reachesModel(error)) throw error;
+  const code = toolErrorCode(error);
+  const details = {origin, ...(code === undefined ? {} : {code}), message: error.message};
+  return {
+    rejected: {
+      role: "user",
+      content: JSON.stringify({source: "agent-runtime", type: "error", ...details}),
+    },
+    event: {type: "error-note", ...details},
+  };
+}
+
+/** A final answer as the model gave it, for a model that must revise it. */
+function answer(action: ModelFinalResponse): Message {
+  return {
+    role: "assistant",
+    content: action.text,
+    ...(action.reasoning ? {reasoning: structuredClone(action.reasoning)} : {}),
+  };
+}
+
+/** The text an output is recorded as. */
+function recorded(output: unknown): string {
+  return typeof output === "string" ? output : JSON.stringify(output);
+}
 
 /** The agent's instructions followed by its skills section. */
 function withSkills(instructions: string | undefined, section: string | undefined) {
@@ -225,12 +262,7 @@ class AgentRun<C, O> {
    * and it keeps the skills the run listed. */
   private *start(): Operation<void> {
     if (this.origin) return;
-    if (this.root.beforeRun) {
-      const result = yield* this.root.beforeRun(this.history.snapshot(), this.context);
-      const decision = guardrailDecision("beforeRun", result, "message");
-      if (decision && "reject" in decision) throw new GuardrailError(decision.reject);
-      if (decision) this.history.replaceInput(decision.replace as string);
-    }
+    const rejected = yield* this.checkInput();
     const source = this.root.skills;
     const listed = source ? yield* listSkills(source) : [];
     if (source && listed.length) {
@@ -240,11 +272,39 @@ class AgentRun<C, O> {
       };
       this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
-    yield* this.history.compact();
+    yield* this.compactConversation();
+    // Compaction rebuilds the message list, so the note follows it.
+    if (rejected) yield* this.reject(rejected);
     const controls = resolveControls(this.options);
     this.steeringSource = controls.steering;
     this.steering = controls.steering?.();
     this.interrupt = controls.interrupt;
+  }
+
+  /** Applies `beforeRun`. A rejection, or a failure the model receives, becomes a
+   * note after the input, and the first model call still goes ahead. */
+  private *checkInput(): Operation<Rejection | undefined> {
+    if (!this.root.beforeRun) return undefined;
+    try {
+      const result = yield* this.root.beforeRun(this.history.snapshot(), this.context);
+      const decision = guardrailDecision("beforeRun", result, "message");
+      if (decision && "reject" in decision) throw new GuardrailError(decision.reject, "denied");
+      if (decision) this.history.replaceInput(decision.replace);
+      return undefined;
+    } catch (error) {
+      return rejection("beforeRun", error);
+    }
+  }
+
+  /** Compacts the conversation before the run. A failure leaves the history as it
+   * was loaded, the way a failed summary inside the run falls back to truncation. */
+  private *compactConversation(): Operation<void> {
+    try {
+      yield* this.history.compact();
+    } catch (error) {
+      if (mustPropagate(error)) throw error;
+      logger().warn("Conversation compaction failed; the run continues without it:", error);
+    }
   }
 
   /** Returns the completed result, or undefined when the step budget runs out. */
@@ -284,7 +344,8 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Asks the model for the next step; undefined when steering discarded it.
+  /** Asks the model for the next step; undefined when steering discarded it, or
+   * when the step failed in a way the model receives as a note.
    * A view the model rejects as too long is shrunk once, then asked again. */
   private *ask(): Operation<ModelResponse | undefined> {
     for (let recovered = false; ; recovered = true) {
@@ -295,14 +356,16 @@ class AgentRun<C, O> {
         if (recovered || !(yield* this.compactContext(true))) throw outcome.overflow;
         continue;
       }
+      if (outcome && "rejected" in outcome) {
+        yield* this.reject(outcome);
+        return undefined;
+      }
       if (outcome?.usage) this.history.measure(mark, outcome.usage.inputTokens);
       return outcome;
     }
   }
 
-  private *overflowing(
-    request: Operation<ModelResponse>,
-  ): Operation<ModelResponse | {overflow: ContextOverflowError}> {
+  private *overflowing<T>(request: Operation<T>): Operation<T | {overflow: ContextOverflowError}> {
     try {
       return yield* request;
     } catch (error) {
@@ -363,7 +426,7 @@ class AgentRun<C, O> {
           return true;
         }
       } catch (error) {
-        if (error instanceof InterruptedError || error instanceof CancelledError) throw error;
+        if (mustPropagate(error)) throw error;
         // Summaries stop for this run; truncation keeps it within bounds.
         this.compactionFailed = true;
         yield* this.emit({
@@ -445,6 +508,13 @@ class AgentRun<C, O> {
       yield* this.options.onProgress(structuredClone(event), this.context.context);
   }
 
+  /** Gives the model a rejection's note, after `before` (such as the answer it
+   * must revise), and reports it: only the model sees the note itself. */
+  private *reject(rejection: Rejection, ...before: Message[]): Operation<void> {
+    this.history.appendProvisional(...before, rejection.rejected);
+    yield* this.emit(rejection.event);
+  }
+
   /** Runs work that steering supersedes; returns undefined when it was discarded. */
   private *candidate<T>(operation: Operation<T>): Operation<T | undefined> {
     const task = this.tasks.spawn(operation);
@@ -463,16 +533,23 @@ class AgentRun<C, O> {
     }
   }
 
-  private *plan(messages: Message[]): Operation<ModelResponse> {
+  /** Builds the step's request and asks the model. The model gets a note instead of
+   * a response when the instructions function or a `beforeStep` hook fails or
+   * rejects, or when its response has a problem it can fix by trying again. */
+  private *plan(messages: Message[]): Operation<ModelResponse | Rejection> {
     const {active} = this;
-    const request = {
+    let instructions: string | undefined;
+    try {
       // Called as a method, so an instructions function can use `this`.
-      instructions: withSkills(
+      instructions =
         typeof active.instructions === "function"
           ? yield* active.instructions(this.context)
-          : active.instructions,
-        this.skills?.section,
-      ),
+          : active.instructions;
+    } catch (error) {
+      return rejection("instructions", error);
+    }
+    const request = {
+      instructions: withSkills(instructions, this.skills?.section),
       outputSchema: this.config.outputSchema,
       maxOutputTokens: this.config.maxOutputTokens,
       step: this.step,
@@ -484,16 +561,33 @@ class AgentRun<C, O> {
     // A hook may send other messages in this request; the next hook sees them.
     for (const agent of new Set<AgentRuntime<C>>([this.root, this.active])) {
       if (!agent.beforeStep) continue;
-      const result = yield* agent.beforeStep(request, this.context);
-      const decision = guardrailDecision("beforeStep", result, "messages");
-      if (decision && "reject" in decision) throw new GuardrailError(decision.reject);
-      if (decision)
-        request.messages = stepMessages(request.messages, decision.replace as ReadonlyMessage[]);
+      try {
+        const result = yield* agent.beforeStep(request, this.context);
+        const decision = guardrailDecision("beforeStep", result, "messages");
+        if (decision && "reject" in decision) throw new GuardrailError(decision.reject, "denied");
+        if (decision)
+          request.messages = stepMessages(request.messages, decision.replace as ReadonlyMessage[]);
+      } catch (error) {
+        return rejection("beforeStep", error);
+      }
     }
-    const response = modelResponse(yield* this.usage.counted(this.active.model(request)));
-    if ((response.text?.length ?? 0) > this.config.maxOutputChars)
-      throw new AgentLimitError("Model output exceeds maxOutputChars");
-    return response;
+    let response: ModelResponse;
+    try {
+      response = modelResponse(yield* this.usage.counted(this.active.model(request)));
+    } catch (error) {
+      // Any other failure would recur on the next call, so it ends the run.
+      if (!isResponseProblem(error)) throw error;
+      return rejection("model", error);
+    }
+    return this.outputLimit(response.text) ?? response;
+  }
+
+  /** A note for model text longer than `maxOutputChars`, or undefined when it fits. */
+  private outputLimit(text: string | undefined): Rejection | undefined {
+    const max = this.config.maxOutputChars;
+    if (text === undefined || text.length <= max) return undefined;
+    const message = `The response has ${text.length} characters, more than the limit of ${max}. Respond more briefly.`;
+    return rejection("model", new ToolError(message, "output_limit"));
   }
 
   /** Runs one native tool-call batch. The model cannot read a partial batch, so
@@ -501,6 +595,12 @@ class AgentRun<C, O> {
    * acknowledged as pending and report later through collectBackground().
    * Steering does not wait for a running program: it continues in the background. */
   private *toolPhase(action: ModelToolCallsResponse): Operation<void> {
+    const rejected = this.tools.rejectBatch(action, this.catalog);
+    if (rejected) {
+      // No call has started, so the model can send a corrected batch.
+      yield* this.reject(rejection("model", new ToolError(rejected, "invalid_response")));
+      return;
+    }
     // Before the batch records its call: a fork must not inherit a call without its result.
     this.forkPoints.set(this.step, {
       history: this.history.branchPoint(),
@@ -548,25 +648,24 @@ class AgentRun<C, O> {
     const parsed = this.parseOutput(action);
     if (!parsed) {
       // The model needs its rejected answer to correct it; the turn must not keep it.
-      this.history.appendProvisional(
-        {
-          role: "assistant",
-          content: action.text,
-          ...(action.reasoning ? {reasoning: structuredClone(action.reasoning)} : {}),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            source: "agent-runtime",
-            type: "output-invalid",
-            instruction: "Return a final answer matching the requested output schema.",
-          }),
-        },
-      );
+      this.history.appendProvisional(answer(action), {
+        role: "user",
+        content: JSON.stringify({
+          source: "agent-runtime",
+          type: "output-invalid",
+          instruction: "Return a final answer matching the requested output schema.",
+        }),
+      });
       return undefined;
     }
-    const result = yield* this.candidate(
-      this.review({
+    // Text was checked with the response; structured output is checked as recorded.
+    const oversized = this.outputLimit(recorded(parsed.output));
+    if (oversized) {
+      yield* this.reject(oversized);
+      return undefined;
+    }
+    const outcome = yield* this.candidate(
+      this.reviewAnswer({
         status: "completed",
         output: parsed.output,
         steps: this.step,
@@ -574,19 +673,36 @@ class AgentRun<C, O> {
         usage: this.usage.snapshot(),
       }),
     );
+    if (outcome && "rejected" in outcome) {
+      // As with an invalid answer, the model sees the answer and why it was rejected.
+      yield* this.reject(outcome, answer(action));
+      return undefined;
+    }
     // Reasoning can contain readable details the output policy removed. Keep it
     // only when the policy leaves the answer unchanged, including structured output.
     const reasoning =
-      result && JSON.stringify(result.output) === JSON.stringify(parsed.output)
+      outcome && JSON.stringify(outcome.output) === JSON.stringify(parsed.output)
         ? action.reasoning
         : undefined;
-    return result && (yield* this.finish(result, reasoning));
+    return outcome && (yield* this.finish(outcome, reasoning));
+  }
+
+  /** Reviews a completed answer. When `afterRun` rejects it or fails in a way the
+   * model receives, the model gets a note and can revise the answer. */
+  private *reviewAnswer(result: RunResult<O>): Operation<RunResult<O> | Rejection> {
+    try {
+      return yield* this.review(result);
+    } catch (error) {
+      return rejection("afterRun", error);
+    }
   }
 
   /** Returns undefined when the model should retry against the output schema. */
   private parseOutput(action: ModelFinalResponse): {output: O} | undefined {
     if (!this.output) {
-      if (action.validationError) throw new ModelProtocolError(action.validationError);
+      // Only a request with an output schema can fail it: the model adapter is wrong.
+      if (action.validationError)
+        throw new TypeError(`Unexpected output validation error: ${action.validationError}`);
       return {output: action.text as O};
     }
     let candidate: unknown = action.output;
@@ -614,15 +730,23 @@ class AgentRun<C, O> {
     if (this.root.beforeSteering) {
       // As recorded, not the model's view: mid-batch, a call may not have its result yet.
       const request = {message, ...withData, messages: [...this.history.events()]};
-      const result = yield* this.root.beforeSteering(request, this.context);
-      const decision = guardrailDecision("beforeSteering", result, "message");
+      let decision: ReturnType<typeof guardrailDecision>;
+      try {
+        const result = yield* this.root.beforeSteering(request, this.context);
+        decision = guardrailDecision("beforeSteering", result, "message");
+      } catch (error) {
+        // The model never sees a steering message the hook did not accept, so a
+        // failure it would receive elsewhere rejects the message instead.
+        if (!reachesModel(error)) throw error;
+        decision = {reject: error.message};
+      }
       if (decision && "reject" in decision) {
         yield* this.emit({type: "steering-rejected", reason: decision.reject, ...withData});
         return false;
       }
       if (decision) {
         if (typeof decision.replace !== "string" || !decision.replace.trim())
-          throw new RunInputError("beforeSteering must return a nonempty message");
+          throw new TypeError("beforeSteering must return a nonempty message");
         message = decision.replace;
       }
     }
@@ -636,7 +760,8 @@ class AgentRun<C, O> {
     if (finalize && result.status !== "completed") {
       yield* this.compactContext();
       const counted = this.usage.count(finalize);
-      result = yield* summarizeStoppedRun(result, counted, this.history.finalContext());
+      const context = this.history.finalContext();
+      result = yield* summarizeStoppedRun(result, counted, context, this.config.maxOutputChars);
     }
     // Compaction and the summary add usage; the policy and the caller see it.
     result = {...result, usage: this.usage.snapshot()};
@@ -703,7 +828,8 @@ class AgentRun<C, O> {
         name: `${call.name}/${call.callId}`,
         // The fork has this run's policies, which publish approval requests themselves.
         onApproval: this.options?.onApproval?.bind(this.options),
-        onProgress: (event: ProgressEvent) => call.progress(event as unknown as JsonValue),
+        // Forwarded unchecked: the fork's own limits bound its events.
+        onProgress: forwardProgress(call as ToolContext<unknown>),
       } as RunOptions<C>;
       const history = this.history.branch(point.history, FORK_PREAMBLE + task);
       const origin = {active: point.active, skills: this.skills, loaded: point.loaded};
@@ -719,28 +845,31 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Validates the accepted result, commits its output, and saves the turn. */
+  /** Validates the accepted result, commits its output, and saves the turn. The
+   * model's answers and summaries were checked already, so a check that fails here
+   * found a mistake in `afterRun`: a plain error, which Restate retries, so the
+   * invocation can continue once a fix is deployed. */
   private *finish(result: RunResult<O>, reasoning?: Reasoning): Operation<RunResult<O>> {
     if (result.status === "completed") {
       if (this.output) {
         const parsed = this.output.safeParse(result.output);
         if (!parsed.success)
-          throw new GuardrailError(
+          throw new TypeError(
             `Run output does not match the output schema: ${parsed.error.message}`,
           );
         result = {...result, output: parsed.data};
       } else if (typeof result.output !== "string")
-        throw new GuardrailError("A completed text run must have a string output");
+        throw new TypeError("A completed text run must have a string output");
     }
-    const output = result.output === undefined ? undefined : finalOutput(result.output);
-    if (output !== undefined && JSON.stringify(output).length > this.config.maxOutputChars)
-      throw new AgentLimitError("Final output exceeds maxOutputChars");
+    const content = result.output === undefined ? undefined : recorded(finalOutput(result.output));
+    if (content !== undefined && content.length > this.config.maxOutputChars)
+      throw new RangeError("Final output exceeds maxOutputChars");
     // Only accepted output reaches history: a discarded candidate never does,
     // and a policy-provided stopped summary gets its own message.
-    if (output !== undefined) {
+    if (content !== undefined) {
       this.history.append({
         role: "assistant",
-        content: typeof output === "string" ? output : JSON.stringify(output),
+        content,
         ...(reasoning ? {reasoning: structuredClone(reasoning)} : {}),
       });
     }
@@ -751,6 +880,6 @@ class AgentRun<C, O> {
 
 function finalOutput(value: unknown) {
   const parsed = jsonSchema.safeParse(value);
-  if (!parsed.success) throw new GuardrailError("Run output must be JSON");
+  if (!parsed.success) throw new TypeError("Run output must be JSON");
   return parsed.data;
 }

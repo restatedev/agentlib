@@ -55,7 +55,16 @@ const researchModel: Model = function* (request) {
   const role = request.instructions!.split(".")[0];
   const invocationId = r.handlerRequest().id;
   if (role === "Research worker" && prompt(request) === "cite without reading") {
-    return answer({answer: "Unsupported claim", sourceIds: ["durability"]});
+    // The first answer cites a source it never read; afterRun's reason comes back
+    // as a note, and the worker reads the source before answering again.
+    if (!/did not read/.test(JSON.stringify(request.messages)))
+      return answer({answer: "Unsupported claim", sourceIds: ["durability"]});
+    if (!request.messages.some((message) => message.role === "tool"))
+      return {
+        type: "tool_calls",
+        calls: [{id: "read-durability", name: "readSource", input: {id: "durability"}}],
+      };
+    return answer({answer: "Supported claim", sourceIds: ["durability"]});
   }
   if (role === "Research worker" && request.step === 1) {
     yield* r.client(barrier, "parallel").arrive(invocationId);
@@ -680,13 +689,11 @@ void test("research rejects duplicate source IDs before invoking a model", async
   assert.equal(effects.size, calls);
 });
 
-void test("a research worker cannot cite a supplied source it has not read", async () => {
-  await assert.rejects(
-    connect({url: env.baseUrl()})
-      .client(researchWorker)
-      .research({question: "cite without reading", sources}),
-    /source the worker did not read/,
-  );
+void test("a research worker that cites a source it has not read must read it first", async () => {
+  const finding = await connect({url: env.baseUrl()})
+    .client(researchWorker)
+    .research({question: "cite without reading", sources});
+  assert.deepEqual(finding, {answer: "Supported claim", sourceIds: ["durability"]});
 });
 
 void test(`${codeReview.name}: evaluator feedback reaches the next draft and stops on acceptance`, async () => {

@@ -136,8 +136,10 @@ const lead = agent({
   and progress flow through the parent, and its token usage counts toward
   the parent's `result.usage`, also when it fails. A sub-agent that stops early
   becomes a tool error with code `agent_stopped` carrying its summary; an
-  interrupted one, a cancelled call. Pass `background: true` to let the
-  parent keep working meanwhile.
+  interrupted one, a cancelled call. A sub-agent run that fails with a
+  `TerminalError` becomes a tool error with code `tool_failed`, or the code of
+  a `ToolError`. An `AgentTerminalError` in the sub-agent fails the parent run
+  too. Pass `background: true` to let the parent keep working meanwhile.
 - **`handoff`**: after the current tool batch settles, the target agent's
   instructions and tools take over the same run and history. Run-level
   tools stay available.

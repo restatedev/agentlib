@@ -117,42 +117,64 @@ returns its decision:
 | `{message}`, `{messages}`, `{input}` or `{output}` | replace what is recorded |
 
 `afterTool` is the exception: it returns the output to record. Anything else,
-such as an object without the hook's replacement key, is not a decision, so the
-hook fails instead of allowing. A string always rejects: to replace the input,
-return `{message}`, not the new text. A rejection that fails the run makes
-`run()` throw a `GuardrailError` with the reason.
+such as an object without the hook's replacement key, is a mistake in the hook
+rather than a decision. The hook fails with a `TypeError`, which Restate
+retries, so the invocation continues once you deploy a fix. A string always
+rejects: to replace the input, return `{message}`, not the new text.
+
+A rejection from `beforeRun`, `beforeTool` or `afterRun` reaches the model,
+which decides what to do next, for example answering that it can't help. An
+`afterRun` rejection of a stopped or interrupted result is the exception: no
+model step follows it, so `run()` throws a `GuardrailError` with code `denied`
+and the reason. A `GuardrailError` is a `ToolError` that marks a failure as the
+guardrail's rather than the tool's. To stop the run instead, throw `AgentTerminalError` from the hook.
 
 | Hook                            | Checks                                   | A rejection                                                              | Replace with                          |
 | ------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
-| `beforeRun(messages, ctx)`      | the input, once, before the first step   | fails the run                                                            | `{message}`                           |
+| `beforeRun(messages, ctx)`      | the input, once, before the first step   | reaches the model as a note after the input; the first step goes ahead   | `{message}`                           |
 | `beforeSteering(steering, ctx)` | each steering message, before it acts    | drops the message; the run goes on; a `steering-rejected` event says why | `{message}`                           |
 | `beforeTool(call, ctx)`         | every tool call, before input validation | goes back to the model as a `denied` result                              | `{input}`, validated like the model's |
 | `afterTool(output, ctx)`        | every tool output                        | —                                                                        | returns the output to record          |
-| `afterRun(candidate, ctx)`      | the final result                         | fails the run                                                            | `{output}`                            |
+| `afterRun(candidate, ctx)`      | the final result                         | gives the model its answer back with a note, for another step            | `{output}`                            |
 
 `beforeStep(request, ctx)` is not a guardrail on data. It runs before each of
-the agent's own steps and shapes that one request: a rejection fails the run,
-and `{messages}` sends other messages in that request only.
+the agent's own steps and shapes that one request: a rejection skips that
+step's model call and gives the model a note before the next step, and
+`{messages}` sends other messages in that request only. A rejection uses up the
+step, so a `beforeStep` that rejects every step ends the run as `stopped` with
+`max_steps`.
+
+A rejection does not keep data from the model. When the run stops, the summary
+of the stopped run sends the recorded history to `finalize` (or the model)
+without running `beforeStep`, including the content the hook rejected. To keep
+data from every model call, remove it where it enters the history: return
+`{message}` from `beforeRun`, or replace a tool's output in `afterTool`. To stop
+the run instead, throw `AgentTerminalError` from the hook; `finalize: false`
+skips the summary.
 
 ### What is recorded
 
 The run's history is what the model sees in later steps, what summaries see,
 `result.messages`, and what a `conversation` saves. A run saves its history
-when it finishes, completed or stopped; a run that fails saves nothing.
+when it finishes, completed or stopped; a run that fails saves nothing. The
+model also sees the notes about rejections and the answers `afterRun`
+rejected, for the rest of the run, but they are never recorded.
 
 | Hook             | Allowed: history keeps  | Rejected: history keeps                         | Replaced: history keeps                                   |
 | ---------------- | ----------------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `beforeRun`      | the input               | nothing: the run fails                          | the replacement, never the original                       |
+| `beforeRun`      | the input               | the input                                       | the replacement, never the original                       |
 | `beforeSteering` | the message             | nothing                                         | the replacement, never the original                       |
 | `beforeTool`     | the call and its result | the call, and a `denied` result with the reason | the model's own call, and the result of the new input     |
 | `afterTool`      | —                       | —                                               | the returned output, never the original                   |
-| `afterRun`       | the output              | nothing: the run fails                          | the replacement, never the candidate                      |
-| `beforeStep`     | —                       | nothing: the run fails                          | the original messages: the change is for one request only |
+| `afterRun`       | the output              | nothing                                         | the replacement, never the candidate                      |
+| `beforeStep`     | —                       | nothing                                         | the original messages: the change is for one request only |
 
 **To keep data from the model and from the saved conversation, remove it where
 it enters:** `beforeRun` for the input, `beforeSteering` for steering,
 `afterTool` for tool output, `afterRun` for the answer. What these hooks record
-is all any later model call sees, including summaries.
+is all any later model call sees, including summaries. A rejection does not
+remove anything: a rejected input stays in the history. To stop the run before
+anything is recorded, throw `AgentTerminalError`.
 
 Two replacements leave the original in the history, so they are not for
 redaction:
@@ -193,7 +215,7 @@ const support = agent({
 - Return the decision. A rejection or replacement that is built but not
   returned is ignored, and the hook allows.
 - Reject by returning, not by throwing. A thrown error means the check itself
-  broke, as described below.
+  failed, as described below.
 - A hook never edits what it receives; it returns the replacement. What a hook
   receives is typed read-only and is not copied: agentlib
   shares the run's messages with hooks and models, so an edit in place would
@@ -213,10 +235,16 @@ const support = agent({
   run's handlers. It skips the root's `beforeRun` and `afterRun`: its input and
   answer are a tool call of the parent run and its result.
 
-If `beforeTool` or `afterTool` throws a terminal error, for example because a
-policy model is down, the call is blocked and the model gets an error with
-code `guardrail_failed`. A terminal error in the other agent hooks fails the
-run. Restate retries any other thrown error.
+A hook that throws a `TerminalError`, for example because a policy model is
+down, doesn't fail the run: the model receives the error, as it does a
+rejection. From `beforeTool` or `afterTool`, it is the call's result, with
+code `guardrail_failed` and a message that starts with `Policy check failed:`,
+or with the code of a `ToolError` the hook threw. From `beforeRun`, `beforeStep`
+or `afterRun`, it is a note before the model's next step; from `afterRun` for a
+stopped or interrupted result, it fails the run, as a rejection does. From
+`beforeSteering`, it rejects the steering message. Throw `AgentTerminalError`
+to fail the run instead. Restate retries any other thrown error. See
+`error-handling.md` for the full rules.
 
 A hook can also ask a human first: `ctx.approve(call.input, {question,
 details})` waits for the decision. `details` is any JSON value, such as the
@@ -225,4 +253,5 @@ request.
 
 Lesson 08 uses `afterRun` to reject a research finding that cites a source
 the worker never read. The tool records reads in `context`, and `afterRun`
-compares them with the cited IDs.
+compares them with the cited IDs. The worker's model receives the reason and
+can read the missing sources before it answers again.

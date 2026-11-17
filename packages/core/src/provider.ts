@@ -17,7 +17,7 @@ import {
   type ToolSet,
 } from "ai";
 import type {Tracer} from "@opentelemetry/api";
-import {ContextOverflowError, ModelProtocolError} from "./errors.js";
+import {ContextOverflowError, ModelResponseError} from "./errors.js";
 import {journaledModel} from "./model.js";
 import {awaitChild} from "./tool.js";
 import {traceModel} from "./telemetry.js";
@@ -53,9 +53,16 @@ export type ProviderOptions = {
     info: {step: number; signal: AbortSignal},
   ): Promise<void>;
 };
-function finished(reason: string | undefined) {
-  if (reason !== "stop" && reason !== "tool-calls")
-    throw new ModelProtocolError(`Incomplete model response: ${reason ?? "unknown"}`);
+/** A response that stopped before it finished, for example at the output token
+ * limit, goes back to the model as a note, with another step to try again. */
+function finished(reason: string | undefined, usage: ModelUsage | undefined) {
+  if (reason === "stop" || reason === "tool-calls") return;
+  let message = `The response ended before it was complete (${reason ?? "unknown"}).`;
+  if (reason === "length")
+    message =
+      "The response was cut off at the output token limit. Respond more briefly, or split the work into several steps.";
+  if (reason === "content-filter") message = "The provider's content filter stopped the response.";
+  throw new ModelResponseError(message, "incomplete_response", usage);
 }
 
 function contextOverflow(error: APICallError): boolean {
@@ -245,7 +252,10 @@ function toolCalls(
 ): ToolCall[] {
   return calls.map((call) => {
     if (call.providerExecuted)
-      throw new ModelProtocolError("Provider-executed tools are not supported by this executor");
+      throw new UnsupportedFunctionalityError({
+        functionality: "provider-executed tools",
+        message: "Provider-executed tools are not supported by this executor",
+      });
     return {
       id: call.toolCallId,
       name: call.toolName,
@@ -306,7 +316,8 @@ function settingsFor(
 
 async function generate(settings: GenerateSettings, wantsOutput: boolean): Promise<Generation> {
   const result = await generateText(settings);
-  finished(result.finishReason);
+  const usage = modelUsage(result.usage);
+  finished(result.finishReason, usage);
   const calls = toolCalls(result.toolCalls);
   const output = wantsOutput && !calls.length ? result.output : undefined;
   return {
@@ -315,7 +326,7 @@ async function generate(settings: GenerateSettings, wantsOutput: boolean): Promi
     calls,
     reasoning: responseReasoning(result.responseMessages, result.usage),
     output,
-    usage: modelUsage(result.usage),
+    usage,
   };
 }
 
@@ -334,14 +345,15 @@ async function stream(
     }
   }
   const finishReason = await result.finishReason;
-  finished(finishReason);
+  const rawUsage = await result.usage;
+  const usage = modelUsage(rawUsage);
+  finished(finishReason, usage);
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls);
   const output = wantsOutput && !calls.length ? await result.output : undefined;
-  const rawUsage = await result.usage;
   const reasoning = responseReasoning(await result.responseMessages, rawUsage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, reasoning, output, usage: modelUsage(rawUsage)};
+  return {finishReason, text, calls, reasoning, output, usage};
 }
 
 /** Gemini reuses a text-block ID across signed segments. Give each segment its
@@ -440,7 +452,11 @@ export function aiModel(options: ProviderOptions): Model {
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
       if (finishReason === "tool-calls" && !calls.length)
-        throw new ModelProtocolError("Model indicated tool calls but returned none");
+        throw new ModelResponseError(
+          "The response announced tool calls but contained none. Call a tool, or respond with text.",
+          "invalid_response",
+          usage,
+        );
       const reported = {...(usage ? {usage} : {}), ...(reasoning ? {reasoning} : {})};
       if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
@@ -451,7 +467,7 @@ export function aiModel(options: ProviderOptions): Model {
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
-        finished(error.finishReason);
+        finished(error.finishReason, error.usage && modelUsage(error.usage));
         return {
           type: "final",
           text: error.text ?? "",

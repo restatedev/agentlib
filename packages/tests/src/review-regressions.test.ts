@@ -4,10 +4,8 @@ import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
 import {
   agent,
-  GuardrailError,
   handoff,
   LazyStateConversation,
-  ModelProtocolError,
   tool,
   type ModelResponse,
 } from "@restatedev/agentlib";
@@ -127,7 +125,8 @@ void test("output policies cannot convert an exhausted run into completed succes
       return {...result, status: "completed", output: "fake success"};
     },
   });
-  await assert.rejects(r.execute(context(), a.run("go")), GuardrailError);
+  // A mistake in the hook: a plain error, which Restate retries until a fix is deployed.
+  await assert.rejects(r.execute(context(), a.run("go")), TypeError);
 });
 
 void test("root step policies still apply after transferring to a specialist", async () => {
@@ -147,11 +146,13 @@ void test("root step policies still apply after transferring to a specialist", a
       return request.step === 1 || "Further inference is denied";
     },
   });
-  await assert.rejects(r.execute(context(), a.run("go")), GuardrailError);
+  // Each denied step reaches the model as a note instead of a call, until the steps run out.
+  const result = await r.execute(context(), a.run("go"));
+  assert.equal(result.status === "stopped" && result.reason, "max_steps");
   assert.equal(specialistCalled, false);
 });
 
-void test("a batch with two handoffs fails before any of its calls run", async () => {
+void test("a batch with two handoffs is rejected before any of its calls run", async () => {
   let writes = 0;
   const specialist = agent({
     *model() {
@@ -171,18 +172,24 @@ void test("a batch with two handoffs fails before any of its calls run", async (
         },
       }),
     },
-    *model() {
-      return {
-        type: "tool_calls",
-        calls: [
-          {id: "write", name: "write", input: {}},
-          {id: "a", name: "first", input: {}},
-          {id: "b", name: "second", input: {}},
-        ],
-      };
+    *model(request) {
+      if (request.step === 1)
+        return {
+          type: "tool_calls",
+          calls: [
+            {id: "write", name: "write", input: {}},
+            {id: "a", name: "first", input: {}},
+            {id: "b", name: "second", input: {}},
+          ],
+        };
+      // The model learns why, and sends something else.
+      const note = request.messages.at(-1);
+      assert.match(note?.role === "user" ? note.content : "", /invalid_response.*one handoff/);
+      return final;
     },
   });
-  await assert.rejects(r.execute(context(), a.run("go")), ModelProtocolError);
+  const result = await r.execute(context(), a.run("go"));
+  assert.equal(result.status, "completed");
   assert.equal(writes, 0);
 });
 

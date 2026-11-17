@@ -1,4 +1,5 @@
 import type {Operation} from "@restatedev/restate-sdk-gen";
+import {failedCallUsage} from "./errors.js";
 import type {Model, ModelResponse, ModelUsage, RunUsage} from "./types.js";
 import {reportedUsage} from "./validation.js";
 
@@ -29,9 +30,18 @@ export class RunUsageTracker {
     this.totals.cacheWriteInputTokens += usage.cacheWriteInputTokens ?? 0;
   }
 
-  /** Counts the usage a model call reports, before the caller validates the rest of the response. */
+  /** Counts the usage a model call reports, before the caller validates the rest of
+   * the response. A call whose response the model must try again reports its usage
+   * on the error: the tokens were spent all the same. */
   *counted(call: Operation<ModelResponse>): Operation<ModelResponse> {
-    const response = yield* call;
+    let response: ModelResponse;
+    try {
+      response = yield* call;
+    } catch (error) {
+      const usage = reportedUsage({usage: failedCallUsage(error)});
+      if (usage) this.add(usage);
+      throw error;
+    }
     const usage = reportedUsage(response);
     if (usage) this.add(usage);
     return response;

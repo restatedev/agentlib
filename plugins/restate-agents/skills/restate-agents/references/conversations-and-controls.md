@@ -45,6 +45,10 @@ const result = yield* support.run(message, {conversation});
 
 Read it from a shared handler with `yield* new LazyStateConversation().page()`.
 
+When a run starts and the conversation compaction fails, the run logs a
+warning and continues with the history it loaded; the next run tries again.
+An `AgentTerminalError` from the compaction model fails the run instead.
+
 ## Long runs: large results and compaction
 
 Conversation compaction runs before a run starts. A single run can still
@@ -104,6 +108,7 @@ const researcher = agent({
 - Steering and interrupts wait until compaction finishes. If the compactor
   fails, the run stops summarizing and truncates instead: the older messages
   give way to a short note that restates the input and lists pending calls.
+  An `AgentTerminalError` from the compactor fails the run instead.
 
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
 that would not fit the window with `maxOutputTokens` is shrunk first:
@@ -178,7 +183,10 @@ progress; a `steering-rejected` event carries the reason and the message's
 
 `onProgress` receives each event as the run goes: `step`, `tool-start`,
 `tool-info`, `tool-progress`, `tool-end`, `steering`, `steering-rejected`,
-`handoff`, and `compaction` (`applied` or `failed`). A tool reports partial
+`error-note`, `handoff`, and `compaction` (`applied` or `failed`). An
+`error-note` reports an error the model received as a note instead of the run
+failing, such as a failed `beforeStep`, with its `origin`, `code` and
+`message`; the note itself is never saved. A tool reports partial
 progress with `context.progress(value)`. `tool-end` carries
 the call's final display `info`, so a UI can label a finished call from one
 event; `tool-start` carries it too when the tool's `describe` is a fixed

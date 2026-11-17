@@ -343,7 +343,8 @@ void test("throttled, conflicting and server-side OpenAI errors stay retryable",
 
 void test("incomplete OpenAI chat responses never execute a tool", {timeout: 5000}, async () => {
   const validCall = {id: "one", type: "function", function: {name: "write", arguments: "{}"}};
-  // Each case fails its own protocol check, not some unrelated error.
+  // Each case fails its own protocol check, not some unrelated error, and the
+  // model gets a note saying which, then another step.
   const cases: [Record<string, unknown>, RegExp][] = [
     [
       {
@@ -355,34 +356,35 @@ void test("incomplete OpenAI chat responses never execute a tool", {timeout: 500
           },
         ],
       },
-      /Incomplete model response: length/,
+      /incomplete_response.*output token limit/,
     ],
     [
       {choices: [{index: 0, finish_reason: "content_filter", message: {content: "Partial"}}]},
-      /Incomplete model response: content-filter/,
+      /incomplete_response.*content filter/,
     ],
     [
       {choices: [{index: 0, finish_reason: "tool_calls", message: {tool_calls: []}}]},
-      /Model indicated tool calls but returned none/,
+      /invalid_response.*announced tool calls/,
     ],
     [
       {choices: [{index: 0, finish_reason: "stop", message: {content: ""}}]},
-      /Model returned an invalid response/,
+      /invalid_response.*empty or invalid/,
     ],
   ];
   let writes = 0;
   for (const [response, expected] of cases) {
-    let requests = 0;
+    const bodies: string[] = [];
     const client = createOpenAI({
       apiKey: "test-only",
-      fetch: async () => {
-        requests++;
+      fetch: async (_url, init) => {
+        bodies.push(init?.body as string);
+        const answer = {choices: [{index: 0, finish_reason: "stop", message: {content: "Done."}}]};
         return Response.json({
           id: "test",
           object: "chat.completion",
           created: 0,
           model: "test",
-          ...response,
+          ...(bodies.length === 1 ? response : answer),
         });
       },
     });
@@ -399,23 +401,15 @@ void test("incomplete OpenAI chat responses never execute a tool", {timeout: 500
         }),
       },
     });
-    const handler = async (ctx: Parameters<typeof execute>[0]) => {
-      try {
-        return await execute(ctx, a.run("Write"));
-      } catch (error) {
-        return {error: error instanceof Error ? error.message : String(error)};
-      }
-    };
+    const handler = (ctx: Parameters<typeof execute>[0]) => execute(ctx, a.run("Write"));
     const live = await runHandler(handler);
-    assert.match(live.output.error, expected);
-    assert.equal(
-      requests,
-      1,
-      "invalid model output should be a terminal error, not a provider retry",
-    );
+    assert.equal(live.output.output, "Done.");
+    assert.equal(bodies.length, 2, "the model gets one more step, not a provider retry");
+    assert.match(bodies[1]!, expected);
+    assert.doesNotMatch(JSON.stringify(live.output.messages), /Partial|_response/);
     const replay = await runHandler(handler, {replay: live.journal});
     assert.deepEqual(replay.output, live.output);
-    assert.equal(requests, 1);
+    assert.equal(bodies.length, 2);
   }
   assert.equal(writes, 0);
 });

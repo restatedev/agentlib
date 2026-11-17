@@ -7,10 +7,10 @@ export {serviceTool} from "./service-tool.js";
 export type {ServiceToolOptions, KeyArg} from "./service-tool.js";
 export {journaledModel} from "./model.js";
 export {
-  ModelProtocolError,
+  AgentTerminalError,
+  isAgentTerminal,
   ToolError,
   GuardrailError,
-  AgentLimitError,
   RunFailedError,
   RunInputError,
   ContextOverflowError,
