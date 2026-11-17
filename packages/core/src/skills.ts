@@ -24,7 +24,7 @@ const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_NAME = 64;
 
 /** Lists a source's skills once, journaled. A skill the model could not use is
- * skipped with a warning, so one bad skill leaves the others usable. Of two
+ * skipped with a warning, so one bad skill leaves the others usable. Of two usable
  * skills with the same name, the first is kept, and `load` and `read` receive it. */
 export function* listSkills(source: SkillSource): Operation<SkillSummary[]> {
   const listed = yield* run(
@@ -37,9 +37,13 @@ export function* listSkills(source: SkillSource): Operation<SkillSummary[]> {
   const names = new Set<string>();
   return listed.filter(({name, description}) => {
     const problem = skillProblem(name, description, names);
-    if (problem) logger().warn(`Skipped skill: ${problem}`);
+    if (problem) {
+      logger().warn(`Skipped skill: ${problem}`);
+      return false;
+    }
+    // Only a listed skill takes its name: a skipped one must not hide a later one.
     names.add(name);
-    return !problem;
+    return true;
   });
 }
 

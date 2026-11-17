@@ -118,18 +118,12 @@ A model is just a generator from `ModelRequest` to `ModelResponse`, so
 
 ### Retries and failed model calls
 
-A model call has no attempt limit of its own by default. A call that keeps
-failing follows the invocation's retry policy, which by default pauses the
-invocation once its retries run out, so you can fix the cause and resume it. In `aiModel`, a
-failure that retrying can't fix, such as a missing API key, a feature the
-provider does not support, or a request the provider rejects, pauses the
-invocation at once.
-
-Set `retry.maxAttempts` when a caller waits for the response, for example in a
-handler that serves a chat request. The call then fails once its attempts run
-out, and a failure that retrying can't fix fails at once instead of pausing.
-`run()` then throws the `TerminalError`, because the next model call would fail
-the same way. A custom model that throws a `TerminalError` ends the run too.
+A model call makes three attempts by default; pass `retry` to change that. In
+`aiModel`, a failure that retrying can't fix, such as a missing API key, a
+feature the provider does not support, or a request the provider rejects, fails
+at once. Either way, `run()` throws the `TerminalError`, because the next model
+call would fail the same way. A custom model that throws a `TerminalError` ends
+the run too.
 
 A response that the model can fix goes back to the model instead: a reply cut
 off at `maxOutputTokens` or by a content filter, an empty reply, or one that

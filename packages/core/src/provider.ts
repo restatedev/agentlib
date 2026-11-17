@@ -1,4 +1,4 @@
-import {PauseError, RetryableError, TerminalError} from "@restatedev/restate-sdk";
+import {RetryableError, TerminalError} from "@restatedev/restate-sdk";
 import type {ClientFuture, RetryOptions} from "@restatedev/restate-sdk-gen";
 import {
   APICallError,
@@ -36,10 +36,6 @@ type GenerateSettings = Parameters<typeof generateText>[0];
 
 export type ProviderOptions = {
   model: LanguageModel;
-  /** The model call's own retry policy. Without it, a failing call follows the
-   * invocation's retry policy, and a failure that retrying can't fix, such as a
-   * missing API key, pauses the invocation. With `maxAttempts` or `maxDuration`,
-   * the call fails instead. */
   retry?: RetryOptions;
   providerOptions?: GenerateSettings["providerOptions"];
   telemetry?: GenerateSettings["experimental_telemetry"];
@@ -448,13 +444,6 @@ function modelUsage(
 
 /** AI SDK supplies provider protocols; Restate owns the loop, tools, and retries. */
 export function aiModel(options: ProviderOptions): Model {
-  // A missing API key, a feature the provider does not support and a rejected
-  // request fail the same way on every attempt. Calls bounded by `retry` fail at
-  // once; otherwise the invocation pauses, so it can resume once the cause is fixed.
-  const bounded =
-    options.retry?.maxAttempts !== undefined || options.retry?.maxDuration !== undefined;
-  const unfixable = (error: Error, errorCode?: number) =>
-    bounded ? new TerminalError(error.message, {errorCode}) : PauseError.from(error);
   async function complete(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
     const settings = settingsFor(options, request, signal);
     const wantsOutput = request.outputSchema !== undefined;
@@ -485,15 +474,17 @@ export function aiModel(options: ProviderOptions): Model {
           validationError: "The response did not match the requested output schema.",
         };
       }
-      // Restate owns retries: throttling and transient provider failures stay retryable.
+      // Restate owns retries. A missing API key, a feature the provider does not
+      // support and a rejected request fail the same way on every attempt;
+      // throttling and transient provider failures stay retryable.
       if (LoadAPIKeyError.isInstance(error) || UnsupportedFunctionalityError.isInstance(error))
-        throw unfixable(error);
+        throw new TerminalError(error.message);
       // Use the SDK's parsed error code or HTTP 413, never provider-specific
       // message text. contextWindow avoids uncoded overflows up front.
       if (APICallError.isInstance(error) && contextOverflow(error))
         throw new ContextOverflowError(error.message);
       if (APICallError.isInstance(error) && !error.isRetryable)
-        throw unfixable(error, error.statusCode);
+        throw new TerminalError(error.message, {errorCode: error.statusCode});
       // Wait as long as the provider asks, so throttling does not use up the
       // retry attempts before its window has passed.
       const delay = APICallError.isInstance(error) ? retryAfter(error, options.model) : undefined;

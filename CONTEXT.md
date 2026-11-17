@@ -126,8 +126,9 @@ _Avoid_: Result editor, lifecycle controller
 A `TerminalError`, including a `ToolError`, thrown inside a run: in a tool, in
 anything a tool calls, or in a hook. The nearest agent gives it to its model, as
 the tool call's result or as a note before the model's next step, and Restate
-never retries it. The note is provisional: it is never saved.
-_Avoid_: Guardrail failure, tool failure
+never retries it. The note is provisional: it is never saved. A `GuardrailError`
+is a `ToolError` that marks the failure as a guardrail's rather than the tool's.
+_Avoid_: Tool failure
 
 **Agent-terminal failure**:
 An `AgentTerminalError`, thrown anywhere in a run or in a handler a tool calls. No

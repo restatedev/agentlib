@@ -258,39 +258,19 @@ void test("defining an AI SDK model does not require credentials", () => {
   assert.equal(typeof aiModel({model: createOpenAI()("test-model")}), "function");
 });
 
-/** An OpenAI client whose every request fails as a request retrying cannot fix. */
-function rejectingClient() {
-  const client = {
-    requests: 0,
-    model: createOpenAI({
-      apiKey: "test-only",
-      fetch: async () => {
-        client.requests++;
-        return Response.json(
-          {error: {message: "Function tools with reasoning_effort are not supported"}},
-          {status: 400},
-        );
-      },
-    }).chat("gpt-5.6-luna"),
-  };
-  return client;
-}
-
-void test("permanent OpenAI errors pause the invocation after one request", async () => {
-  const client = rejectingClient();
-  const a = agent({model: aiModel({model: client.model})});
-  const failure = await runHandler((ctx) => execute(ctx, a.run("hello"))).then(
-    () => assert.fail("expected the invocation to pause"),
-    (error: Error & {pause?: boolean}) => error,
-  );
-  assert.equal(failure.pause, true);
-  assert.match(failure.message, /Function tools/);
-  assert.equal(client.requests, 1);
-});
-
-void test("with a bounded retry, permanent OpenAI errors fail once and replay without HTTP", async () => {
-  const client = rejectingClient();
-  const a = agent({model: aiModel({model: client.model, retry: {maxAttempts: 3}})});
+void test("permanent OpenAI errors fail once and replay without HTTP", async () => {
+  let requests = 0;
+  const client = createOpenAI({
+    apiKey: "test-only",
+    fetch: async () => {
+      requests++;
+      return Response.json(
+        {error: {message: "Function tools with reasoning_effort are not supported"}},
+        {status: 400},
+      );
+    },
+  });
+  const a = agent({model: aiModel({model: client.chat("gpt-5.6-luna")})});
   const handler = async (ctx: Parameters<typeof execute>[0]) => {
     try {
       return await execute(ctx, a.run("hello"));
@@ -300,10 +280,10 @@ void test("with a bounded retry, permanent OpenAI errors fail once and replay wi
   };
   const live = await runHandler(handler);
   assert.match(live.output.error, /Function tools/);
-  assert.equal(client.requests, 1);
+  assert.equal(requests, 1);
   const replay = await runHandler(handler, {replay: live.journal});
   assert.deepEqual(replay.output, live.output);
-  assert.equal(client.requests, 1);
+  assert.equal(requests, 1);
 });
 
 void test("interrupting a run aborts the model request in flight", async () => {

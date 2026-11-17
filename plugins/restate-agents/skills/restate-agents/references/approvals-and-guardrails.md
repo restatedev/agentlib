@@ -125,8 +125,9 @@ rejects: to replace the input, return `{message}`, not the new text.
 A rejection from `beforeRun`, `beforeTool` or `afterRun` reaches the model,
 which decides what to do next, for example answering that it can't help. An
 `afterRun` rejection of a stopped or interrupted result is the exception: no
-model step follows it, so `run()` throws a `ToolError` with code `denied` and
-the reason. To stop the run instead, throw `AgentTerminalError` from the hook.
+model step follows it, so `run()` throws a `GuardrailError` with code `denied`
+and the reason. A `GuardrailError` is a `ToolError` that marks a failure as the
+guardrail's rather than the tool's. To stop the run instead, throw `AgentTerminalError` from the hook.
 
 | Hook                            | Checks                                   | A rejection                                                              | Replace with                          |
 | ------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------- |
@@ -142,6 +143,14 @@ step's model call and gives the model a note before the next step, and
 `{messages}` sends other messages in that request only. A rejection uses up the
 step, so a `beforeStep` that rejects every step ends the run as `stopped` with
 `max_steps`.
+
+A rejection does not keep data from the model. When the run stops, the summary
+of the stopped run sends the recorded history to `finalize` (or the model)
+without running `beforeStep`, including the content the hook rejected. To keep
+data from every model call, remove it where it enters the history: return
+`{message}` from `beforeRun`, or replace a tool's output in `afterTool`. To stop
+the run instead, throw `AgentTerminalError` from the hook; `finalize: false`
+skips the summary.
 
 ### What is recorded
 
@@ -229,7 +238,8 @@ const support = agent({
 A hook that throws a `TerminalError`, for example because a policy model is
 down, doesn't fail the run: the model receives the error, as it does a
 rejection. From `beforeTool` or `afterTool`, it is the call's result, with
-code `tool_failed` or the code of a `ToolError`. From `beforeRun`, `beforeStep`
+code `guardrail_failed` and a message that starts with `Policy check failed:`,
+or with the code of a `ToolError` the hook threw. From `beforeRun`, `beforeStep`
 or `afterRun`, it is a note before the model's next step; from `afterRun` for a
 stopped or interrupted result, it fails the run, as a rejection does. From
 `beforeSteering`, it rejects the steering message. Throw `AgentTerminalError`

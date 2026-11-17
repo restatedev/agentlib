@@ -120,8 +120,7 @@ export async function runHandler(handler, {replay = [], onProposal} = {}) {
                 [...data].map(([k, v]) => [k, Buffer.isBuffer(v) ? v.toString() : v]),
             ),
             // ErrorMessage.next_retry_delay: how long Restate waits before the next attempt.
-            // Field 9 asks Restate to pause the invocation instead of retrying it.
-            {nextRetryDelay: data.get(8), pause: data.get(9) === 1},
+            {nextRetryDelay: data.get(8)},
           );
         } else if (type !== 3) {
           throw new Error("Unsupported test protocol frame: " + type.toString(16));

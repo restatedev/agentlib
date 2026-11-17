@@ -1,5 +1,5 @@
 import type {Operation} from "@restatedev/restate-sdk-gen";
-import {guardrailDecision, mustPropagate, ToolError} from "./errors.js";
+import {GuardrailError, guardrailDecision, mustPropagate} from "./errors.js";
 import type {
   GuardrailResult,
   Message,
@@ -66,7 +66,7 @@ export function applyOutputDecision<O>(
 ): RunResult<O> {
   const decision = guardrailDecision("afterRun", returned, "output");
   if (!decision) return result;
-  if ("reject" in decision) throw new ToolError(decision.reject, "denied");
+  if ("reject" in decision) throw new GuardrailError(decision.reject, "denied");
   if (result.status === "completed") {
     // The root output schema (or text contract) validates this before publication.
     return {...result, output: decision.replace as O};

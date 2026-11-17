@@ -183,7 +183,10 @@ progress; a `steering-rejected` event carries the reason and the message's
 
 `onProgress` receives each event as the run goes: `step`, `tool-start`,
 `tool-info`, `tool-progress`, `tool-end`, `steering`, `steering-rejected`,
-`handoff`, and `compaction` (`applied` or `failed`). A tool reports partial
+`error-note`, `handoff`, and `compaction` (`applied` or `failed`). An
+`error-note` reports an error the model received as a note instead of the run
+failing, such as a failed `beforeStep`, with its `origin`, `code` and
+`message`; the note itself is never saved. A tool reports partial
 progress with `context.progress(value)`. `tool-end` carries
 the call's final display `info`, so a UI can label a finished call from one
 event; `tool-start` carries it too when the tool's `describe` is a fixed

@@ -24,10 +24,7 @@ const providers = {
     })("anthropic.claude-sonnet-4-5"),
   google: (fetch) => createGoogleGenerativeAI({apiKey: "test-only", fetch})("gemini-2.5-flash"),
 } satisfies Record<string, (fetch: Fetch) => LanguageModel>;
-// A model call has no retry policy of its own by default, so without a usable
-// wait from the provider, the invocation's retry policy decides how long
-// Restate waits, and the attempt reports no delay.
-const restateDefault = undefined;
+const restateDefault = 50;
 
 /** How long Restate waits before retrying a model call that got this 429. */
 async function retryDelay(
@@ -81,20 +78,16 @@ void test("retry-after headers are read", async () => {
     {headers: {"retry-after-ms": "soon", "retry-after": "3"}, delay: [3000, 3000]},
     {headers: {"retry-after-ms": "-1", "retry-after": "5"}, delay: [5000, 5000]},
     {headers: {"retry-after-ms": "Infinity", "retry-after": "5"}, delay: [5000, 5000]},
+    // Unusable or missing headers keep Restate's own backoff.
+    {headers: {"retry-after": inSeconds(-30)}, delay: [restateDefault, restateDefault]},
+    {headers: {"retry-after": "later"}, delay: [restateDefault, restateDefault]},
+    {headers: {}, delay: [restateDefault, restateDefault]},
   ];
   for (const {headers, delay} of cases) {
     const actual = (await retryDelay(providers.openai, {headers})) ?? -1;
     const [min, max] = delay;
     assert.ok(min <= actual && actual <= max, `${JSON.stringify(headers)}: waited ${actual} ms`);
   }
-  // Unusable or missing headers keep Restate's own backoff.
-  const unusable: Record<string, string>[] = [
-    {"retry-after": inSeconds(-30)},
-    {"retry-after": "later"},
-    {},
-  ];
-  for (const headers of unusable)
-    assert.equal(await retryDelay(providers.openai, {headers}), restateDefault);
 });
 
 void test("Google's RetryInfo sets the wait when no header does", async () => {

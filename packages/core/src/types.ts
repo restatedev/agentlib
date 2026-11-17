@@ -125,6 +125,17 @@ export type ProgressEvent =
   | {type: "steering"; message: string; data?: JsonValue}
   /** `beforeSteering` rejected a steering message; it was not recorded. */
   | {type: "steering-rejected"; reason: string; data?: JsonValue}
+  /** The model received an error as a note before its next call, instead of the
+   * run failing: `beforeRun`, the `instructions` function, `beforeStep` or `afterRun`
+   * failed or rejected, or the run discarded the model's response (`origin` is
+   * `model`). `code` is the error's code, when it has one. The note itself is never
+   * saved or returned, so this event is the only record of it outside the model. */
+  | {
+      type: "error-note";
+      origin: "beforeRun" | "instructions" | "beforeStep" | "model" | "afterRun";
+      code?: string;
+      message: string;
+    }
   | {type: "handoff"; agent?: string}
   /** The run replaced older messages of the model's view, with a handoff note
    * (`summary`) or a short runtime note (`truncate`), or failed to summarize.
@@ -318,9 +329,10 @@ export type AgentOptions<Context, Output = string> = {
    * would change the history, and keep the ones you do not change.
    *
    * Summary calls do not run this hook: the summary of a stopped run (`finalize`) and
-   * compaction summaries send the history as recorded, possibly to another model. To
-   * keep data from every model call, remove it from the history with `beforeRun`,
-   * `beforeSteering` and `afterTool`. */
+   * compaction summaries send the history as recorded, possibly to another model. That
+   * includes content a rejection skipped: a run whose steps are all rejected stops, and
+   * its summary still sends that history. To keep data from every model call, remove it
+   * from the history with `beforeRun`, `beforeSteering` and `afterTool`. */
   beforeStep?(request: StepRequest, context: RunContext<Context>): Operation<StepDecision>;
   /** Checks every tool call, before its input is validated. Return nothing or `true` to
    * allow; a string or `false` denies it, and the model gets the reason as the call's
@@ -341,7 +353,7 @@ export type AgentOptions<Context, Output = string> = {
    * to accept. A string or `false` rejects a completed answer: the model gets the answer
    * back with a note, for another step, and neither is saved. For a stopped or
    * interrupted result, no model step follows, so a rejection fails the run with a
-   * `ToolError` whose code is `denied`. Return `{output}` to replace the output: the
+   * `GuardrailError` whose code is `denied`. Return `{output}` to replace the output: the
    * replacement is recorded, returned and saved; the candidate never enters the history. */
   afterRun?(
     candidate: OutputCandidate<Output>,
@@ -411,7 +423,7 @@ export type SkillSummary = {
 export type SkillSource = {
   /** The skills to offer. Called once per run; the list holds for the run. A
    * skill with an invalid name, an empty description, or the name of an earlier
-   * skill is skipped with a warning. */
+   * listed skill is skipped with a warning; a skipped skill does not reserve its name. */
   list(options: {signal: AbortSignal}): Promise<SkillSummary[]>;
   /** A skill's instructions, such as the body of its SKILL.md. */
   load(skill: SkillSummary, options: {signal: AbortSignal}): Promise<string>;

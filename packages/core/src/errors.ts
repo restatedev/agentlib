@@ -39,6 +39,17 @@ export class ToolError extends TerminalError {
     this.toolCode = code;
   }
 }
+/** A guardrail's failure or rejection. It is a `ToolError` and behaves like one; its
+ * class and code tell the model and your code that a guardrail failed, not the tool
+ * or step it guards. A `TerminalError` without a code thrown by `beforeTool` or
+ * `afterTool` becomes one with code `guardrail_failed`, and a rejection by
+ * `beforeRun`, `beforeStep` or `afterRun` is one with code `denied`. */
+export class GuardrailError extends ToolError {
+  constructor(message: string, code = "guardrail_failed") {
+    super(message, code);
+    this.name = "GuardrailError";
+  }
+}
 /** A tool call's rejection: the call's result has status `denied`. */
 export class ToolDenied extends ToolError {
   constructor(message: string) {

@@ -9,6 +9,7 @@ import {z} from "zod";
 import {guardrailDecision, ToolCancelled, ToolDenied, ToolError} from "./errors.js";
 import {PARENT_USAGE} from "./run-usage.js";
 import {assertNotForked} from "./fork-source.js";
+import {forwardProgress} from "./tool-executor.js";
 import type {
   Agent,
   AsyncToolDefinition,
@@ -240,8 +241,9 @@ export function agentTool<C, O>(
         name: `${context.name}/${context.callId}`,
         // The sub-agent's approval requests reach whoever the parent run publishes to.
         onApproval: context.publishApproval,
-        // Each sub-agent event arrives as progress of the parent's call.
-        onProgress: (event) => context.progress(event),
+        // Each sub-agent event arrives as progress of the parent's call. The
+        // sub-agent's own limits bound its events, so the parent's do not apply.
+        onProgress: forwardProgress(context as ToolContext<unknown>),
         // The sub-agent's usage counts toward the parent run, whatever its outcome.
         [PARENT_USAGE]: (context as {[PARENT_USAGE]?: unknown})[PARENT_USAGE],
       } as RunOptions<C>;

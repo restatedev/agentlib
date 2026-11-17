@@ -25,6 +25,9 @@ across journaled steps and RPC calls.
   handle a failure, for example by trying another approach.
 - Throw `ToolError` (from `@restatedev/agentlib`) to also give the model an
   error code, such as `not_found`. A `ToolError` is a `TerminalError`.
+- Throw `GuardrailError` (from `@restatedev/agentlib`) from a guardrail to mark
+  the failure as the guardrail's rather than the tool's. It is a `ToolError`
+  with code `guardrail_failed` by default.
 - Throw `AgentTerminalError` (from `@restatedev/agentlib`) when the agent must
   stop immediately, for example because the request it serves is no longer
   valid.
@@ -74,6 +77,12 @@ The code is the `ToolError`'s code, or `tool_failed` for any other
 `TerminalError`. The other calls in the same batch keep running, and the model
 sees every result in its next step, so a failed call costs no extra step.
 
+The agent's `beforeTool` and `afterTool` policies are guardrails, so the model
+can tell their failures from the tool's: a `TerminalError` without a code from
+either one becomes a `GuardrailError` with code `guardrail_failed`, and its
+message starts with `Policy check failed:`. A `ToolError` thrown by a policy
+keeps its code.
+
 A rejection by `beforeTool`, the tool's `before`, or a human approver is
 recorded with status `denied` instead:
 `{"status": "denied", "message": "Searching is off today"}`.
@@ -94,7 +103,17 @@ user message from the runtime, before the model's next call.
 `origin` says where the error came from. `code` appears when the error is a
 `ToolError` or the SDK provides one. Notes are provisional: the model sees them
 for the rest of the run, but they are never saved to the conversation or
-returned in `result.messages`.
+returned in `result.messages`. Each note emits an `error-note` progress event
+with the same `origin`, `code` and `message`, so `onProgress` can record what
+went wrong:
+
+```ts
+const result = yield* support.run(message, {
+  *onProgress(event) {
+    if (event.type === "error-note") yield* recordProblem(event.origin, event.code, event.message);
+  },
+});
+```
 
 | Where the `TerminalError` is thrown                                 | What the run does                                                         | Uses up the step |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------- |
@@ -124,6 +143,7 @@ call.
 | Code                  | Meaning                                                                                       |
 | --------------------- | --------------------------------------------------------------------------------------------- |
 | `tool_failed`         | A tool call failed with a `TerminalError` that has no code.                                   |
+| `guardrail_failed`    | `beforeTool` or `afterTool` failed with a `TerminalError` that has no code.                   |
 | `tool_error`          | The default code of a `ToolError`, for example an MCP result with `isError`.                  |
 | `invalid_input`       | The model's arguments failed the tool's input schema.                                         |
 | `invalid_output`      | The tool returned something that isn't JSON.                                                  |
@@ -200,7 +220,8 @@ the invocation instead of failing it:
   isn't text for an agent without an output schema, isn't JSON, or is longer
   than `maxOutputChars` (`TypeError`, `RangeError`).
 - A tool's display information or progress is longer than `maxOutputChars`
-  (`RangeError`).
+  (`RangeError`). Events a sub-agent or fork forwards are not checked: the
+  sub-agent's own limits apply to them.
 - `skills()` receives a skill with an invalid name, an empty description, or
   the name of another skill (`TypeError`). It throws when it's called, usually
   when the service starts.
@@ -225,17 +246,12 @@ The journal records a failed model call, so a replay repeats the step without
 calling the provider. The tokens the discarded response used still count in
 `result.usage`.
 
-A model call that fails is retried. It has no attempt limit of its own by
-default: it follows the invocation's retry policy. In `aiModel`, a failure that
-retrying can't fix, such as a missing API key, a feature the provider doesn't
-support, or a request the provider rejects, pauses the invocation at once.
-
-Set `retry.maxAttempts` (or `retry.maxDuration`) on the model when a caller
-waits for the response, for example in a chat handler. The call then fails
-once its attempts run out, and a failure that retrying can't fix fails at once.
-Either way, `run()` throws the `TerminalError`, because the next model call
-would fail the same way. A custom model that throws a `TerminalError` ends the
-run too.
+A model call that fails is retried, three attempts by default; pass `retry` to
+the model to change that. In `aiModel`, a failure that retrying can't fix, such
+as a missing API key, a feature the provider doesn't support, or a request the
+provider rejects, fails at once. Either way, `run()` throws the
+`TerminalError`, because the next model call would fail the same way. A custom
+model that throws a `TerminalError` ends the run too.
 
 When the model rejects a request as longer than its context window, the run
 shrinks its view of the history once and asks again. If that request overflows
@@ -253,9 +269,23 @@ A guardrail rejects by returning a reason or `false`:
   with status `denied`.
 - A rejection from `beforeSteering` drops the steering message.
 
+The SDK represents a rejection from `beforeRun`, `beforeStep` or `afterRun` as a
+`GuardrailError` with code `denied`. A `GuardrailError` is a `ToolError`, so it
+behaves like one; its class and code tell the model and your code that a
+guardrail failed, not the tool or step it guards. When `afterRun` rejects a
+stopped or interrupted result, no model step can follow, so `run()` throws that
+`GuardrailError`.
+
 Throw from a hook only when the check itself failed, for example because a
 policy service is down; the model then receives the failure in the same place.
-To stop the run on a rejection, throw `AgentTerminalError` from the hook.
+Throw `GuardrailError` to mark the failure as the guardrail's anywhere, for
+example from a tool's own `before`. To stop the run on a rejection, throw
+`AgentTerminalError` from the hook.
+
+A `beforeStep` rejection does not keep content from the model: when the run
+stops, the summary of the stopped run sends the recorded history to `finalize`
+without running `beforeStep`. Set `finalize: false`, throw
+`AgentTerminalError`, or remove the content where it enters the history.
 
 A rejected input stays in the run's history and is saved when the run
 completes. Return `{message}` from `beforeRun` to record a redacted input
@@ -320,8 +350,8 @@ Some failures have a fallback instead of an outcome:
   too long.
 - A skill source other than `skills()` that lists a skill with an invalid
   name, an empty description, or a name already listed: the run skips that
-  skill and logs a warning. Of two skills with the same name, the run keeps the
-  first, and `load` receives it.
+  skill and logs a warning. Of two usable skills with the same name, the run
+  keeps the first, and `load` receives it.
 
 An `AgentTerminalError` and cancellation skip these fallbacks and fail the run.
 

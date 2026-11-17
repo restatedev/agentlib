@@ -3,7 +3,6 @@ import {test} from "node:test";
 import type {Context, TerminalError} from "@restatedev/restate-sdk";
 import {APICallError, LoadAPIKeyError, UnsupportedFunctionalityError} from "ai";
 import * as r from "@restatedev/restate-sdk-gen";
-import type {RetryOptions} from "@restatedev/restate-sdk-gen";
 import {MockLanguageModelV4, simulateReadableStream} from "ai/test";
 import {z} from "zod";
 import {agent, handoff, tool, type ModelResponse} from "@restatedev/agentlib";
@@ -399,7 +398,7 @@ void test("live chunks occur only during provider I/O and are not replayed", asy
   assert.equal(live.length, 3);
 });
 
-const failing = (error: Error, retry?: RetryOptions) => {
+const failing = (error: Error) => {
   let calls = 0;
   const provider = new MockLanguageModelV4({
     doGenerate: async () => {
@@ -407,7 +406,7 @@ const failing = (error: Error, retry?: RetryOptions) => {
       throw error;
     },
   });
-  const a = agent({model: aiModel({model: provider, retry})});
+  const a = agent({model: aiModel({model: provider})});
   const run = runHandler((context) =>
     r.execute(
       context,
@@ -432,31 +431,17 @@ const rejected = (statusCode: number, isRetryable: boolean) =>
     isRetryable,
   });
 
-const unfixable = () => [
-  {error: new LoadAPIKeyError({message: "OPENAI_API_KEY is not set"}), message: /OPENAI_API_KEY/},
-  {
-    error: new UnsupportedFunctionalityError({functionality: "structured outputs"}),
-    message: /structured outputs/,
-  },
-  {error: rejected(400, false), message: /status 400/, code: 400},
-];
-
-void test("provider failures a retry cannot fix pause the invocation", async () => {
-  for (const {error, message} of unfixable()) {
+void test("provider failures a retry cannot fix fail the run terminally", async () => {
+  const cases = [
+    {error: new LoadAPIKeyError({message: "OPENAI_API_KEY is not set"}), message: /OPENAI_API_KEY/},
+    {
+      error: new UnsupportedFunctionalityError({functionality: "structured outputs"}),
+      message: /structured outputs/,
+    },
+    {error: rejected(400, false), message: /status 400/, code: 400},
+  ];
+  for (const {error, message, code} of cases) {
     const {run, calls} = failing(error);
-    const failure = await run.then(
-      () => assert.fail("expected the invocation to pause"),
-      (e: Error & {pause?: boolean}) => e,
-    );
-    assert.equal(failure.pause, true);
-    assert.match(failure.message, message);
-    assert.equal(calls(), 1);
-  }
-});
-
-void test("with a bounded retry, provider failures a retry cannot fix fail the run", async () => {
-  for (const {error, message, code} of unfixable()) {
-    const {run, calls} = failing(error, {maxAttempts: 3});
     const {output} = await run;
     assert.equal(calls(), 1);
     assert.match(output.message, message);
@@ -467,9 +452,6 @@ void test("with a bounded retry, provider failures a retry cannot fix fail the r
 void test("a throttled provider call stays retryable", async () => {
   const {run, calls} = failing(rejected(429, true));
   // The harness surfaces a retryable failure instead of retrying it.
-  await assert.rejects(
-    run,
-    (e: Error & {pause?: boolean}) => /SDK failure.*status 429/.test(e.message) && !e.pause,
-  );
+  await assert.rejects(run, /SDK failure.*status 429/);
   assert.equal(calls(), 1);
 });

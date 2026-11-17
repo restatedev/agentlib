@@ -14,6 +14,7 @@ import {
   ContextOverflowError,
   ConversationConflictError,
   forkAgentTool,
+  GuardrailError,
   handoff,
   isAgentTerminal,
   isContextOverflow,
@@ -205,10 +206,15 @@ void test("a TerminalError from any part of a tool call becomes that call's resu
     });
     const result = await r.execute(ctx(), a.run("go", run));
     assert.equal(result.status, "completed", site);
+    // The agent's policies are guardrails: the model can tell them from the tool.
+    const policy = site === "beforeTool" || site === "afterTool";
+    const failed = policy
+      ? {code: "guardrail_failed", message: "Policy check failed: boom"}
+      : {code: "tool_failed", message: "boom"};
     assert.deepEqual(
       results(result.messages),
       {
-        work: {status: "error", code: "tool_failed", message: "boom"},
+        work: {status: "error", ...failed},
         other: {status: "success", output: "ok"},
       },
       site,
@@ -216,6 +222,42 @@ void test("a TerminalError from any part of a tool call becomes that call's resu
     // The failed call used no extra step: the model saw it with its batch.
     assert.equal(result.steps, 2, site);
   }
+});
+
+void test("a guardrail's own ToolError keeps its code, and GuardrailError behaves like ToolError", async () => {
+  const marked = new GuardrailError("Blocked by policy");
+  assert.ok(marked instanceof ToolError && marked instanceof TerminalError);
+  assert.equal(marked.toolCode, "guardrail_failed");
+  assert.deepEqual(marked.metadata, {"agentlib.code": "guardrail_failed"});
+
+  const a = agent({
+    tools: {
+      work: tool({
+        ...base,
+        *execute() {
+          return "ran";
+        },
+      }),
+      other: tool({
+        ...base,
+        *execute() {
+          return "ran";
+        },
+      }),
+    },
+    *beforeTool(call) {
+      if (call.name === "work") throw new ToolError("Remove the account number", "pii_detected");
+      throw new GuardrailError("The policy service is down");
+    },
+    *model(request): Generator<never, ModelResponse> {
+      return request.step === 1 ? batch("work", "other") : done;
+    },
+  });
+  const result = await r.execute(ctx(), a.run("go"));
+  assert.deepEqual(results(result.messages), {
+    work: {status: "error", code: "pii_detected", message: "Remove the account number"},
+    other: {status: "error", code: "guardrail_failed", message: "The policy service is down"},
+  });
 });
 
 void test("a ToolError gives the model its code, also through a nested call", async () => {
@@ -344,19 +386,55 @@ void test("a hook's TerminalError becomes a note before the model's next call", 
         return done;
       },
     });
-    const result = await r.execute(ctx(), a.run("go"));
+    const events: ProgressEvent[] = [];
+    const result = await r.execute(
+      ctx(),
+      a.run("go", {
+        *onProgress(event) {
+          if (event.type === "error-note") events.push(event);
+        },
+      }),
+    );
     assert.equal(result.status, "completed", origin);
     assert.equal(result.steps, steps, origin);
     // The model was called once, after the failure, and saw the note.
     const message = code ? "Remove the account number" : "boom";
-    assert.deepEqual(
-      seen,
-      [[{source: "agent-runtime", type: "error", origin, ...(code ? {code} : {}), message}]],
-      origin,
-    );
-    // Notes are never saved or returned.
+    const details = {origin, ...(code ? {code} : {}), message};
+    assert.deepEqual(seen, [[{source: "agent-runtime", type: "error", ...details}]], origin);
+    // Notes are never saved or returned; a progress event reports each one.
     assert.deepEqual(notes(result.messages), [], origin);
+    assert.deepEqual(events, [{type: "error-note", ...details}], origin);
   }
+});
+
+void test("a discarded model response and an afterRun rejection each report an error-note event", async () => {
+  const events: ProgressEvent[] = [];
+  const a = agent({
+    maxOutputChars: 20,
+    *afterRun(result) {
+      if (result.status === "completed" && result.output === "short") return "Cite a source";
+    },
+    *model(request): Generator<never, ModelResponse> {
+      const answers = ["far longer than the twenty character limit", "short", "short, cited"];
+      return {type: "final", text: answers[request.step! - 1]!};
+    },
+  });
+  const result = await r.execute(
+    ctx(),
+    a.run("go", {
+      *onProgress(event) {
+        if (event.type === "error-note") events.push(event);
+      },
+    }),
+  );
+  assert.equal(result.output, "short, cited");
+  assert.deepEqual(
+    events.map((event) => event.type === "error-note" && [event.origin, event.code]),
+    [
+      ["model", "output_limit"],
+      ["afterRun", "denied"],
+    ],
+  );
 });
 
 void test("an afterRun TerminalError gives the model its answer back with a note", async () => {
@@ -407,14 +485,20 @@ void test("afterRun rejecting every completed answer ends as stopped", async () 
 });
 
 void test("afterRun failing for a stopped result fails the run: no model step follows", async () => {
-  for (const afterRun of [
-    function* () {
-      throw new TerminalError("Summary rejected");
-    },
-    function* () {
-      return "Summary rejected";
-    },
-  ]) {
+  for (const [afterRun, expected] of [
+    [
+      function* () {
+        throw new TerminalError("Summary rejected");
+      },
+      {name: "TerminalError", message: "Summary rejected"},
+    ],
+    [
+      function* () {
+        return "Summary rejected";
+      },
+      {name: "GuardrailError", message: "Summary rejected", toolCode: "denied"},
+    ],
+  ] as const) {
     const a = agent({
       maxSteps: 1,
       finalize: false,
@@ -424,7 +508,7 @@ void test("afterRun failing for a stopped result fails the run: no model step fo
       },
       afterRun,
     });
-    await assert.rejects(r.execute(ctx(), a.run("go")), {message: "Summary rejected"});
+    await assert.rejects(r.execute(ctx(), a.run("go")), expected);
   }
 });
 
@@ -668,6 +752,80 @@ void test("an AgentTerminalError from a fork's tool fails the parent run too", a
   });
   await assert.rejects(r.execute(ctx(), a.run("go")), {name: "AgentTerminalError"});
   assert.deepEqual({parentCalls, forkCalls}, {parentCalls: 1, forkCalls: 1});
+});
+
+void test("a sub-agent's or fork's events reach the parent whatever the parent's output limit", async () => {
+  // Within the sub-agent's own limit, past the parent's.
+  const big = tool({
+    ...base,
+    *execute() {
+      return "x".repeat(5000);
+    },
+  });
+  // A fork shares the parent's limit: a result just within it makes a larger event.
+  const near = tool({
+    ...base,
+    *execute() {
+      return "x".repeat(1950);
+    },
+  });
+  const sub = agent({
+    tools: {big},
+    codeMode: false,
+    *model(request): Generator<never, ModelResponse> {
+      return request.step === 1 ? batch("big") : done;
+    },
+  });
+  for (const via of ["agentTool", "fork"] as const) {
+    let forwarded = 0;
+    const a = agent({
+      maxOutputChars: 2000,
+      codeMode: false,
+      tools:
+        via === "fork"
+          ? {big: near, fork: forkAgentTool()}
+          : {delegate: agentTool(sub, {description: "Delegate"})},
+      *model(request): Generator<never, ModelResponse> {
+        const forked = JSON.stringify(request.messages).includes("[Forked sub-agent]");
+        if (forked)
+          return request.messages.some((m) => m.role === "tool" && m.callId === "big")
+            ? done
+            : batch("big");
+        if (request.step! > 1) return done;
+        const name = via === "fork" ? "fork" : "delegate";
+        return {type: "tool_calls", calls: [{id: name, name, input: {task: "Look"}}]};
+      },
+    });
+    const result = await r.execute(
+      ctx(),
+      a.run("go", {
+        *onProgress(event) {
+          if (event.type === "tool-progress" && JSON.stringify(event.value).length > 2000)
+            forwarded++;
+        },
+      }),
+    );
+    assert.equal(result.status, "completed", via);
+    assert.ok(forwarded > 0, via);
+  }
+  // A tool's own progress still has to fit.
+  const noisy = agent({
+    maxOutputChars: 2000,
+    codeMode: false,
+    tools: {
+      noisy: tool({
+        ...base,
+        *execute(_input, context) {
+          yield* context.progress("x".repeat(3000));
+          return "ok";
+        },
+      }),
+    },
+    *model(request): Generator<never, ModelResponse> {
+      return request.step === 1 ? batch("noisy") : done;
+    },
+  });
+  await assert.rejects(r.execute(ctx(), noisy.run("go")), RangeError);
 });
 
 void test("an AgentTerminalError with code 413 is not a context overflow", async () => {
@@ -987,6 +1145,7 @@ void test("every exported error class has a name", () => {
     [AgentTerminalError, "AgentTerminalError"],
     [RunFailedError, "AgentTerminalError"],
     [ToolError, "ToolError"],
+    [GuardrailError, "GuardrailError"],
     [RunInputError, "RunInputError"],
     [ContextOverflowError, "ContextOverflowError"],
     [ConversationConflictError, "ConversationConflictError"],

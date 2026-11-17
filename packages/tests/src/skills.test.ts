@@ -160,12 +160,14 @@ void test("skills() rejects a skill the model could not use where it is defined"
   });
 });
 
-void test("a source's skill the model could not use is skipped; of duplicates, the first loads", async () => {
+void test("a source's skill the model could not use is skipped; of duplicates, the first usable one loads", async () => {
   const loaded: (string | undefined)[] = [];
   const source: SkillSource = {
     list: async () => [
       {name: "PDF Forms", description: "Fill in PDF forms."},
       {name: "no-description", description: ""},
+      // A skipped skill does not take its name from a later, usable one.
+      {name: "pdf-forms", description: "", location: "empty"},
       {name: "pdf-forms", description: "Fill in PDF forms.", location: "first"},
       {name: "pdf-forms", description: "A second skill with the same name.", location: "second"},
     ],

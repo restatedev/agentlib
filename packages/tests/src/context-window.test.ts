@@ -585,28 +585,20 @@ void test("overflow recovery replays from the journal", async () => {
 
 void test("AI SDK classifies overflow codes and HTTP 413, never matching error messages", async () => {
   const request: ModelRequest = {messages: [{role: "user", content: "hi"}], tools: []};
-  const failure = async (model: Model) => {
-    try {
-      const {output} = await runHandler((ctx) =>
-        r.execute(
-          ctx,
-          (function* () {
-            try {
-              yield* model(request);
-              return "no error";
-            } catch (error) {
-              return isContextOverflow(error) ? "overflow" : "other";
-            }
-          })(),
-        ),
-      );
-      return output;
-    } catch (error) {
-      // Any other rejected request pauses the invocation: retrying cannot fix it.
-      if ((error as {pause?: boolean}).pause) return "paused";
-      throw error;
-    }
-  };
+  const failure = (model: Model) =>
+    runHandler((ctx) =>
+      r.execute(
+        ctx,
+        (function* () {
+          try {
+            yield* model(request);
+            return "no error";
+          } catch (error) {
+            return isContextOverflow(error) ? "overflow" : "other";
+          }
+        })(),
+      ),
+    );
   const openai = (status: number, error: Record<string, unknown>) =>
     aiModel({
       model: createOpenAI({
@@ -615,22 +607,26 @@ void test("AI SDK classifies overflow codes and HTTP 413, never matching error m
       }).chat("test-model"),
     });
   assert.equal(
-    await failure(
-      openai(400, {
-        message: "This model's maximum context length is 128000 tokens.",
-        code: "context_length_exceeded",
-      }),
-    ),
+    (
+      await failure(
+        openai(400, {
+          message: "This model's maximum context length is 128000 tokens.",
+          code: "context_length_exceeded",
+        }),
+      )
+    ).output,
     "overflow",
   );
   // The same words without the code are not an overflow.
   assert.equal(
-    await failure(
-      openai(400, {message: "This model's maximum context length is 128000 tokens.", code: null}),
-    ),
-    "paused",
+    (
+      await failure(
+        openai(400, {message: "This model's maximum context length is 128000 tokens.", code: null}),
+      )
+    ).output,
+    "other",
   );
-  assert.equal(await failure(openai(413, {message: "Request too large"})), "overflow");
+  assert.equal((await failure(openai(413, {message: "Request too large"}))).output, "overflow");
 
   const ai = (message: string, statusCode: number) =>
     aiModel({
@@ -648,11 +644,11 @@ void test("AI SDK classifies overflow codes and HTTP 413, never matching error m
     });
   // Anthropic words an overflow as a plain 400; contextWindow avoids it instead.
   assert.equal(
-    await failure(ai("prompt is too long: 210000 tokens > 200000 maximum", 400)),
-    "paused",
+    (await failure(ai("prompt is too long: 210000 tokens > 200000 maximum", 400))).output,
+    "other",
   );
-  assert.equal(await failure(ai("Request too large", 413)), "overflow");
-  assert.equal(await failure(ai("Invalid request", 400)), "paused");
+  assert.equal((await failure(ai("Request too large", 413))).output, "overflow");
+  assert.equal((await failure(ai("Invalid request", 400))).output, "other");
 });
 
 void test("contextWindow shrinks a view that would not fit before asking", async () => {

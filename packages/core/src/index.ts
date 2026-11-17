@@ -10,6 +10,7 @@ export {
   AgentTerminalError,
   isAgentTerminal,
   ToolError,
+  GuardrailError,
   RunFailedError,
   RunInputError,
   ContextOverflowError,

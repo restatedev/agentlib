@@ -1,4 +1,3 @@
-import type {TerminalError} from "@restatedev/restate-sdk";
 import {
   handlerRequest,
   InterruptedError,
@@ -11,6 +10,7 @@ import {
 } from "@restatedev/restate-sdk-gen";
 import {
   ContextOverflowError,
+  GuardrailError,
   guardrailDecision,
   isContextOverflow,
   isResponseProblem,
@@ -28,7 +28,7 @@ import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
 import {FORK_PREAMBLE, FORK_SOURCE, type ForkSource} from "./fork.js";
 import type {ForkLimits} from "./fork-source.js";
 import {createToolCatalog, type ToolCatalog} from "./tool-catalog.js";
-import type {ToolExecutionLimits} from "./tool-executor.js";
+import {forwardProgress, type ToolExecutionLimits} from "./tool-executor.js";
 import {applyOutputDecision, createOutputCandidate, summarizeStoppedRun} from "./run-output.js";
 import {summarizeContext, truncateContext} from "./context-compaction.js";
 import {estimateTokens, jsonTokens, textTokens} from "./context-size.js";
@@ -40,7 +40,6 @@ import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validat
 import type {
   AgentOptions,
   AgentRuntime,
-  JsonValue,
   Message,
   ModelFinalResponse,
   ModelRequest,
@@ -114,30 +113,26 @@ type ForkOrigin<C> = {
 };
 
 /** Where a failure the model receives as a note came from. */
-type NoteOrigin = "beforeRun" | "instructions" | "beforeStep" | "model" | "afterRun";
-/** Work that failed in a way the model receives: the note it gets instead. */
-type Rejection = {rejected: Message};
+type NoteOrigin = ErrorNoteEvent["origin"];
+type ErrorNoteEvent = Extract<ProgressEvent, {type: "error-note"}>;
+/** Work that failed in a way the model receives: the note it gets instead, and
+ * the progress event that reports it. */
+type Rejection = {rejected: Message; event: ErrorNoteEvent};
 
-/** Tells the model why a step produced nothing, so it can try again. The note is
+/** The note for an error the model receives; any other error propagates. The note
+ * tells the model why a step produced nothing, so it can try again. It is
  * provisional: the model sees it for the rest of the run, but it is never saved. */
-function errorNote(origin: NoteOrigin, error: TerminalError): Message {
-  const code = toolErrorCode(error);
-  return {
-    role: "user",
-    content: JSON.stringify({
-      source: "agent-runtime",
-      type: "error",
-      origin,
-      ...(code === undefined ? {} : {code}),
-      message: error.message,
-    }),
-  };
-}
-
-/** The note for an error the model receives; any other error propagates. */
 function rejection(origin: NoteOrigin, error: unknown): Rejection {
   if (!reachesModel(error)) throw error;
-  return {rejected: errorNote(origin, error)};
+  const code = toolErrorCode(error);
+  const details = {origin, ...(code === undefined ? {} : {code}), message: error.message};
+  return {
+    rejected: {
+      role: "user",
+      content: JSON.stringify({source: "agent-runtime", type: "error", ...details}),
+    },
+    event: {type: "error-note", ...details},
+  };
 }
 
 /** A final answer as the model gave it, for a model that must revise it. */
@@ -279,7 +274,7 @@ class AgentRun<C, O> {
     }
     yield* this.compactConversation();
     // Compaction rebuilds the message list, so the note follows it.
-    if (rejected) this.history.appendProvisional(rejected.rejected);
+    if (rejected) yield* this.reject(rejected);
     const controls = resolveControls(this.options);
     this.steeringSource = controls.steering;
     this.steering = controls.steering?.();
@@ -293,7 +288,7 @@ class AgentRun<C, O> {
     try {
       const result = yield* this.root.beforeRun(this.history.snapshot(), this.context);
       const decision = guardrailDecision("beforeRun", result, "message");
-      if (decision && "reject" in decision) throw new ToolError(decision.reject, "denied");
+      if (decision && "reject" in decision) throw new GuardrailError(decision.reject, "denied");
       if (decision) this.history.replaceInput(decision.replace);
       return undefined;
     } catch (error) {
@@ -362,7 +357,7 @@ class AgentRun<C, O> {
         continue;
       }
       if (outcome && "rejected" in outcome) {
-        this.history.appendProvisional(outcome.rejected);
+        yield* this.reject(outcome);
         return undefined;
       }
       if (outcome?.usage) this.history.measure(mark, outcome.usage.inputTokens);
@@ -513,6 +508,13 @@ class AgentRun<C, O> {
       yield* this.options.onProgress(structuredClone(event), this.context.context);
   }
 
+  /** Gives the model a rejection's note, after `before` (such as the answer it
+   * must revise), and reports it: only the model sees the note itself. */
+  private *reject(rejection: Rejection, ...before: Message[]): Operation<void> {
+    this.history.appendProvisional(...before, rejection.rejected);
+    yield* this.emit(rejection.event);
+  }
+
   /** Runs work that steering supersedes; returns undefined when it was discarded. */
   private *candidate<T>(operation: Operation<T>): Operation<T | undefined> {
     const task = this.tasks.spawn(operation);
@@ -562,7 +564,7 @@ class AgentRun<C, O> {
       try {
         const result = yield* agent.beforeStep(request, this.context);
         const decision = guardrailDecision("beforeStep", result, "messages");
-        if (decision && "reject" in decision) throw new ToolError(decision.reject, "denied");
+        if (decision && "reject" in decision) throw new GuardrailError(decision.reject, "denied");
         if (decision)
           request.messages = stepMessages(request.messages, decision.replace as ReadonlyMessage[]);
       } catch (error) {
@@ -575,7 +577,7 @@ class AgentRun<C, O> {
     } catch (error) {
       // Any other failure would recur on the next call, so it ends the run.
       if (!isResponseProblem(error)) throw error;
-      return {rejected: errorNote("model", error)};
+      return rejection("model", error);
     }
     return this.outputLimit(response.text) ?? response;
   }
@@ -585,7 +587,7 @@ class AgentRun<C, O> {
     const max = this.config.maxOutputChars;
     if (text === undefined || text.length <= max) return undefined;
     const message = `The response has ${text.length} characters, more than the limit of ${max}. Respond more briefly.`;
-    return {rejected: errorNote("model", new ToolError(message, "output_limit"))};
+    return rejection("model", new ToolError(message, "output_limit"));
   }
 
   /** Runs one native tool-call batch. The model cannot read a partial batch, so
@@ -596,8 +598,7 @@ class AgentRun<C, O> {
     const rejected = this.tools.rejectBatch(action, this.catalog);
     if (rejected) {
       // No call has started, so the model can send a corrected batch.
-      const error = new ToolError(rejected, "invalid_response");
-      this.history.appendProvisional(errorNote("model", error));
+      yield* this.reject(rejection("model", new ToolError(rejected, "invalid_response")));
       return;
     }
     // Before the batch records its call: a fork must not inherit a call without its result.
@@ -660,7 +661,7 @@ class AgentRun<C, O> {
     // Text was checked with the response; structured output is checked as recorded.
     const oversized = this.outputLimit(recorded(parsed.output));
     if (oversized) {
-      this.history.appendProvisional(oversized.rejected);
+      yield* this.reject(oversized);
       return undefined;
     }
     const outcome = yield* this.candidate(
@@ -674,7 +675,7 @@ class AgentRun<C, O> {
     );
     if (outcome && "rejected" in outcome) {
       // As with an invalid answer, the model sees the answer and why it was rejected.
-      this.history.appendProvisional(answer(action), outcome.rejected);
+      yield* this.reject(outcome, answer(action));
       return undefined;
     }
     // Reasoning can contain readable details the output policy removed. Keep it
@@ -827,7 +828,8 @@ class AgentRun<C, O> {
         name: `${call.name}/${call.callId}`,
         // The fork has this run's policies, which publish approval requests themselves.
         onApproval: this.options?.onApproval?.bind(this.options),
-        onProgress: (event: ProgressEvent) => call.progress(event as unknown as JsonValue),
+        // Forwarded unchecked: the fork's own limits bound its events.
+        onProgress: forwardProgress(call as ToolContext<unknown>),
       } as RunOptions<C>;
       const history = this.history.branch(point.history, FORK_PREAMBLE + task);
       const origin = {active: point.active, skills: this.skills, loaded: point.loaded};

@@ -902,8 +902,8 @@ void test("a failing policy blocks the call, and the model gets the failure", as
       const result = req.messages.find((m) => m.role === "tool");
       assert.deepEqual(result?.role === "tool" && result.result, {
         status: "error",
-        code: "tool_failed",
-        message: "policy model unavailable",
+        code: "guardrail_failed",
+        message: "Policy check failed: policy model unavailable",
       });
       return done;
     },
