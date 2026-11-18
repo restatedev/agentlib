@@ -121,12 +121,14 @@ Restate journals. Move on only when the learner is ready.
       `maxSteps` or `maxToolCalls`), and `interrupted`. Do not read `output` as the answer
       unless the status is `completed`.
 - [ ] Give each run a distinct `name` when one handler runs the same agent
-      more than once (loops, races), so journal entries and approval signals
-      stay apart.
+      more than once (loops, races). The name scopes the run's approval
+      signals and idempotency keys. It does not separate journal entries,
+      which Restate matches by position.
 - [ ] Tool side effects run in `asyncTool.execute` or `restate.run`. Code in a
       `tool` generator outside those is replayed.
-- [ ] Give external writes an idempotency key (`context.callId` is stable
-      across retries).
+- [ ] Give external writes an idempotency key built from the tool context's
+      `invocationId`, `name`, and `callId`. Do not use `callId` alone: the
+      model supplies it, and it is not unique across runs or invocations.
 - [ ] Throw `TerminalError` for failures the model should handle, or
       `ToolError` to also give the model an error code. From a tool or a hook,
       the model receives the error and the run continues. Throw

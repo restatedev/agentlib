@@ -239,7 +239,9 @@ export type AsyncToolDefinition<Schema extends z.ZodType, Context = unknown> = O
   "execute"
 > & {
   execute(input: z.output<Schema>, context: AsyncToolContext<Context>): Promise<JsonValue>;
-  /** Defaults to three attempts. Use `callId` as an idempotency key for external writes. */
+  /** Defaults to three attempts, so an external write can repeat. Use
+   * `${invocationId}:${name}:${callId}` as its idempotency key: the model supplies
+   * `callId`, which is not unique across runs or invocations. */
   retry?: RetryOptions;
 };
 export type RunResult<Output = string> = {steps: number; messages: Message[]; usage: RunUsage} & (
