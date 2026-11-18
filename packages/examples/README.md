@@ -578,8 +578,11 @@ function* performWithRetry() {
 Without an explicit policy, `asyncTool` and the model adapters use three
 attempts. A supplied policy replaces that default; specify `maxAttempts` when
 you want a fixed attempt limit. The retry duration limits retries, not the
-execution time of one attempt. Pass `callId` as an idempotency key for external
-writes, since a retried attempt can repeat an effect.
+execution time of one attempt. A retried attempt can repeat an external write, so
+give each write an idempotency key built from the tool context's `invocationId`,
+`name`, and `callId`, such as `` `${invocationId}:${name}:${callId}` ``. Do not use
+`callId` alone: the model supplies it, and it is not unique across runs or
+invocations.
 
 A throttled model call waits as long as the provider asks before its next
 attempt: `aiModel` reads the `retry-after-ms` and `retry-after` response

@@ -43,7 +43,7 @@ function* (question) {
 ## Draft and review, bounded
 
 Loop over two structured agents. Give each run a distinct `name` so their
-journal entries and approval signals stay apart.
+approval signals and idempotency keys stay apart.
 
 ```ts
 for (let i = 1; i <= 3; i++) {

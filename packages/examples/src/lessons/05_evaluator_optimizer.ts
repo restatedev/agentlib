@@ -56,7 +56,7 @@ export const codeReview = restate.service({
         let code = "";
         let feedback = "";
         for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
-          // Distinct run names keep event IDs and approval namespaces independent.
+          // Distinct run names keep approval signals and idempotency keys apart.
           const draft = yield* generator.run(JSON.stringify({task, previousCode: code, feedback}), {
             name: `write-${iteration}`,
           });

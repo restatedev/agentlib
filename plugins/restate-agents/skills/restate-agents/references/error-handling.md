@@ -47,13 +47,14 @@ import {AgentTerminalError, asyncTool, ToolError} from "@restatedev/agentlib";
 refund: asyncTool({
   description: "Refund an order.",
   input: z.object({orderId: z.string()}),
-  async execute({orderId}, {context, callId}) {
+  async execute({orderId}, {context, invocationId, name, callId}) {
     const order = await orders.get(orderId); // a network error: retried
     if (!order) throw new ToolError(`No order ${orderId}`, "not_found"); // the model gets the code
     if (order.refunded) throw new TerminalError("The order was already refunded"); // the model decides
     if (order.customerId !== context.customerId)
       throw new AgentTerminalError("The order belongs to another customer"); // the run fails
-    return await payments.refund(orderId, {idempotencyKey: callId});
+    const idempotencyKey = `${invocationId}:${name}:${callId}`; // the same on every retry
+    return await payments.refund(orderId, {idempotencyKey});
   },
 }),
 ```
