@@ -60,7 +60,8 @@ export const model = aiModel({model: bedrock("<bedrock model id>")});
 ```
 
 `aiModel` also accepts `providerOptions` (passed through to the provider), an
-OpenTelemetry `tracer`, and `onChunk` for streaming text to a UI.
+OpenTelemetry `tracer`, and `onChunk` for
+[streaming text to a UI](#stream-model-text-with-onchunk).
 
 With a reasoning model, `aiModel` keeps the model's reasoning and sends it back on
 later requests; for OpenAI it sets `store: false` unless you set `store`. See
@@ -132,6 +133,69 @@ model a note that says why, and starts the next step, so a model that keeps
 failing ends the run as `stopped`. The journal records the failed call, so a
 replay repeats the step without calling the provider. See `error-handling.md`
 for how these failures fit the run's other error rules.
+
+### Stream model text with `onChunk`
+
+Pass `onChunk` to `aiModel` to receive the model's text while the provider
+generates it, for example to show an answer in a UI token by token. `aiModel`
+then streams each model call instead of waiting for the complete response:
+
+```ts
+export const model = aiModel({
+  model: openai("gpt-5.6-luna"),
+  async onChunk(event, {step}) {
+    if (event.type === "start") ui.clear(step); // a new attempt replaces the step's text
+    if (event.type === "text-delta") ui.append(step, event.text);
+  },
+});
+```
+
+Each model call delivers a `start` event, then `text-delta` and
+`reasoning-delta` events that carry the new `text`. The second argument holds
+the request's `step` and the call's abort `signal`. Only `aiModel` streams;
+`modelGateway` and `journaledModel` return complete responses.
+
+#### What Restate journals
+
+Restate does not journal chunks. `aiModel` passes each chunk to `onChunk` as it
+arrives, builds the complete response when the stream ends, and Restate
+journals that response as one entry. Until then, the chunks exist only in the
+process that received them:
+
+- If the process crashes or the provider fails during the stream, the step has
+  no journaled response. When Restate retries the model call, the provider
+  generates and bills the response again, and `onChunk` receives a new `start`
+  for the same step. Discard the text of the earlier attempt when that `start`
+  arrives.
+- After the response is journaled, a replay returns it without calling the
+  provider, and `onChunk` receives no events for that step.
+- Restate cannot resend chunks to a client that reconnects. For updates that a
+  client must receive after a crash or a reconnect, use `onProgress` (see
+  `conversations-and-controls.md`): it runs in the handler's Restate context,
+  so it can store or send each event with a journaled operation.
+
+#### Write the `onChunk` callback
+
+- `onChunk` runs inside the journaled model call, outside the handler's Restate
+  context, so it cannot use Restate operations such as state, sends, or
+  signals. Write chunks to a system outside Restate, such as a WebSocket or a
+  pub/sub service.
+- `aiModel` awaits each `onChunk` call before it reads the next chunk, so a
+  slow callback slows the model call. An error thrown from `onChunk` fails the
+  attempt.
+- Chunks arrive before the run checks the response. Text that the run later
+  rejects or replaces has already reached `onChunk`: output that does not match
+  the `output` schema or exceeds `maxOutputChars`, an answer that `afterRun`
+  rejects or replaces, and a response that steering supersedes. Don't stream
+  text to users when an output guardrail must check it first.
+- Text and reasoning stream; tool-call arguments do not. With `output`,
+  `text-delta` events carry the raw JSON of the structured output.
+- `onChunk` belongs to the model, not to a run, so it receives every call
+  through the model. The summary of a stopped or interrupted run (`finalize`)
+  and in-run compaction summaries (`compaction.model`) use the agent's model
+  unless you configure another; these requests have no step, so `onChunk`
+  receives them with `step` 0. Several runs, agents, or sub-agents that share
+  one model send events that `onChunk` cannot tell apart.
 
 ## Testing without paid model calls
 

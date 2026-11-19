@@ -149,6 +149,7 @@ repeat a completed model call.
 | Human approval               | `needsApproval`, `onApproval`, `humanApprovalTool`                         | [06](packages/examples/src/lessons/06_human_approval.ts)    |
 | Steering and interruption    | `run(input, {steeringSignal, interruptSignal})` or `{controls}`            | [09](packages/examples/src/lessons/09_support_session.ts)   |
 | Progress events              | `run(input, {onProgress})`, `context.progress`                             | [16](packages/examples/src/lessons/16_progress_feed.ts)     |
+| Streamed model text          | `aiModel({onChunk})` (`/provider`); chunks are not journaled               | —                                                           |
 | Handoffs                     | `handoff`                                                                  | —                                                           |
 | Sub-agents as tools          | `agentTool`                                                                | —                                                           |
 | Forks of the running agent   | `forkAgentTool`                                                            | [20](packages/examples/src/lessons/20_forked_agents.ts)     |

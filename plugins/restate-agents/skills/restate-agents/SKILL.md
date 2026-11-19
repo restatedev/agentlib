@@ -110,6 +110,7 @@ Restate journals. Move on only when the learner is ready.
 | Independent, separately retried agents                         | one Restate service per agent, called with `restate.client`                               |
 | A long run outgrows the model's context                        | `toolResults` (on by default), `compaction`, `contextWindow`                              |
 | Tools that depend on the request, such as a UI's own tools     | `run(input, {tools})`                                                                     |
+| Show the model's text while it is generated                    | `aiModel({onChunk})`; chunks are not journaled, see `references/models-and-testing.md`    |
 | Many task-specific instructions, loaded only when needed       | `agent({skills})` with a `SkillSource`, or `skills([...])` for skills in code             |
 | Decide what a failure does: model retries, run stops, or Restate retries | `TerminalError` / `ToolError`, `AgentTerminalError`, a plain error; see `references/error-handling.md` |
 

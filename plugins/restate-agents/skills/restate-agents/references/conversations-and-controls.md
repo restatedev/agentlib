@@ -208,6 +208,10 @@ their events as progress of the parent's tool call. Steering reaches the parent
 run only: a sub-agent or fork in the foreground finishes its task before the
 parent's model reads the steering message.
 
+Progress events do not carry the model's text. To show text as the model
+generates it, use `aiModel`'s `onChunk`; see "Stream model text with
+`onChunk`" in `models-and-testing.md`.
+
 ## Tools for one run
 
 `run(input, {tools})` adds tools to that run only, next to the agent's own.
