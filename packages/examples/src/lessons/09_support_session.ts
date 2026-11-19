@@ -125,6 +125,9 @@ export const aiSession = restate.object({
     ),
   },
   options: {
+    // Preload only the small keys that handlers read on every call. Conversation
+    // chunks are read when needed instead of sent with every invocation.
+    state: {preload: ["conversation/meta", "active", "approval"]},
     // Shared handlers run while doTurn holds the object's lock.
     handlers: {
       status: {shared: true},

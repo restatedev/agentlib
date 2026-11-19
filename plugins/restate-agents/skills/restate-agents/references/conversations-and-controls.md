@@ -45,7 +45,7 @@ const result = yield* support.run(message, {conversation});
 
 Read it from a shared handler with `yield* new LazyStateConversation().page()`.
 
-**Turn off state preloading for long or large conversations.** By default,
+**Preload only small keys for long or large conversations.** By default,
 Restate sends a snapshot of all of the object's state when each invocation
 starts, including invocations of shared handlers such as `steer` and
 `status`. Compaction changes what the model reads, not what is stored: every
@@ -54,27 +54,36 @@ conversation has many turns or large messages, such as long tool results,
 every invocation of the object receives the entire history, although a run
 loads only the chunks after the last summary. Short conversations do not
 need this; keep the default for them. For agents with long or large
-conversations, set `state: {preload: false}` on the object so each chunk is
-fetched when it is read:
+conversations, list the keys to preload: the conversation's metadata key and
+your own small keys. Restate fetches every other key, including each chunk,
+when it is read:
 
 ```ts
 export const aiSession = restate.object({
   name: "AiSession",
   handlers: {doTurn, history, steer, interrupt},
   options: {
-    state: {preload: false}, // fetch conversation chunks when they are read
+    state: {preload: ["conversation/meta", "active"]}, // chunks are read on demand
     handlers: {history: {shared: true}, steer: {shared: true}, interrupt: {shared: true}},
   },
 });
 ```
 
-- Each state read is then a round trip to Restate. Loading the conversation
-  reads its metadata key and one key per 32 messages since the last summary.
+- `conversation/meta` holds the message count and the latest summary. The
+  chunk keys (`conversation/0`, `conversation/1`, ...) follow from the
+  count, and every load, append and `page()` reads the metadata key first,
+  so always preload it. With a custom `stateKey`, the key is
+  `<stateKey>/meta`; with a custom `metaKey`, list that key.
+- Each key that is not preloaded costs a round trip to Restate when it is
+  read. Loading the conversation reads one chunk key per 32 messages since
+  the last summary.
 - On AWS Lambda and other serverless platforms without bidirectional
   streaming, each lazy read adds a suspension: the invocation suspends and
   replays once Restate sends the requested state.
-- To keep small keys such as `active` preloaded, list them instead:
-  `state: {preload: ["active"]}` (Restate 1.8 or later).
+- A list of keys requires Restate 1.8 or later: an older server rejects the
+  deployment at registration because it does not support
+  `eagerStateKeysWhitelist`. On older servers, use
+  `state: {preload: false}`; the metadata key is then read lazily as well.
 - To set it for one handler only, put `state` in `options.handlers`. The
   deprecated `enableLazyState: true` equals `state: {preload: false}`.
 
