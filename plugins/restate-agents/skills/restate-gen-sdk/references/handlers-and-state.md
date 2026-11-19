@@ -120,6 +120,9 @@ export const onboarding = restate.workflow({
 `state: {preload}` chooses which state keys are loaded eagerly when the
 handler starts: `true` for all, `false` for none, or a list of key names.
 `enableLazyState: true` is deprecated and equals `state: {preload: false}`.
+Set `state` at the object level in `options` to apply it to every handler.
+Use `preload: false` when an object stores more state than one invocation
+reads, such as an agent conversation kept in chunks.
 
 Use `retryPolicy` with `onMaxAttempts: "kill"` or `"pause"` to decide what
 happens to an invocation after its retries are exhausted.
