@@ -139,9 +139,11 @@ Restate journals. Move on only when the learner is ready.
       never from model-supplied tool arguments.
 - [ ] Approval requests and active-turn IDs stored in state are cleared in a
       `finally`.
-- [ ] An object that stores a `LazyStateConversation` sets
-      `options.state: {preload: false}`. Otherwise Restate sends the full
-      history with every invocation of the object. See
+- [ ] An agent with long or large conversations in a `LazyStateConversation`
+      sets `options.state: {preload: false}` on its object. Otherwise
+      Restate sends the full history with every invocation of the object.
+      On serverless platforms, each lazy read adds a suspension, so keep the
+      default for short conversations. See
       `references/conversations-and-controls.md`.
 - [ ] Tests use a fixture model (`journaledModel`) against
       `RestateContainer().alwaysReplay().disableRetries()`. No paid model calls.

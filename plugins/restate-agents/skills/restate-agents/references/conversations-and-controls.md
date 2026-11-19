@@ -45,14 +45,16 @@ const result = yield* support.run(message, {conversation});
 
 Read it from a shared handler with `yield* new LazyStateConversation().page()`.
 
-**Turn off state preloading on the object.** `LazyStateConversation` reads
-one state key per chunk, but by default Restate sends a snapshot of all of
-the object's state when each invocation starts, including invocations of
-shared handlers such as `steer` and `status`. Compaction changes what the
-model reads, not what is stored: every chunk stays in state so `page()` can
-return the full history. With the default, every invocation of the object
-receives the entire history, although a run loads only the chunks after the
-last summary. Set `state: {preload: false}` on the object so each chunk is
+**Turn off state preloading for long or large conversations.** By default,
+Restate sends a snapshot of all of the object's state when each invocation
+starts, including invocations of shared handlers such as `steer` and
+`status`. Compaction changes what the model reads, not what is stored: every
+chunk stays in state so `page()` can return the full history. Once a
+conversation has many turns or large messages, such as long tool results,
+every invocation of the object receives the entire history, although a run
+loads only the chunks after the last summary. Short conversations do not
+need this; keep the default for them. For agents with long or large
+conversations, set `state: {preload: false}` on the object so each chunk is
 fetched when it is read:
 
 ```ts
@@ -68,8 +70,9 @@ export const aiSession = restate.object({
 
 - Each state read is then a round trip to Restate. Loading the conversation
   reads its metadata key and one key per 32 messages since the last summary.
-  On AWS Lambda and other platforms without bidirectional streaming, each
-  read suspends and replays the invocation.
+- On AWS Lambda and other serverless platforms without bidirectional
+  streaming, each lazy read adds a suspension: the invocation suspends and
+  replays once Restate sends the requested state.
 - To keep small keys such as `active` preloaded, list them instead:
   `state: {preload: ["active"]}` (Restate 1.8 or later).
 - To set it for one handler only, put `state` in `options.handlers`. The
