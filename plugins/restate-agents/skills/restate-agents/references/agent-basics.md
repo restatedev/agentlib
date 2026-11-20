@@ -80,7 +80,8 @@ try {
 }
 ```
 
-`models-and-testing.md` lists what the totals include.
+`models-and-testing.md` lists what the totals include. `messagesOf(error)`
+returns the failed run's history the same way; see `error-handling.md`.
 
 ## Typed output
 

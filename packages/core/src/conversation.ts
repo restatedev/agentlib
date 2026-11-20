@@ -2,10 +2,17 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import {sharedState, state, type Operation} from "@restatedev/restate-sdk-gen";
 import {readable} from "./context-size.js";
 import type {Message, Model} from "./types.js";
-import {history, modelResponse} from "./validation.js";
+import {checkProtocol, history, modelResponse, parseMessages, type OpenCall} from "./validation.js";
 
 export type ConversationSnapshot = {messages: Message[]; version: number};
 export type ConversationCompactionStatus = "skipped" | "applied" | "stale";
+/** Where a run loads its history and saves its progress.
+ *
+ * A run saves while it runs, not only at its end. Each `append` continues the
+ * messages before it, so it can start with results for tool calls saved by an
+ * earlier append, and end with tool calls whose results a later append adds:
+ * the run saves a batch's calls as soon as the model makes them. Between those
+ * two appends, `load` returns a history that ends with unfinished calls. */
 export interface Conversation {
   load(): Operation<ConversationSnapshot>;
   append(messages: readonly Message[], expectedVersion: number): Operation<number>;
@@ -23,7 +30,12 @@ export type CompactionPlan = {
   messages: Message[];
 };
 export type CompactionResult = {plan: CompactionPlan; summary: string};
-type Meta = {count: number; summary?: {through: number; text: string}};
+type Meta = {
+  count: number;
+  summary?: {through: number; text: string};
+  /** Calls at the end of the stored messages that have no result yet. */
+  open?: OpenCall[];
+};
 /** Another writer changed the conversation since this run loaded it. */
 export class ConversationConflictError extends TerminalError {
   constructor(message: string) {
@@ -81,9 +93,12 @@ export class LazyStateConversation implements Conversation {
     return structuredClone(messages);
   }
 
+  /** The history a run continues. It ends with unfinished tool calls while a run's
+   * batch is running, or after that run was killed; the next run closes them. */
   *load(): Operation<ConversationSnapshot> {
     const meta = yield* this.meta();
-    const messages = history(yield* this.range(meta.summary?.through ?? 0, meta.count));
+    const range = yield* this.range(meta.summary?.through ?? 0, meta.count);
+    const messages = history(range, {unfinished: true});
     if (meta.summary)
       messages.unshift({
         role: "user",
@@ -93,11 +108,15 @@ export class LazyStateConversation implements Conversation {
   }
 
   *append(messages: readonly Message[], expectedVersion: number): Operation<number> {
-    const additions = history(messages);
+    const additions = parseMessages(messages);
     const meta = yield* this.meta();
     if (meta.count !== expectedVersion)
       throw new ConversationConflictError("Conversation changed since it was loaded");
     if (!additions.length) return meta.count;
+    // The additions may first answer the calls the last append left open.
+    const open = checkProtocol(additions, {unanswered: meta.open ?? []});
+    if (open.length) meta.open = open;
+    else delete meta.open;
     let offset = 0;
     while (offset < additions.length) {
       const index = Math.floor(meta.count / CHUNK_SIZE);
@@ -130,7 +149,8 @@ export class LazyStateConversation implements Conversation {
       throw new TypeError("Compaction limits must be positive safe integers");
     const meta = yield* this.meta();
     const baseThrough = meta.summary?.through ?? 0;
-    const messages = history(yield* this.range(baseThrough, meta.count));
+    // A run may be in the middle of a batch: the boundary stays before its calls.
+    const messages = history(yield* this.range(baseThrough, meta.count), {unfinished: true});
     // Measured as a summarizer reads them: encrypted reasoning would inflate the count.
     const chars = JSON.stringify(messages.map(readable)).length;
     if (messages.length <= maxMessages && chars <= maxChars) return undefined;
@@ -170,7 +190,7 @@ export class LazyStateConversation implements Conversation {
     if (meta.summary?.through === plan.through && meta.summary.text === summary) return true;
     if ((meta.summary?.through ?? 0) !== plan.baseThrough) return false;
     // Verify the retained suffix independently before committing the new boundary.
-    history(yield* this.range(plan.through, meta.count));
+    history(yield* this.range(plan.through, meta.count), {unfinished: true});
     yield* this.store.set(this.metaKey, {...meta, summary: {through: plan.through, text: summary}});
     return true;
   }

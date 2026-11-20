@@ -20,6 +20,7 @@ import {
   isContextOverflow,
   journaledModel,
   LazyStateConversation,
+  messagesOf,
   RunFailedError,
   RunInputError,
   tool,
@@ -32,6 +33,7 @@ import {
   type Tool,
   type ToolResult,
 } from "@restatedev/agentlib";
+import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
 import {memoryStore, testContext} from "./helpers.js";
 
@@ -588,7 +590,7 @@ void test("a TerminalError in beforeSteering rejects the message, and the run co
   ]);
 });
 
-void test("an AgentTerminalError fails the run from anywhere, and nothing is saved", async () => {
+void test("an AgentTerminalError fails the run from anywhere, and the conversation keeps the failed turn", async () => {
   const sites: Record<string, Partial<AgentOptions<undefined>>> = {
     "a tool": {
       tools: {
@@ -652,7 +654,7 @@ void test("an AgentTerminalError fails the run from anywhere, and nothing is sav
     },
   };
   for (const [site, options] of Object.entries(sites)) {
-    const {store, values} = memoryStore();
+    const {store} = memoryStore();
     const conversation = new LazyStateConversation({store});
     const a = agent<undefined>({
       *model(request) {
@@ -660,12 +662,45 @@ void test("an AgentTerminalError fails the run from anywhere, and nothing is sav
       },
       ...options,
     });
+    let failure: unknown;
     await assert.rejects(
       r.execute(ctx(), a.run("go", {conversation})),
-      {name: "AgentTerminalError", message: "stop now"},
+      (error) => {
+        failure = error;
+        return error instanceof AgentTerminalError && error.message === "stop now";
+      },
       site,
     );
-    assert.equal(values.size, 0, site);
+    const saved = await r.execute(
+      ctx(),
+      (function* () {
+        return (yield* conversation.load()).messages;
+      })(),
+    );
+    if (site === "beforeRun") {
+      // Stopping in beforeRun keeps the input out of the history.
+      assert.deepEqual(saved, [], site);
+      assert.equal(messagesOf(failure), undefined, site);
+      continue;
+    }
+    // Every saved call has a result, and the next run reads why this one failed.
+    history(saved);
+    assert.deepEqual(saved, messagesOf(failure), site);
+    assert.deepEqual(saved[0], {role: "user", content: "go"}, site);
+    assert.deepEqual(
+      saved.at(-1),
+      {
+        role: "user",
+        content: JSON.stringify({source: "agent-runtime", type: "run-failed", message: "stop now"}),
+      },
+      site,
+    );
+    const results = saved.flatMap((message) => (message.role === "tool" ? [message.result] : []));
+    assert.deepEqual(
+      results,
+      options.tools ? [{status: "cancelled", message: "Run failed: stop now"}] : [],
+      site,
+    );
   }
 });
 

@@ -56,7 +56,9 @@ _Avoid_: Sub-agent, handoff
 
 **Conversation**:
 The accumulated model context across runs, including user messages, assistant
-messages, tool exchanges, and runtime observations.
+messages, tool exchanges, and runtime observations. A run saves to it while it
+runs, after each model call and tool batch, so a running turn can be read; a
+failed run saves what it committed, with a note on the failure.
 _Avoid_: Public transcript, session
 
 **Session**:

@@ -56,7 +56,9 @@ export const aiSession = restate.object({
         output: z.string(),
       },
       function* ({message}) {
-        // The conversation lives in this object's state; long ones are summarized.
+        // The conversation lives in this object's state. The turn saves to it as it
+        // runs, so the shared `history` handler shows a running turn, and a failed
+        // turn stays in it with a note on the failure. Long ones are summarized.
         const conversation = new LazyStateConversation({
           compaction: {model, policy: {maxMessages: 64, retainMessages: 12}},
         });
@@ -84,6 +86,7 @@ export const aiSession = restate.object({
         approval: yield* restate.sharedState().get<ApprovalRequest>("approval"),
       };
     },
+    // The saved conversation, including the turn that is running now.
     *history() {
       return yield* new LazyStateConversation().page();
     },

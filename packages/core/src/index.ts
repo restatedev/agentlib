@@ -17,6 +17,7 @@ export {
   isContextOverflow,
 } from "./errors.js";
 export {usageOf} from "./run-usage.js";
+export {messagesOf} from "./run-history.js";
 export type {
   Agent,
   AgentOptions,
