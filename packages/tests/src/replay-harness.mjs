@@ -55,6 +55,18 @@ function frame(type, body) {
 }
 
 /**
+ * The names of the run entries in a recorded journal, in journal order.
+ * @param {Uint8Array[]} journal
+ * @returns {string[]}
+ */
+export function runNames(journal) {
+  return journal
+    .map((f) => Buffer.from(f))
+    .filter((f) => f.readUInt16BE(0) === 0x411)
+    .map((f) => decode(f.subarray(8)).get(12)?.toString() ?? "");
+}
+
+/**
  * @param {(ctx: import('@restatedev/restate-sdk').Context) => Promise<unknown>} handler
  * @param {{replay?: Uint8Array[], onProposal?: (value: unknown) => void}} options
  */

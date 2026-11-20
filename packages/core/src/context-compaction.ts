@@ -64,6 +64,9 @@ function noteRequest(kept: number): NoteMessage {
   };
 }
 
+// Both compactor calls write the handoff note, so they share one journal name.
+const JOURNAL_NAME = "Compact context";
+
 // Each message the compactor reads is clipped, which keeps its own input
 // bounded; a long payload's detail rarely survives a summary anyway.
 const MAX_MESSAGE_CHARS = 16_000;
@@ -93,6 +96,7 @@ export function* summarizeContext(
       yield* settings.model({
         ...settings.prefix,
         messages: [...history.snapshot(), noteRequest(events.length - cut)],
+        name: JOURNAL_NAME,
       }),
     );
     if (response.type === "final" && response.text.trim()) text = response.text;
@@ -112,6 +116,7 @@ export function* summarizeContext(
           },
         ],
         tools: [],
+        name: JOURNAL_NAME,
       }),
     );
     if (response.type !== "final" || !response.text.trim())

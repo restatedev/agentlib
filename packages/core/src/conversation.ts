@@ -202,6 +202,7 @@ export function* summarizeConversation(
         },
       ],
       tools: [],
+      name: "Summarize conversation",
     }),
   );
   if (response.type !== "final")

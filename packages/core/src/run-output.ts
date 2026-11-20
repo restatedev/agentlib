@@ -30,6 +30,7 @@ export function* summarizeStoppedRun<O>(
       },
     ],
     tools: [],
+    name: "Summarize stopped run",
   };
   let text: string | undefined;
   try {
