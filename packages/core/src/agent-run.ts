@@ -1,3 +1,4 @@
+import {CancelledError, TerminalError} from "@restatedev/restate-sdk";
 import {
   handlerRequest,
   InterruptedError,
@@ -21,7 +22,8 @@ import {
   ToolError,
   toolErrorCode,
 } from "./errors.js";
-import {RunHistory, type BranchPoint} from "./run-history.js";
+import {ConversationConflictError} from "./conversation.js";
+import {recordFailedHistory, RunHistory, type BranchPoint} from "./run-history.js";
 import {RunTasks, type FutureBranches} from "./run-tasks.js";
 import {RunTools} from "./run-tools.js";
 import {PARENT_USAGE, recordFailedRun, RunUsageTracker} from "./run-usage.js";
@@ -179,7 +181,10 @@ function resolveControls<C>(options?: RunOptions<C>): RunControls {
  * - Background results completed during a model request also invalidate its
  *   response: the model must see them before acting.
  *
- * Nothing is saved until finish() persists the turn; failures save nothing. */
+ * With a conversation, the run saves as it goes, so a shared handler can read its
+ * progress: after each model call, each tool batch, and accepted steering or
+ * background results, then once more when finish() commits the answer. A failed
+ * run saves its committed history with a note on the failure; see fail(). */
 class AgentRun<C, O> {
   private step = 0;
   private steeringSource: SteeringSource | undefined;
@@ -187,6 +192,8 @@ class AgentRun<C, O> {
   private interrupt: Future<string> | undefined;
   /** Set once a summary failed; the run truncates from then on. */
   private compactionFailed = false;
+  /** Set once `beforeRun` accepted the input; a fork's input needs no check. */
+  private inputChecked: boolean;
   /** The last request without its messages: the prefix a provider cached.
    * Its instructions may come from a function. */
   private lastRequest: Pick<ModelRequest, "instructions" | "tools"> | undefined;
@@ -213,6 +220,7 @@ class AgentRun<C, O> {
     private readonly origin?: ForkOrigin<C>,
   ) {
     this.active = origin?.active ?? root;
+    this.inputChecked = origin !== undefined;
     this.skills = origin?.skills;
     this.catalog = createToolCatalog(this.active.tools, this.runTools());
     for (const name of origin?.loaded ?? []) this.catalog.search.loaded.add(name);
@@ -252,6 +260,10 @@ class AgentRun<C, O> {
       }
       // Outside the catch: a failing stop propagates instead of stopping twice.
       return yield* this.stop(stop);
+    } catch (error) {
+      yield* this.fail(error);
+      // The same value: Restate's retry and cancellation handling depend on its type.
+      throw error;
     } finally {
       yield* this.tasks.close();
     }
@@ -263,6 +275,7 @@ class AgentRun<C, O> {
   private *start(): Operation<void> {
     if (this.origin) return;
     const rejected = yield* this.checkInput();
+    this.inputChecked = true;
     const source = this.root.skills;
     const listed = source ? yield* listSkills(source) : [];
     if (source && listed.length) {
@@ -313,11 +326,13 @@ class AgentRun<C, O> {
       yield* this.emit({type: "step", step: this.step});
       yield* this.compactContext();
       const response = yield* this.ask();
-      if (!response || this.collectBackground()) continue;
+      if (!response || (yield* this.collectBackground())) continue;
       if (response.type === "tool_calls") {
         yield* this.toolPhase(response);
         continue;
       }
+      // The answer itself waits for review; this saves what came before it, such as the input.
+      yield* this.history.save();
       const result = yield* this.complete(response);
       if (result) return result;
     }
@@ -608,6 +623,8 @@ class AgentRun<C, O> {
       loaded: [...this.catalog.search.loaded],
     });
     const foreground = this.tools.startBatch(action, this.step, this.active, this.catalog);
+    // The calls are saved before their results, so a shared handler can show them.
+    yield* this.history.save();
     while (Object.keys(foreground).length > 0) {
       const {tag} = yield* this.race({...foreground, ...this.tools.pendingTasks()});
       if (tag === "steering") {
@@ -615,10 +632,11 @@ class AgentRun<C, O> {
         continue;
       }
       delete foreground[tag];
-      this.collectBackground();
+      yield* this.collectBackground();
     }
     const transfer = this.tools.commitBatch();
-    this.collectBackground();
+    yield* this.collectBackground();
+    yield* this.history.save();
     if (transfer) {
       this.active = transfer();
       yield* this.emit({type: "handoff", agent: this.active.name});
@@ -628,11 +646,13 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Moves finished background results into history; true when any arrived. */
-  private collectBackground(): boolean {
+  /** Moves finished background results into history and saves them; true when any arrived. */
+  private *collectBackground(): Operation<boolean> {
     const completed = this.tools.drainCompleted();
+    if (!completed.length) return false;
     this.history.append(...completed);
-    return completed.length > 0;
+    yield* this.history.save();
+    return true;
   }
 
   private *complete(action: ModelFinalResponse): Operation<RunResult<O> | undefined> {
@@ -641,7 +661,7 @@ class AgentRun<C, O> {
       // Its result, or steering, gives the model a reason to reconsider.
       if (this.step < this.config.maxSteps) {
         yield* this.race(this.tools.pendingTasks());
-        this.collectBackground();
+        yield* this.collectBackground();
       }
       return undefined;
     }
@@ -751,6 +771,8 @@ class AgentRun<C, O> {
       }
     }
     this.history.appendSteering(message);
+    // Saved before it is reported. Mid-batch, the note waits for the batch's results.
+    yield* this.history.save();
     yield* this.emit({type: "steering", message, ...withData});
     return true;
   }
@@ -794,6 +816,43 @@ class AgentRun<C, O> {
     else if (cause) result = {...end, status: "stopped", reason: "max_tool_calls"};
     else result = {...end, status: "stopped", reason: "max_steps"};
     return yield* this.finish(yield* this.review(result));
+  }
+
+  /** Records the history of a run that `error` ends, for `messagesOf`, and saves it
+   * when the error fails the invocation, so the next run knows what happened.
+   * Running work stops first: calls that never finished get cancelled results, and
+   * a note tells the model why the run ended. A retryable error saves nothing:
+   * Restate retries the invocation, and a journaled save would not match a retry
+   * that takes another path. A conflict means another writer changed the
+   * conversation, so saving again would fail the same way. A failure to save is
+   * logged; the caller still receives the run's own error.
+   *
+   * A run that fails before `beforeRun` accepted its input records nothing:
+   * throwing `AgentTerminalError` from `beforeRun` keeps the input out of the
+   * history. */
+  private *fail(error: unknown): Operation<void> {
+    if (!this.inputChecked) return;
+    try {
+      yield* this.tasks.close();
+      const reason = error instanceof Error ? error.message : String(error);
+      const cancelled = error instanceof CancelledError;
+      const closed = `${cancelled ? "Run cancelled" : "Run failed"}: ${reason}`;
+      this.tools.commitBatch(closed);
+      this.history.append(...this.tools.settlePending(new InterruptedError(closed)));
+      this.history.append({
+        role: "user",
+        content: JSON.stringify({
+          source: "agent-runtime",
+          type: cancelled ? "run-cancelled" : "run-failed",
+          message: reason,
+        }),
+      });
+      recordFailedHistory(error, this.history.committed());
+      if (error instanceof TerminalError && !(error instanceof ConversationConflictError))
+        yield* this.history.save();
+    } catch (failure) {
+      logger().warn("Could not record the failed run's history:", failure);
+    }
   }
 
   /** The schema the run's answer must match. A fork answers in plain text: its
