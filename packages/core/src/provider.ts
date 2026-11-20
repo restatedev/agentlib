@@ -494,7 +494,7 @@ export function aiModel(options: ProviderOptions): Model {
   }
   return journaledModel(
     (request, {signal}) => traceModel(options.tracer, request, () => complete(request, signal)),
-    {name: "Ask model", retry: options.retry},
+    {retry: options.retry},
   );
 }
 /** Requests already contain JSON schemas, so no Zod objects cross this RPC. */

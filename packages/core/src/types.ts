@@ -50,6 +50,9 @@ export type ModelRequest = {
   outputSchema?: Record<string, unknown>;
   maxOutputTokens?: number;
   step?: number;
+  /** Journal entry name for this call, such as "Compact context". Steps leave
+   * it unset, and `journaledModel` falls back to its own name. */
+  name?: string;
 };
 export type ModelChunk = {type: "text-delta" | "reasoning-delta"; text: string};
 /** Tokens a model call used, as the provider reported them. `inputTokens`
