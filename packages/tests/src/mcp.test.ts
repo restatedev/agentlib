@@ -202,8 +202,29 @@ void test("MCP fails once, without retries, when its own checks reject a catalog
       })(),
     ),
   );
-  assert.equal(output, "MCP catalog exceeds 128 tools");
+  assert.equal(output, "MCP catalog exceeds 128 allowed tools");
   assert.equal(mock.seen.filter((x) => x.method === "tools/list").length, 1);
+});
+
+void test("MCP applies allow before the catalog limit and journals only allowed tools", async () => {
+  const mock = fixture("stateless", {tooMany: true});
+  const {output, journal} = await runHandler((ctx: Context) =>
+    r.execute(
+      ctx,
+      (function* () {
+        const mcp = yield* mcpTools({
+          url: "https://fixture.test/mcp",
+          namespace: "remote",
+          protocol: "stateless",
+          fetch: mock.fetch,
+          allow: (name) => name === "lookup",
+        });
+        return Object.keys(mcp.tools);
+      })(),
+    ),
+  );
+  assert.deepEqual(output, ["remote_lookup"]);
+  assert.ok(!Buffer.concat(journal).includes("extra0"));
 });
 
 /** Runs one remote_lookup call and returns the result the model saw. */

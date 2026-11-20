@@ -158,7 +158,8 @@ const result = yield* guide.run(question, {tools: docs.tools});
 server that ignores it may repeat work). A credential the server echoes back
 is replaced with `[redacted]` before any result or error is journaled. Call
 `close()` when done with a stateful session. A namespace is 1 to 24 letters,
-digits, `_` or `-`; anything else is a terminal error.
+digits, `_` or `-`; anything else is a terminal error. At most 128 tools may
+pass `allow`; more is a terminal error, so restrict a large server with `allow`.
 
 Every built-in tool (`sleepTool`, `humanApprovalTool`, `cancelOperationTool`,
 `searchToolsTool`, `programTool`) accepts `description` and

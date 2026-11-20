@@ -164,6 +164,7 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
       yield* options.onAuthorizationRequired();
     }
   }
+  const allowed = (name: string) => options.allow?.(name) ?? true;
   const catalog = yield* authorized(`mcp-${options.namespace}-catalog`, (token, signal) =>
     withClient(token, signal, undefined, async (client, transport) => {
       const listed = await client.listTools(undefined, {
@@ -171,14 +172,17 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
         timeout,
         cacheMode: "refresh",
       });
-      if (listed.tools.length > 128) throw new TerminalError("MCP catalog exceeds 128 tools");
+      // Filter before the limit and the journal: a large server with a few allowed
+      // tools loads, and the journal holds only the tools the agent can use.
+      const tools = listed.tools.filter((definition) => allowed(definition.name));
+      if (tools.length > 128) throw new TerminalError("MCP catalog exceeds 128 allowed tools");
       const discovery = client.getDiscoverResult();
       if (options.protocol === "stateless" && !discovery)
         throw new TerminalError("MCP stateless discovery missing");
       let prior: PriorDiscovery = {kind: "legacy"};
       if (discovery) prior = {kind: "modern", discover: discovery};
       return {
-        tools: listed.tools,
+        tools,
         session: {
           id: transport.sessionId,
           version: transport.protocolVersion,
@@ -191,7 +195,8 @@ export function* mcpTools<C = unknown>(options: McpOptions): restate.Operation<M
   const warnings: string[] = [];
   // One bad remote tool is skipped; the rest of the catalog stays usable.
   for (const definition of catalog.tools) {
-    if (options.allow && !options.allow(definition.name)) continue;
+    // A journal written before filtering moved into the catalog step holds every tool.
+    if (!allowed(definition.name)) continue;
     const name = localToolName(`${options.namespace}_${definition.name}`);
     if (!TOOL_NAME.test(name) || tools.has(name)) {
       warnings.push(`Ignored MCP tool with an invalid or duplicate name: ${name}`);
