@@ -283,6 +283,10 @@ export type RunControls = {steering?: SteeringSource; interrupt?: Future<string>
 export type RunOptions<Context> = {
   /** Completed prior messages. The SDK copies these and returns the new history. */
   messages?: readonly Message[];
+  /** Where the run loads its history and saves its progress: after each model call,
+   * tool batch, and accepted steering, and when it ends. A run that a terminal error
+   * fails saves what it recorded, with a note on the failure. Use either this or
+   * `messages`. */
   conversation?: import("./conversation.js").Conversation;
   name?: string;
   onApproval?: ApprovalHandler<Context>;

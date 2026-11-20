@@ -8,7 +8,9 @@ Lessons:
 ## Remember earlier requests
 
 A conversation belongs to a key, so keep it in a virtual object. Load the
-messages, pass them in, and save `result.messages`:
+messages, pass them in, and save `result.messages`. A run that throws returns
+no result; `messagesOf(error)` returns its history up to the failure, with a
+note on why it failed:
 
 ```ts
 import {agent, type Message} from "@restatedev/agentlib";
@@ -86,6 +88,33 @@ export const aiSession = restate.object({
   `state: {preload: false}`; the metadata key is then read lazily as well.
 - To set it for one handler only, put `state` in `options.handlers`. The
   deprecated `enableLazyState: true` equals `state: {preload: false}`.
+
+### When a run saves
+
+A run saves to its `conversation` while it runs, so `page()` in a shared
+handler shows the turn that is running:
+
+- **After each model call.** A tool step's calls are saved before they run. A
+  final answer is saved once `afterRun` accepts it.
+- **When a tool batch ends**, with every result. A background call's result is
+  its pending acknowledgment; the real result is saved when the run collects it.
+- **When steering is accepted.** Steering that arrives during a batch is saved
+  after the batch's results, because results must follow their calls.
+
+Each save appends to the last one. The saved history stays the full record:
+error notes, rejected answers, and in-run compaction never reach it.
+
+A run that fails with a terminal error saves what it recorded, closes
+unfinished calls with `cancelled` results, and adds a note on the failure; see
+`error-handling.md`. The input is saved with the first model call, so a caller
+that calls the handler again with the same input after a failure starts a new
+turn after the failed one. To retry the same request, call the handler with an
+idempotency key.
+
+A killed invocation (`restate invocations kill`) runs no more code, so its
+batch's calls can stay without results. The next run gives each such call a
+`cancelled` result saying that it may have taken effect, and saves it with its
+first save.
 
 When a run starts and the conversation compaction fails, the run logs a
 warning and continues with the history it loaded; the next run tries again.

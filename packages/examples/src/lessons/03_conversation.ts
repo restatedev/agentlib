@@ -36,6 +36,8 @@ export const chatSession = restate.object({
       function* ({message}) {
         const messages = (yield* restate.state().get<Message[]>("messages")) ?? [];
         const result = yield* assistant.run(message, {messages});
+        // Saved when the run returns. For a run that throws, `messagesOf(error)`
+        // returns its history up to the failure, with a note on why it failed.
         restate.state().set("messages", result.messages);
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;

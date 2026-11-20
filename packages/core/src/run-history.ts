@@ -4,7 +4,7 @@ import type {Message} from "./types.js";
 import {RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
-import {checkProtocol, history} from "./validation.js";
+import {checkProtocol, history, UnfinishedToolCallsError} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
 
@@ -32,10 +32,46 @@ type Measured = {readonly mark: ViewMark; readonly inputTokens: number};
 type ToolMessage = Extract<Message, {role: "tool"}>;
 export type NoteMessage = Extract<Message, {role: "user"}>;
 
-/** Events arrive in execution order. Model protocols require each batch's tool
- * results immediately after its assistant call, ahead of intervening steering.
- * Every event was validated when it was recorded, so only the order is checked. */
-function modelTranscript(events: readonly Message[]): Message[] {
+/** The result a run records for a call that a killed run left without one. */
+const UNFINISHED_CALL =
+  "The run that made this call ended before the call returned a result. It may have taken effect.";
+
+/** Validates a conversation's history for a new run, and closes the tool calls
+ * that a killed run left without results. Returns the history and how many results
+ * it added; the run's first save stores them.
+ *
+ * A run saves a batch's calls as soon as the model makes them, and their results
+ * when the batch ends (see `RunHistory.save`). A retry replays the journal and
+ * finishes the batch, and a failed or cancelled run closes the calls before it
+ * ends, so only a killed invocation leaves a history that ends with unfinished
+ * calls. Model providers reject such a history, so the run closes each call with a
+ * cancelled result.
+ *
+ * The repair adds no work for a complete history: it runs only when `checkProtocol`
+ * reports unfinished calls. That check passes over the whole history on every load,
+ * here and in `LazyStateConversation.load`. To remove those passes later, keep a
+ * check of the last assistant message alone: every save stores a prefix of a
+ * complete transcript, so only the last batch can lack results. */
+function continuedHistory(loaded: readonly Message[]): {messages: Message[]; closed: number} {
+  try {
+    return {messages: history(loaded), closed: 0};
+  } catch (error) {
+    if (!(error instanceof UnfinishedToolCallsError)) throw error;
+    const closing: Message[] = error.calls.map(({id, name}) => ({
+      role: "tool",
+      callId: id,
+      name,
+      result: {status: "cancelled", message: UNFINISHED_CALL},
+    }));
+    return {messages: history([...loaded, ...closing]), closed: closing.length};
+  }
+}
+
+/** Events in the order model protocols require: each batch's tool results right
+ * after its assistant call, ahead of the steering and notes that arrived while the
+ * batch ran. With `stopAtOpenBatch`, the transcript ends with the first batch that
+ * still waits for results, and the events after it wait until the batch ends. */
+function ordered(events: readonly Message[], stopAtOpenBatch = false): Message[] {
   const batchByCall = new Map<string, number>();
   for (const [index, message] of events.entries()) {
     if (message.role !== "assistant") continue;
@@ -54,17 +90,28 @@ function modelTranscript(events: readonly Message[]): Message[] {
   for (const [index, message] of events.entries()) {
     if (message.role === "tool") continue;
     transcript.push(message);
-    if (message.role === "assistant") transcript.push(...(resultsByBatch.get(index) ?? []));
+    if (message.role !== "assistant") continue;
+    const results = resultsByBatch.get(index) ?? [];
+    transcript.push(...results);
+    if (stopAtOpenBatch && results.length < (message.calls?.length ?? 0)) break;
   }
-  checkProtocol(transcript);
+  return transcript;
+}
+
+/** Events arrive in execution order; this is the transcript a model accepts.
+ * Every event was validated when it was recorded, so only the order is checked. */
+function modelTranscript(events: readonly Message[]): Message[] {
+  const transcript = ordered(events);
+  if (checkProtocol(transcript).length)
+    throw new RunInputError("History contains unfinished tool calls");
   return transcript;
 }
 
 /** Owns the append-only event history and its persistence cursor. Every message enters
  * a run as a copy the run owns, validated once. Model requests and hooks share these
  * messages instead of copying the history, as the AI SDK does: they read them and never
- * change them. The run saves
- * a model-valid transcript at finalization; earlier failures save nothing.
+ * change them. The run saves its committed transcript as it goes (see `save`), and a
+ * failed run saves it with its open calls closed and a note on the failure.
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
   private readonly provisional = new Set<Message>();
@@ -99,15 +146,18 @@ export class RunHistory {
     const {conversation} = source;
     if (conversation && source.messages)
       throw new RunInputError("Use either conversation or messages");
-    const snapshot = conversation ? yield* conversation.load() : undefined;
-    const messages = history(snapshot?.messages ?? source.messages ?? []);
-    const run = new RunHistory(
-      input,
-      messages,
-      snapshot?.version ?? 0,
-      messages.length,
-      conversation,
-    );
+    let messages: Message[];
+    let version = 0;
+    let closed = 0;
+    if (conversation) {
+      const snapshot = yield* conversation.load();
+      ({messages, closed} = continuedHistory(snapshot.messages));
+      version = snapshot.version;
+    } else {
+      // A caller's messages come from a finished or failed run, which closes its calls.
+      messages = history(source.messages ?? []);
+    }
+    const run = new RunHistory(input, messages, version, messages.length - closed, conversation);
     run.previews = previews;
     run.append({role: "user", content: input});
     return run;
@@ -277,10 +327,24 @@ export class RunHistory {
     this.messages.push(...messages);
   }
 
+  /** What a save stores: the committed transcript up to the batch that is still
+   * running, with that batch's calls and the results it has so far. Events only
+   * extend it, so each save appends to what the last one stored. */
+  private saveable(): Message[] {
+    return ordered(
+      this.messages.filter((message) => !this.provisional.has(message)),
+      true,
+    );
+  }
+
+  /** Appends what the run committed since its last save. The run saves after each
+   * model call, after each tool batch, and after steering or background results
+   * arrive, so a shared handler can read a run's progress, and when it ends. A
+   * batch's calls are saved before their results; see `continuedHistory`. */
   *save(): Operation<void> {
     if (!this.conversation) return;
-    const transcript = this.committed();
-    if (transcript.length === this.persisted) return;
+    const transcript = this.saveable();
+    if (transcript.length <= this.persisted) return;
     this.version = yield* this.conversation.append(transcript.slice(this.persisted), this.version);
     this.persisted = transcript.length;
   }
@@ -290,12 +354,31 @@ export class RunHistory {
     const result = yield* this.conversation.compact();
     if (result === "skipped") return;
     const compacted = yield* this.conversation.load();
-    this.messages.splice(0, this.messages.length, ...history(compacted.messages), {
+    const {messages, closed} = continuedHistory(compacted.messages);
+    this.messages.splice(0, this.messages.length, ...messages, {
       role: "user",
       content: this.input,
     });
-    this.persisted = compacted.messages.length;
-    this.inputAt = compacted.messages.length;
+    this.persisted = messages.length - closed;
+    this.inputAt = messages.length;
     this.version = compacted.version;
   }
+}
+
+const failedRuns = new WeakMap<object, Message[]>();
+
+/** The history of the run that threw `error`, or undefined when no run threw it:
+ * its committed messages, with a cancelled result for each call that never
+ * finished and a note that says why the run ended. A run with a `conversation`
+ * saves this history when the error is terminal; a run with `messages` can pass
+ * it to the next run. When several runs threw the same error, it holds the last
+ * one's history; for nested runs that is the outermost. */
+export function messagesOf(error: unknown): Message[] | undefined {
+  const messages = typeof error === "object" && error !== null ? failedRuns.get(error) : undefined;
+  return messages && structuredClone(messages);
+}
+
+/** Records a failed run's history for `messagesOf` without changing the error. */
+export function recordFailedHistory(error: unknown, messages: Message[]): void {
+  if (typeof error === "object" && error !== null) failedRuns.set(error, messages);
 }

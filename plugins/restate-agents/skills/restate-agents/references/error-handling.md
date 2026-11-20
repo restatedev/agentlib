@@ -167,7 +167,9 @@ An `AgentTerminalError` never reaches a model. Thrown from any place, it fails
 the run:
 
 - The other calls running in the same batch are interrupted.
-- Nothing is saved to the conversation, as for any run that throws.
+- The conversation keeps the failed turn: calls that didn't finish get
+  `cancelled` results, followed by a note on the failure. See
+  [What a failed run keeps](#what-a-failed-run-keeps).
 - Every agent run that encloses this one fails too: a parent that called this
   agent through `agentTool`, the run a fork was started from, and the agent
   whose tool called the handler that threw it.
@@ -290,7 +292,8 @@ without running `beforeStep`. Set `finalize: false`, throw
 
 A rejected input stays in the run's history and is saved when the run
 completes. Return `{message}` from `beforeRun` to record a redacted input
-instead, or throw `AgentTerminalError` to stop before anything is recorded. See
+instead, or throw `AgentTerminalError` to stop before anything is recorded: a
+run that `beforeRun` stops saves nothing, not even a failure note. See
 `approvals-and-guardrails.md` for each hook.
 
 ## Errors across journaled steps and RPC
@@ -317,10 +320,11 @@ Cancellation is never sent to the model as something to recover from:
 
 - **The invocation is cancelled.** The Restate SDK throws a `CancelledError` at
   the run's next `yield*`, wherever the run is: in a tool, a hook, or the model
-  call. The run lets it through, without a note or a tool result, and skips its
-  fallbacks. The other running calls are interrupted, child invocations the
-  run started are cancelled, nothing is saved, and the handler fails with the
-  `CancelledError`.
+  call. The run lets it through, without an error note or a tool result, and
+  skips its fallbacks. The other running calls are interrupted, child
+  invocations the run started are cancelled, and the handler fails with the
+  `CancelledError`. The conversation keeps the turn, with a `run-cancelled`
+  note.
 - **The run is interrupted** through `interruptSignal` or `controls.interrupt`.
   This isn't an error: the run ends with status `interrupted`. Calls that
   didn't finish are recorded with `{status: "cancelled"}`. The model that
@@ -358,8 +362,27 @@ An `AgentTerminalError` and cancellation skip these fallbacks and fail the run.
 
 ## What a failed run keeps
 
-A run that throws saves nothing to its conversation, so the next run starts
-from the history before the failed one. It does not return partial messages
-either. `usageOf(error)` returns the token totals up to the failure; record
-them only for terminal errors, because Restate retries other errors and the
-replay counts the same calls again.
+When a terminal error fails a run, the run closes what it started and records
+why:
+
+- Calls that didn't finish get `cancelled` results, with the message
+  `Run failed: <reason>`.
+- A note follows them. Its type is `run-cancelled` for a cancelled invocation:
+
+  ```json
+  {"source": "agent-runtime", "type": "run-failed", "message": "model unavailable"}
+  ```
+
+- A run with a `conversation` saves this history before it rethrows the
+  original error, so the next run's model reads what happened. Error notes and
+  rejected answers are never saved.
+- `messagesOf(error)` returns the same history, for a run with `messages` too.
+  Save it as the next run's `messages` to keep the failed turn.
+
+A retryable error saves no note: Restate retries the invocation, and the
+replay continues the run from what it saved. A run that `beforeRun` stops
+records nothing.
+
+`usageOf(error)` returns the token totals up to the failure; record them only
+for terminal errors, because Restate retries other errors and the replay counts
+the same calls again.
