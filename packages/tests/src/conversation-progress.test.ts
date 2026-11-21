@@ -15,7 +15,9 @@ import {
   tool,
   type CompactionPlan,
   type Conversation,
+  type ConversationStore,
   type Message,
+  type Model,
   type ModelResponse,
   type ToolResult,
 } from "@restatedev/agentlib";
@@ -565,4 +567,81 @@ void test("a run saves at most once per model call and tool batch", async () => 
     // The input after the model call, then the reviewed answer.
     assert.deepEqual(appended, [1, 1]);
   });
+});
+
+/** A memory store that counts the reads of each key. */
+function countingStore() {
+  const {store, values} = memoryStore();
+  const reads = new Map<string, number>();
+  const counted: ConversationStore = {
+    *get<T>(key: string) {
+      reads.set(key, (reads.get(key) ?? 0) + 1);
+      return yield* store.get<T>(key);
+    },
+    set: (key, value) => store.set(key, value),
+  };
+  return {store: counted, values, reads};
+}
+
+void test("a run reads each conversation key once, through compaction and every save", async () => {
+  const {store, reads} = countingStore();
+  const summarize: Model = function* () {
+    return {type: "final", text: "twenty earlier questions"};
+  };
+  const conversation = new LazyStateConversation({
+    store,
+    compaction: {model: summarize, policy: {maxMessages: 8, retainMessages: 4}},
+  });
+  // Two chunks of history, written by an earlier invocation.
+  await execute(function* () {
+    yield* new LazyStateConversation({store}).append(pairs(20), 0);
+  });
+  reads.clear();
+  await execute(function* () {
+    const a = agent({
+      tools: {
+        lookup: tool({
+          ...base,
+          *execute() {
+            return "found";
+          },
+        }),
+      },
+      *model(request) {
+        if (request.step !== 1) return done;
+        assert.match(JSON.stringify(request.messages[0]), /twenty earlier questions/);
+        return batch("lookup");
+      },
+    });
+    assert.equal((yield* a.run("go", {conversation})).status, "completed");
+  });
+  // The load, the compaction, the load after it, and three saves read each key once.
+  assert.deepEqual(Object.fromEntries(reads), {
+    "conversation/meta": 1,
+    "conversation/0": 1,
+    "conversation/1": 1,
+  });
+  await execute(function* () {
+    assert.deepEqual((yield* conversation.page(40)).messages, [
+      user("go"),
+      calls("lookup"),
+      success("lookup", "found"),
+      answer("done"),
+    ]);
+  });
+});
+
+void test("the next invocation reads the store again, with the same instance", async () => {
+  const {store, reads} = countingStore();
+  const conversation = new LazyStateConversation({store});
+  await execute(function* () {
+    yield* conversation.append([user("one")], 0);
+  });
+  await execute(function* () {
+    yield* new LazyStateConversation({store}).append([user("two")], 1);
+  });
+  await execute(function* () {
+    assert.deepEqual((yield* conversation.load()).messages, [user("one"), user("two")]);
+  });
+  assert.equal(reads.get("conversation/meta"), 3);
 });
