@@ -154,7 +154,8 @@ call.
 | `agent_stopped`       | A sub-agent or fork stopped before finishing; the message carries its summary.                |
 | `denied`              | `beforeRun`, `beforeStep` or `afterRun` rejected the input, a step, or an answer.             |
 | `invalid_response`    | The model's response was empty, announced tool calls without any, or had an invalid batch.    |
-| `incomplete_response` | The model's response was cut off at `maxOutputTokens` or stopped by a content filter.         |
+| `incomplete_response` | A content filter stopped the model's response, or it ended for another reason before it was complete. |
+| `cut_off`             | The call was in a reply cut off at the output token limit, so it never ran.                   |
 
 Some built-in tools add their own codes, such as `program_error` for a failed
 code-mode program, `unknown_ref` for a tool result reference that doesn't
@@ -167,7 +168,10 @@ An `AgentTerminalError` never reaches a model. Thrown from any place, it fails
 the run:
 
 - The other calls running in the same batch are interrupted.
-- Nothing is saved to the conversation, as for any run that throws.
+- Nothing is saved to the conversation, as for any run that throws. The one
+  exception is the run's own `AgentTerminalError` for a reply cut off at the
+  output token limit: the run saves the reply first (see "Model call
+  failures").
 - Every agent run that encloses this one fails too: a parent that called this
   agent through `agentTool`, the run a fork was started from, and the agent
   whose tool called the handler that threw it.
@@ -235,8 +239,8 @@ history, fails the run with a `RunInputError`: no deploy can fix it.
 A response the model can fix goes back to the model. The run discards the
 response, adds a note with the reason, and starts the next step:
 
-- The reply was cut off at `maxOutputTokens` or stopped by a content filter
-  (`incomplete_response`).
+- A content filter stopped the reply, or it ended for another reason before
+  it was complete (`incomplete_response`).
 - The reply was empty, or announced tool calls without making any
   (`invalid_response`).
 - The batch had two handoffs or reused a tool-call ID. No call in it starts
@@ -246,6 +250,18 @@ response, adds a note with the reason, and starts the next step:
 The journal records a failed model call, so a replay repeats the step without
 calling the provider. The tokens the discarded response used still count in
 `result.usage`.
+
+A reply cut off at the output token limit does not go back to the model: asking
+again would most likely be cut off again. The run fails with an
+`AgentTerminalError` that tells you to raise `maxOutputTokens`, or that the
+model may be looping. Before it fails, the run records the reply in its
+history, marked `cutOff: true`, with its reasoning and its text up to
+`maxOutputChars`. Each complete tool call in the reply gets a failed result
+with code `cut_off` and never runs; a call whose arguments were cut off is
+dropped. The run then saves its conversation, if it has one. `aiModel` returns
+the reply as a `cut_off` response, which the journal records, so a replay
+fails the same way without calling the provider. A custom model can return
+`{type: "cut_off", text, calls?, reasoning?, usage?}` for the same behavior.
 
 A model call that fails is retried, three attempts by default; pass `retry` to
 the model to change that. In `aiModel`, a failure that retrying can't fix, such

@@ -35,7 +35,7 @@ export function* summarizeStoppedRun<O>(
   let text: string | undefined;
   try {
     const final = modelResponse(yield* finalize(request));
-    if (final.type !== "final") throw new Error("Finalization must not request tools");
+    if (final.type !== "final") throw new Error("Finalization must return a complete text summary");
     text = final.text;
   } catch (error) {
     if (mustPropagate(error)) throw error;

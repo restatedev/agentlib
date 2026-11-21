@@ -78,9 +78,9 @@ const researcher = agent({
   replay, and for earlier turns of a saved conversation.
 - `read_tool_result` is a reserved name while previews are on.
 
-**Compaction is opt-in**, because it costs a model call. Set `compaction` to
-summarize the run's older messages before a model call once the view passes
-`maxTokens`:
+**Compaction is on by default.** Before a model call, once the view passes
+`maxTokens`, the run summarizes its older messages with a model call. Set
+`compaction` to change its options, or pass `compaction: false` to turn it off:
 
 ```ts
 const researcher = agent({
@@ -111,10 +111,12 @@ const researcher = agent({
   An `AgentTerminalError` from the compactor fails the run instead.
 
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
-that would not fit the window with `maxOutputTokens` is shrunk first:
-summarized when `compaction` is set, truncated otherwise, to
-`compaction.retainTokens` or a quarter of the window, whichever is smaller,
-and at most half of what instructions, tools and `maxOutputTokens` leave.
+that would not fit the window with `maxOutputTokens`, or with 32,768 tokens for
+the reply when `maxOutputTokens` is unset, is shrunk first: summarized unless
+`compaction` is `false`, truncated otherwise, to `compaction.retainTokens` or a
+quarter of the window, whichever is smaller, and at most half of what
+instructions, tools and the reply leave. A window of 32,768 tokens or less
+needs `maxOutputTokens`.
 
 ```ts
 const researcher = agent({model, tools: {search, fetchPage}, contextWindow: 200000});

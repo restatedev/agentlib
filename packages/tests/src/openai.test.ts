@@ -3,7 +3,7 @@ import {test} from "node:test";
 import {createOpenAI} from "@ai-sdk/openai";
 import {execute, run, spawn} from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {agent, tool, type ModelUsage} from "@restatedev/agentlib";
+import {agent, AgentTerminalError, tool, type ModelUsage} from "@restatedev/agentlib";
 import {aiModel} from "@restatedev/agentlib/provider";
 import {runHandler} from "./replay-harness.mjs";
 
@@ -351,15 +351,11 @@ void test("incomplete OpenAI chat responses never execute a tool", {timeout: 500
         choices: [
           {
             index: 0,
-            finish_reason: "length",
+            finish_reason: "content_filter",
             message: {content: "Partial", tool_calls: [validCall]},
           },
         ],
       },
-      /incomplete_response.*output token limit/,
-    ],
-    [
-      {choices: [{index: 0, finish_reason: "content_filter", message: {content: "Partial"}}]},
       /incomplete_response.*content filter/,
     ],
     [
@@ -411,5 +407,68 @@ void test("incomplete OpenAI chat responses never execute a tool", {timeout: 500
     assert.deepEqual(replay.output, live.output);
     assert.equal(bodies.length, 2);
   }
+  assert.equal(writes, 0);
+});
+
+void test("an OpenAI chat reply cut off at the output token limit fails the run without running its calls", async () => {
+  let requests = 0;
+  let writes = 0;
+  const client = createOpenAI({
+    apiKey: "test-only",
+    fetch: async () => {
+      requests++;
+      return Response.json({
+        id: "test",
+        object: "chat.completion",
+        created: 0,
+        model: "test",
+        choices: [
+          {
+            index: 0,
+            finish_reason: "length",
+            message: {
+              content: "Partial",
+              tool_calls: [
+                {id: "one", type: "function", function: {name: "write", arguments: "{}"}},
+                {id: "two", type: "function", function: {name: "write", arguments: '{"pa'}},
+              ],
+            },
+          },
+        ],
+        usage: {prompt_tokens: 10, completion_tokens: 20},
+      });
+    },
+  });
+  const a = agent({
+    model: aiModel({model: client.chat("test")}),
+    tools: {
+      write: tool({
+        description: "Write",
+        input: z.object({}),
+        *execute() {
+          writes++;
+          return null;
+        },
+      }),
+    },
+  });
+  const handler = (ctx: Parameters<typeof execute>[0]) =>
+    execute(
+      ctx,
+      (function* () {
+        try {
+          yield* a.run("Write");
+          return {failed: false};
+        } catch (error) {
+          if (!(error instanceof AgentTerminalError)) throw error;
+          return {message: error.message};
+        }
+      })(),
+    );
+  const live = await runHandler(handler);
+  assert.match(live.output.message, /output token limit/);
+  const replay = await runHandler(handler, {replay: live.journal});
+  assert.deepEqual(replay.output, live.output);
+  assert.equal(requests, 1, "the run neither asks again nor calls the provider on replay");
   assert.equal(writes, 0);
 });

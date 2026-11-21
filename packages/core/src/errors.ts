@@ -72,8 +72,8 @@ export class ToolBudgetExceeded extends TerminalError {
     this.name = "ToolBudgetExceeded";
   }
 }
-/** A response the model can fix by trying again: cut off, empty, or claiming tool
- * calls without any. A model adapter throws it inside its journaled call, so the
+/** A response the model can fix by trying again: stopped by a content filter, empty,
+ * or claiming tool calls without any. A model adapter throws it inside its journaled call, so the
  * journal records it with the usage the response reported, and a replay repeats
  * the same step without calling the provider. */
 export class ModelResponseError extends TerminalError {

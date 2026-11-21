@@ -39,6 +39,7 @@ const messageSchema = z.discriminatedUnion("role", [
     content: z.string(),
     calls: z.array(callSchema).min(1).optional(),
     reasoning: reasoningSchema.optional(),
+    cutOff: z.literal(true).optional(),
   }),
   z.object({
     role: z.literal("tool"),
@@ -71,6 +72,13 @@ const responseSchema = z.discriminatedUnion("type", [
     type: z.literal("tool_calls"),
     calls: z.array(callSchema).min(1),
     text: z.string().optional(),
+    usage: usageSchema.optional(),
+    reasoning: reasoningSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("cut_off"),
+    text: z.string(),
+    calls: z.array(callSchema).optional(),
     usage: usageSchema.optional(),
     reasoning: reasoningSchema.optional(),
   }),

@@ -91,7 +91,8 @@ export function* summarizeContext(
   let text: string | undefined;
   if (settings.prefix) {
     // Tools stay listed, since changing them would miss the cache; a model
-    // that calls one anyway gets the separate request below.
+    // that calls one anyway gets the separate request below, and so does a
+    // note cut off at the output token limit.
     const response = modelResponse(
       yield* settings.model({
         ...settings.prefix,
@@ -119,6 +120,8 @@ export function* summarizeContext(
         name: JOURNAL_NAME,
       }),
     );
+    if (response.type === "cut_off")
+      throw new TerminalError("The handoff note was cut off at the output token limit");
     if (response.type !== "final" || !response.text.trim())
       throw new TerminalError("Context compaction must return a text note");
     text = response.text;

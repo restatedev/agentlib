@@ -8,6 +8,7 @@ import type {
   AgentRuntime,
   ApprovalHandler,
   Message,
+  ModelCutOffResponse,
   ModelToolCallsResponse,
   ProgressEvent,
   RunContext,
@@ -133,6 +134,40 @@ export class RunTools<C> {
       }
     }
     return tasks;
+  }
+
+  /** Records a reply cut off at the output token limit, marked `cutOff`. Its calls
+   * never run: each gets a failed result, so the history stays valid. A call that
+   * reuses an earlier call's ID is left out, and so is a reply with nothing in it.
+   * Text over `maxChars` is clipped, without the signed text parts a provider
+   * would reject once changed. */
+  recordCutOff(reply: ModelCutOffResponse, maxChars: number): void {
+    const calls: ToolCall[] = [];
+    for (const call of reply.calls ?? []) {
+      if (this.usedIds.has(call.id)) continue;
+      this.usedIds.add(call.id);
+      calls.push(structuredClone(call));
+    }
+    let {text} = reply;
+    const reasoning = reply.reasoning && structuredClone(reply.reasoning);
+    if (text.length > maxChars) {
+      text = text.slice(0, maxChars);
+      delete reasoning?.text;
+    }
+    if (!text.trim() && !reasoning && !calls.length) return;
+    this.history.append({
+      role: "assistant",
+      content: text,
+      ...(calls.length ? {calls} : {}),
+      ...(reasoning ? {reasoning} : {}),
+      cutOff: true,
+    });
+    for (const call of calls)
+      this.record(call, {
+        status: "error",
+        code: "cut_off",
+        message: "Not run: the reply was cut off at the output token limit",
+      });
   }
 
   /** Moves the batch's still-running programs to background work, so steering

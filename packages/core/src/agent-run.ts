@@ -9,6 +9,7 @@ import {
   type Task,
 } from "@restatedev/restate-sdk-gen";
 import {
+  AgentTerminalError,
   ContextOverflowError,
   GuardrailError,
   guardrailDecision,
@@ -36,11 +37,13 @@ import {READ_TOOL, readToolResultTool, type PreviewSettings} from "./tool-result
 import {listSkills, skillsSection, skillTools} from "./skills.js";
 import {SEARCH_TOOL, searchToolsTool} from "./builtins.js";
 import {PROGRAM_TOOL, programTool} from "./program.js";
+import {REPLY_RESERVE} from "./limits.js";
 import {jsonSchema, modelResponse, stepMessages, steeringUpdate} from "./validation.js";
 import type {
   AgentOptions,
   AgentRuntime,
   Message,
+  ModelCutOffResponse,
   ModelFinalResponse,
   ModelRequest,
   ModelResponse,
@@ -62,7 +65,8 @@ import type {
 export type RunConfiguration = ToolExecutionLimits &
   Readonly<{
     maxSteps: number;
-    maxOutputTokens: number;
+    /** Unset, requests leave it out and the provider picks the limit. */
+    maxOutputTokens?: number;
     outputSchema?: Record<string, unknown>;
     compaction?: {maxTokens: number; retainTokens: number};
     toolResults?: PreviewSettings;
@@ -179,7 +183,8 @@ function resolveControls<C>(options?: RunOptions<C>): RunControls {
  * - Background results completed during a model request also invalidate its
  *   response: the model must see them before acting.
  *
- * Nothing is saved until finish() persists the turn; failures save nothing. */
+ * Nothing is saved until finish() persists the turn; failures save nothing,
+ * except a reply cut off at the output token limit, which cutOff() saves. */
 class AgentRun<C, O> {
   private step = 0;
   private steeringSource: SteeringSource | undefined;
@@ -314,6 +319,7 @@ class AgentRun<C, O> {
       yield* this.compactContext();
       const response = yield* this.ask();
       if (!response || this.collectBackground()) continue;
+      if (response.type === "cut_off") return yield* this.cutOff(response);
       if (response.type === "tool_calls") {
         yield* this.toolPhase(response);
         continue;
@@ -377,12 +383,14 @@ class AgentRun<C, O> {
 
   /** Shrinks the model's view: past `compaction.maxTokens`, when the next
    * request would not fit `contextWindow`, or always after an overflow, which
-   * keeps at most half of the view. A summary comes first when compaction is
-   * set; truncation needs no model, so it is the fallback.
+   * keeps at most half of the view. A summary comes first unless compaction is
+   * off; truncation needs no model, so it is the fallback.
    * Not raced against controls: steering and interrupts are handled once the
    * smaller view is in place, so a stopped run still has room to finalize. */
   private *compactContext(overflow = false): Operation<boolean> {
     const {compaction: settings, contextWindow, maxOutputTokens} = this.config;
+    // The room a reply needs: its limit, or a reserve when the provider picks it.
+    const reply = maxOutputTokens ?? REPLY_RESERVE;
     // Measuring the view is only worth its cost when something can act on the result.
     if (!overflow && !settings && !contextWindow) return false;
     const retain = (limit: number) => Math.min(settings?.retainTokens ?? limit, limit);
@@ -401,21 +409,21 @@ class AgentRun<C, O> {
       if (settings && tokens > settings.maxTokens) {
         reason = "threshold";
         retainTokens = Math.min(settings.retainTokens, room(settings.maxTokens));
-      } else if (contextWindow && tokens + maxOutputTokens > contextWindow) {
+      } else if (contextWindow && tokens + reply > contextWindow) {
         reason = "window";
-        retainTokens = retain(
-          Math.min(Math.floor(contextWindow / 4), room(contextWindow - maxOutputTokens)),
-        );
+        retainTokens = retain(Math.min(Math.floor(contextWindow / 4), room(contextWindow - reply)));
       } else return false;
     }
     const pending = this.tools.pendingCalls();
     if (settings && !this.compactionFailed) {
-      const model = this.root.compaction?.model ?? this.root.model;
+      const {compaction} = this.root;
+      const model = (compaction ? compaction.model : undefined) ?? this.root.model;
       // The note can reuse the cached prefix of the last request when the same
       // model writes it; a window or overflow cut means that prefix no longer fits.
+      // Its reply limit is the run's, and like the run's, left out when unset.
       const prefix =
         reason === "threshold" && model === this.active.model && this.lastRequest
-          ? {...this.lastRequest, maxOutputTokens}
+          ? {...this.lastRequest, ...(maxOutputTokens === undefined ? {} : {maxOutputTokens})}
           : undefined;
       try {
         const counted = this.usage.count(model);
@@ -548,10 +556,11 @@ class AgentRun<C, O> {
     } catch (error) {
       return rejection("instructions", error);
     }
-    const request = {
+    const {maxOutputTokens} = this.config;
+    const request: ModelRequest = {
       instructions: withSkills(instructions, this.skills?.section),
       outputSchema: this.config.outputSchema,
-      maxOutputTokens: this.config.maxOutputTokens,
+      ...(maxOutputTokens === undefined ? {} : {maxOutputTokens}),
       step: this.step,
       messages,
       tools: this.visibleTools(),
@@ -579,6 +588,8 @@ class AgentRun<C, O> {
       if (!isResponseProblem(error)) throw error;
       return rejection("model", error);
     }
+    // A cut-off reply ends the run, whatever its length; its text is clipped as recorded.
+    if (response.type === "cut_off") return response;
     return this.outputLimit(response.text) ?? response;
   }
 
@@ -626,6 +637,21 @@ class AgentRun<C, O> {
       // search and code mode follow the new agent's tools.
       this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
+  }
+
+  /** Ends the run on a reply cut off at the output token limit: asking again
+   * would most likely be cut off again. The reply stays in the history, its
+   * calls never run, and owned work stops. The turn is saved before the run
+   * fails, so a later run continues from the reply's reasoning. */
+  private *cutOff(reply: ModelCutOffResponse): Operation<never> {
+    const message =
+      "The model's reply was cut off at the output token limit. Raise maxOutputTokens if the reply needs more room; otherwise the model may be looping.";
+    this.tools.recordCutOff(reply, this.config.maxOutputChars);
+    const reason = new InterruptedError(message);
+    yield* this.tasks.stop(reason);
+    this.history.append(...this.tools.settlePending(reason));
+    yield* this.history.save();
+    throw new AgentTerminalError(message);
   }
 
   /** Moves finished background results into history; true when any arrived. */

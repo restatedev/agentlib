@@ -165,6 +165,7 @@ repeat a completed model call.
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
 | Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |
+| Reply limit                  | `maxOutputTokens`; see [Reply limit](#reply-limit)                         | —                                                           |
 | Usage totals                 | `result.usage`, and `usageOf(error)` for a failed run                      | —                                                           |
 | Custom model adapters        | `journaledModel`                                                           | —                                                           |
 | Models                       | `aiModel`, `modelGateway` (`/provider`)                                    | [01_hello.ts](packages/examples/src/lessons/01_hello.ts)    |
@@ -174,6 +175,25 @@ Subpaths are imports from `@restatedev/agentlib`, such as
 marks prompt-cache points for Anthropic and Bedrock unless `caching: false`.
 
 Agents run inside Restate's generator SDK.
+
+### Reply limit
+
+`maxOutputTokens` limits the tokens of each model reply. When you leave it
+unset, requests carry no limit, and each AI SDK provider picks one:
+
+| Provider                                                                                  | Limit when `maxOutputTokens` is unset                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@ai-sdk/anthropic`                                                                       | The model's maximum from the provider's own table, such as 128,000 for recent Claude models, or 4,096 for a model name it doesn't know. It lowers a value above a known maximum, with a warning. |
+| `@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/openai-compatible` | The request carries no limit, so the model API's own default applies.                                                                                                                            |
+| `@ai-sdk/gateway`                                                                         | The provider forwards the request, and Vercel AI Gateway decides.                                                                                                                                |
+
+Set `maxOutputTokens` when you expect long replies. A reply cut off at the
+limit fails the run with an `AgentTerminalError`: either the reply needs a
+higher `maxOutputTokens`, or the model is looping. Before the run fails, it
+records the reply's reasoning and partial text in its history, marked
+`cutOff`, gives each complete tool call in the reply a failed result without
+running it, and saves the run's conversation, if it has one. A replay of the
+invocation ends the same way.
 
 ## Skills for coding agents
 

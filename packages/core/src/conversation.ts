@@ -205,6 +205,8 @@ export function* summarizeConversation(
       name: "Summarize conversation",
     }),
   );
+  if (response.type === "cut_off")
+    throw new TerminalError("The conversation summary was cut off at the output token limit");
   if (response.type !== "final")
     throw new TerminalError("Conversation compaction must not call tools");
   // A structured-only response carries no summary; applyCompaction would
