@@ -62,6 +62,12 @@ handler shows the turn that is running:
 Each save appends to the last one. The saved history stays the full record:
 error notes, rejected answers, and in-run compaction never reach it.
 
+Restate journals every state read with its value. Within one invocation,
+`LazyStateConversation` reads each state key at most once and keeps what it
+read and wrote, so the load, compaction, and saves of a run don't journal the
+same messages again. A shared handler that calls `page()` twice in one
+invocation gets the values from its first read; call it once per invocation.
+
 A run that fails with a terminal error saves what it recorded, closes
 unfinished calls with `cancelled` results, and adds a note on the failure; see
 `error-handling.md`. The input is saved with the first model call, so a caller

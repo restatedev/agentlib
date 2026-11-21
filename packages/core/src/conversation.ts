@@ -1,5 +1,5 @@
 import {TerminalError} from "@restatedev/restate-sdk";
-import {sharedState, state, type Operation} from "@restatedev/restate-sdk-gen";
+import {contextLocal, sharedState, state, type Operation} from "@restatedev/restate-sdk-gen";
 import {readable} from "./context-size.js";
 import type {Message, Model} from "./types.js";
 import {checkProtocol, history, modelResponse, parseMessages, type OpenCall} from "./validation.js";
@@ -44,6 +44,8 @@ export class ConversationConflictError extends TerminalError {
   }
 }
 const CHUNK_SIZE = 32;
+/** The value of each key this invocation read or wrote, per store. */
+const known = contextLocal<WeakMap<ConversationStore, Map<string, unknown>>>();
 const restateStore: ConversationStore = {
   *get<T>(key: string) {
     return (yield* sharedState().get<T>(key)) ?? undefined;
@@ -54,7 +56,15 @@ const restateStore: ConversationStore = {
 };
 
 /** Append-only chunks in an application-owned exclusive Virtual Object handler.
- * No constructor I/O and no process-local cache. Use one writer per conversation. */
+ * No constructor I/O. Use one writer per conversation.
+ *
+ * Within one invocation, each key is read from the store at most once. Restate
+ * journals every state read with its value, so a run that loads, compacts, and
+ * saves would otherwise journal the same chunks and metadata several times. The
+ * values are kept per invocation, not per instance, so every instance on the
+ * same store sees the writes of the others, and a replay reads them from the
+ * journal again. A handler that reads within one invocation does not see
+ * writes from other invocations after its first read of a key. */
 export class LazyStateConversation implements Conversation {
   private readonly store: ConversationStore;
   private readonly metaKey: string;
@@ -73,8 +83,32 @@ export class LazyStateConversation implements Conversation {
     this.metaKey = options.metaKey ?? `${this.stateKey}/meta`;
   }
 
+  private known(): Map<string, unknown> {
+    let stores = known.get();
+    if (!stores) known.set((stores = new WeakMap()));
+    let values = stores.get(this.store);
+    if (!values) stores.set(this.store, (values = new Map()));
+    return values;
+  }
+
+  /** The key's value as this invocation last read or wrote it. Callers clone
+   * what they change: the value is shared for the rest of the invocation. */
+  private *read<T>(key: string): Operation<T | undefined> {
+    if (this.known().has(key)) return this.known().get(key) as T | undefined;
+    const value = yield* this.store.get<T>(key);
+    // A write during the read is newer than the value read.
+    const values = this.known();
+    if (!values.has(key)) values.set(key, value);
+    return values.get(key) as T | undefined;
+  }
+
+  private *write<T>(key: string, value: T): Operation<void> {
+    yield* this.store.set(key, value);
+    this.known().set(key, value);
+  }
+
   private *meta(): Operation<Meta> {
-    return structuredClone((yield* this.store.get<Meta>(this.metaKey)) ?? {count: 0});
+    return structuredClone((yield* this.read<Meta>(this.metaKey)) ?? {count: 0});
   }
 
   private key(index: number) {
@@ -85,7 +119,7 @@ export class LazyStateConversation implements Conversation {
   private *range(from: number, through: number): Operation<Message[]> {
     const messages: Message[] = [];
     for (let i = Math.floor(from / CHUNK_SIZE); i < Math.ceil(through / CHUNK_SIZE); i++) {
-      const chunk = yield* this.store.get<Message[]>(this.key(i));
+      const chunk = yield* this.read<Message[]>(this.key(i));
       if (!chunk) throw new ConversationConflictError(`Missing conversation chunk: ${i}`);
       const offset = i * CHUNK_SIZE;
       messages.push(...chunk.slice(Math.max(0, from - offset), through - offset));
@@ -121,15 +155,15 @@ export class LazyStateConversation implements Conversation {
     while (offset < additions.length) {
       const index = Math.floor(meta.count / CHUNK_SIZE);
       const used = meta.count % CHUNK_SIZE;
-      const chunk = used ? yield* this.store.get<Message[]>(this.key(index)) : [];
+      const chunk = used ? yield* this.read<Message[]>(this.key(index)) : [];
       if (!chunk || chunk.length !== used)
         throw new ConversationConflictError("Invalid conversation tail");
       const next = additions.slice(offset, offset + CHUNK_SIZE - used);
-      yield* this.store.set(this.key(index), [...chunk, ...next]);
+      yield* this.write(this.key(index), [...chunk, ...next]);
       offset += next.length;
       meta.count += next.length;
     }
-    yield* this.store.set(this.metaKey, meta);
+    yield* this.write(this.metaKey, meta);
     return meta.count;
   }
 
@@ -191,7 +225,7 @@ export class LazyStateConversation implements Conversation {
     if ((meta.summary?.through ?? 0) !== plan.baseThrough) return false;
     // Verify the retained suffix independently before committing the new boundary.
     history(yield* this.range(plan.through, meta.count), {unfinished: true});
-    yield* this.store.set(this.metaKey, {...meta, summary: {through: plan.through, text: summary}});
+    yield* this.write(this.metaKey, {...meta, summary: {through: plan.through, text: summary}});
     return true;
   }
 
