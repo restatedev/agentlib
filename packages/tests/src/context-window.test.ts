@@ -469,7 +469,7 @@ function windowed(limit: number, steps: number) {
 void test("an overflow truncates the view and asks again", async () => {
   const fixture = windowed(6, 5);
   const events: ProgressEvent[] = [];
-  const a = agent({tools: {small}, model: fixture.model});
+  const a = agent({tools: {small}, model: fixture.model, compaction: false});
   const result = await r.execute(
     context(),
     a.run("Go", {
@@ -530,7 +530,7 @@ void test("with compaction set, an overflow summarizes below the threshold", asy
 void test("an overflow that shrinking cannot fix fails the run", async () => {
   // Even the input alone overflows.
   const fixture = windowed(0, 1);
-  const a = agent({tools: {small}, model: fixture.model});
+  const a = agent({tools: {small}, model: fixture.model, compaction: false});
   await assert.rejects(r.execute(context(), a.run("Go")), (error) => isContextOverflow(error));
   // One recovery: the input gives way to a note restating it, which still overflows.
   assert.equal(fixture.overflows(), 2);
@@ -539,6 +539,7 @@ void test("an overflow that shrinking cannot fix fails the run", async () => {
   let asked = 0;
   const always = agent({
     tools: {small},
+    compaction: false,
     *model() {
       if (++asked > 1) throw new ContextOverflowError("prompt is too long");
       return call("s1", "small");
@@ -678,7 +679,7 @@ void test("contextWindow shrinks a view that would not fit before asking", async
               },
             },
           }
-        : {}),
+        : {compaction: false as const}),
       *model(request) {
         requests.push(structuredClone(request));
         step++;
@@ -729,6 +730,7 @@ void test("contextWindow counts instructions and tools before any usage report",
     },
     contextWindow: 6000,
     maxOutputTokens: 1000,
+    compaction: false,
     *model() {
       // No usage: the estimate alone must see that the view no longer fits.
       return ++step <= 6 ? call(`m${step}`, "medium") : {type: "final", text: "Done"};
@@ -769,4 +771,98 @@ void test("contextWindow must leave room for the output", () => {
     () => agent({model, contextWindow: 4096, maxOutputTokens: 4096}),
     /contextWindow must be greater than maxOutputTokens/,
   );
+  // Without maxOutputTokens, the provider picks the limit and the window keeps 32768 for the reply.
+  assert.throws(() => agent({model, contextWindow: 32768}), /or 32768 when it is unset/);
+  assert.doesNotThrow(() => agent({model, contextWindow: 32769}));
+});
+
+void test("without maxOutputTokens, the window check leaves 32768 tokens for the reply", async () => {
+  const compactions = async (maxOutputTokens?: number) => {
+    let step = 0;
+    let events = 0;
+    const a = agent({
+      tools: {
+        // About 10000 tokens, shown in full.
+        large: tool({
+          description: "A large result",
+          input: z.object({}),
+          *execute() {
+            return "x".repeat(20000);
+          },
+        }),
+      },
+      toolResults: false,
+      compaction: false,
+      contextWindow: 50000,
+      ...(maxOutputTokens === undefined ? {} : {maxOutputTokens}),
+      *model() {
+        // About 20000 tokens in the next request: they fit beside 1000 tokens for the reply, not beside 32768.
+        const usage = {inputTokens: 10000, outputTokens: 10};
+        return ++step === 1
+          ? {...call("m1", "large"), usage}
+          : {type: "final", text: "Done", usage};
+      },
+    });
+    const result = await r.execute(
+      context(),
+      a.run("Go", {
+        *onProgress(event) {
+          if (event.type === "compaction") events++;
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    return events;
+  };
+  assert.equal(await compactions(1000), 0);
+  assert.equal(await compactions(), 1);
+});
+
+void test("compaction summarizes past 100000 tokens by default, unless it is false", async () => {
+  const run = async (compaction?: false) => {
+    const events: ProgressEvent[] = [];
+    let notes = 0;
+    let step = 0;
+    const a = agent({
+      tools: {
+        // About 30000 tokens, more than the default retainTokens of 25000.
+        large: tool({
+          description: "A large result",
+          input: z.object({}),
+          *execute() {
+            return "x".repeat(60000);
+          },
+        }),
+      },
+      toolResults: false,
+      ...(compaction === undefined ? {} : {compaction}),
+      *model(request) {
+        // The agent's own model writes the note, asked for at the end of its view.
+        if (JSON.stringify(request.messages.at(-1)).includes("handoff-note-request")) {
+          notes++;
+          return {type: "final", text: "note"};
+        }
+        // About 120000 tokens in the next request.
+        const usage = {inputTokens: 90000, outputTokens: 10};
+        return ++step === 1
+          ? {...call("m1", "large"), usage}
+          : {type: "final", text: "Done", usage};
+      },
+    });
+    const result = await r.execute(
+      context(),
+      a.run("Go", {
+        *onProgress(event) {
+          if (event.type === "compaction") events.push(event);
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    return {events, notes};
+  };
+  assert.deepEqual(await run(), {
+    events: [{type: "compaction", mode: "summary", status: "applied", reason: "threshold"}],
+    notes: 1,
+  });
+  assert.deepEqual(await run(false), {events: [], notes: 0});
 });

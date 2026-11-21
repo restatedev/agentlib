@@ -2,29 +2,33 @@ import {z} from "zod";
 import type {Operation} from "@restatedev/restate-sdk-gen";
 import type {Agent, AgentOptions, RunOptions, RunResult} from "./types.js";
 import {runAgent, type RunConfiguration} from "./agent-run.js";
-import {positiveInteger} from "./limits.js";
+import {positiveInteger, REPLY_RESERVE} from "./limits.js";
 import {checkTool} from "./tool-catalog.js";
 
 /** Embeddable task loop. Definitions are reusable; every mutable object is run-local. */
 export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): Agent<C, O> {
   // A tool no run could list fails here, at startup, rather than in every run.
   for (const [name, definition] of Object.entries(options.tools ?? {})) checkTool(name, definition);
-  const maxSteps = positiveInteger(options.maxSteps ?? 10, "maxSteps");
-  const maxToolCalls = positiveInteger(options.maxToolCalls ?? 128, "maxToolCalls");
+  const maxSteps = positiveInteger(options.maxSteps ?? 100, "maxSteps");
+  const maxToolCalls = positiveInteger(options.maxToolCalls ?? 256, "maxToolCalls");
   const maxToolDepth = positiveInteger(options.maxToolDepth ?? 16, "maxToolDepth");
-  const maxOutputTokens = positiveInteger(options.maxOutputTokens ?? 4096, "maxOutputTokens");
+  // Unset, it is left out of requests, so each provider picks the limit.
+  const maxOutputTokens =
+    options.maxOutputTokens === undefined
+      ? undefined
+      : positiveInteger(options.maxOutputTokens, "maxOutputTokens");
   // Output policies receive parsed values and validation runs again afterward.
   // Requiring a representable output schema rejects transforms that would run twice.
   const outputSchema = options.output ? z.toJSONSchema(options.output) : undefined;
   const maxOutputChars = positiveInteger(options.maxOutputChars ?? 128000, "maxOutputChars");
   let compaction: RunConfiguration["compaction"];
-  if (options.compaction) {
+  if (options.compaction !== false) {
     const maxTokens = positiveInteger(
-      options.compaction.maxTokens ?? 100000,
+      options.compaction?.maxTokens ?? 100000,
       "compaction.maxTokens",
     );
     const retainTokens = positiveInteger(
-      options.compaction.retainTokens ?? Math.floor(maxTokens / 4),
+      options.compaction?.retainTokens ?? Math.floor(maxTokens / 4),
       "compaction.retainTokens",
     );
     if (retainTokens >= maxTokens)
@@ -50,8 +54,10 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     options.contextWindow === undefined
       ? undefined
       : positiveInteger(options.contextWindow, "contextWindow");
-  if (contextWindow !== undefined && contextWindow <= maxOutputTokens)
-    throw new TypeError("contextWindow must be greater than maxOutputTokens");
+  if (contextWindow !== undefined && contextWindow <= (maxOutputTokens ?? REPLY_RESERVE))
+    throw new TypeError(
+      `contextWindow must be greater than maxOutputTokens, or ${REPLY_RESERVE} when it is unset; set maxOutputTokens for a smaller window`,
+    );
 
   const config = {
     maxSteps,

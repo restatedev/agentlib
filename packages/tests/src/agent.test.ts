@@ -285,6 +285,38 @@ void test("invocation cancellation is not converted to a tool result", async () 
   await assert.rejects(execute(context(), a.run("Go")), (error) => error === cancelled);
 });
 
+void test("a run takes up to 100 steps and 256 tool calls by default", async () => {
+  const noop = tool({
+    description: "fixture",
+    input: z.object({}),
+    *execute() {
+      return null;
+    },
+  });
+  const looping = (callsPerStep: number) => {
+    let id = 0;
+    return agent({
+      finalize: false,
+      tools: {noop},
+      *model() {
+        const calls = Array.from({length: callsPerStep}, () => ({
+          id: `c${++id}`,
+          name: "noop",
+          input: {},
+        }));
+        return {type: "tool_calls", calls};
+      },
+    });
+  };
+  const steps = await execute(context(), looping(1).run("Loop"));
+  assert.equal(steps.status === "stopped" && steps.reason, "max_steps");
+  assert.equal(steps.steps, 100);
+  // Four calls a step: the 65th batch would make 260 calls.
+  const calls = await execute(context(), looping(4).run("Loop"));
+  assert.equal(calls.status === "stopped" && calls.reason, "max_tool_calls");
+  assert.equal(calls.messages.filter((message) => message.role === "tool").length, 256);
+});
+
 void test("maxSteps stops a tool-only loop with a complete transcript", async () => {
   const a = agent({
     maxSteps: 2,

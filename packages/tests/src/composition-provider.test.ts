@@ -5,10 +5,20 @@ import {APICallError, LoadAPIKeyError, UnsupportedFunctionalityError} from "ai";
 import * as r from "@restatedev/restate-sdk-gen";
 import {MockLanguageModelV4, simulateReadableStream} from "ai/test";
 import {z} from "zod";
-import {agent, handoff, tool, type ModelResponse} from "@restatedev/agentlib";
+import {
+  agent,
+  AgentTerminalError,
+  handoff,
+  isAgentTerminal,
+  LazyStateConversation,
+  tool,
+  usageOf,
+  type ModelRequest,
+  type ModelResponse,
+} from "@restatedev/agentlib";
 import {aiModel} from "@restatedev/agentlib/provider";
 import {runHandler} from "./replay-harness.mjs";
-import {testContext} from "./helpers.js";
+import {memoryStore, testContext} from "./helpers.js";
 const ctx = () => testContext("compose");
 const usage = {
   inputTokens: {total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0},
@@ -327,35 +337,219 @@ void test("AI SDK provider adapter forwards instructions and schemas and replays
   assert.equal(requests, 1);
 });
 
-void test("a truncated response gets another step, and its usage still counts", async () => {
-  const prompts: unknown[] = [];
+for (const streaming of [false, true]) {
+  void test(`a cut-off reply ends the run and keeps its reasoning, text and complete calls (${streaming ? "stream" : "generate"})`, async () => {
+    let requests = 0;
+    const writes: string[] = [];
+    const finishReason = {unified: "length" as const, raw: "max_tokens"};
+    // A complete call, a complete call the tool's schema would reject, and a call cut off part way.
+    const calls = [
+      {id: "complete", input: '"done"'},
+      {id: "mistyped", input: "5"},
+      {id: "partial", input: '"unfini'},
+    ].map(({id, input}) => ({
+      type: "tool-call" as const,
+      toolCallId: id,
+      toolName: "write",
+      input,
+    }));
+    const provider = new MockLanguageModelV4({
+      doGenerate: async () => {
+        requests++;
+        return {
+          content: [
+            {type: "reasoning", text: "Plan both writes."},
+            {type: "text", text: "Writing both"},
+            ...calls,
+          ],
+          finishReason,
+          usage,
+          warnings: [],
+        };
+      },
+      doStream: async () => {
+        requests++;
+        return {
+          stream: simulateReadableStream({
+            initialDelayInMs: null,
+            chunkDelayInMs: null,
+            chunks: [
+              {type: "stream-start", warnings: []},
+              {type: "reasoning-start", id: "r"},
+              {type: "reasoning-delta", id: "r", delta: "Plan both writes."},
+              {type: "reasoning-end", id: "r"},
+              {type: "text-start", id: "t"},
+              {type: "text-delta", id: "t", delta: "Writing both"},
+              {type: "text-end", id: "t"},
+              ...calls,
+              {type: "finish", finishReason, usage},
+            ],
+          }),
+        };
+      },
+    });
+    const a = agent({
+      model: aiModel({model: provider, ...(streaming ? {onChunk: async () => {}} : {})}),
+      tools: {
+        write: tool({
+          description: "Write a string",
+          input: z.string(),
+          *execute(value) {
+            writes.push(value);
+            return value;
+          },
+        }),
+      },
+    });
+    const handler = (context: Context) =>
+      r.execute(
+        context,
+        (function* () {
+          const conversation = new LazyStateConversation({store: memoryStore().store});
+          try {
+            yield* a.run("write", {conversation});
+            return {failed: false};
+          } catch (error) {
+            if (!(error instanceof AgentTerminalError)) throw error;
+            const saved = yield* conversation.load();
+            return {message: error.message, usage: usageOf(error), messages: saved.messages};
+          }
+        })(),
+      );
+    const live = await runHandler(handler);
+    assert.match(live.output.message, /output token limit.*maxOutputTokens.*looping/);
+    assert.equal(live.output.usage.outputTokens, 1);
+    assert.deepEqual(writes, []);
+    const result = {
+      status: "error",
+      code: "cut_off",
+      message: "Not run: the reply was cut off at the output token limit",
+    };
+    // The run saves the reply, marked cut off, without the call it cut off part way.
+    const [input, reply, ...results] = live.output.messages;
+    assert.deepEqual(input, {role: "user", content: "write"});
+    assert.equal(reply.role, "assistant");
+    assert.equal(reply.content, "Writing both");
+    assert.equal(reply.cutOff, true);
+    assert.equal(reply.reasoning.items[0].text, "Plan both writes.");
+    assert.deepEqual(
+      reply.calls.map((call: {id: string}) => call.id),
+      ["complete", "mistyped"],
+    );
+    assert.deepEqual(results, [
+      {role: "tool", callId: "complete", name: "write", result},
+      {role: "tool", callId: "mistyped", name: "write", result},
+    ]);
+    // The journaled reply ends a replay the same way, without asking the provider.
+    const replay = await runHandler(handler, {replay: live.journal});
+    assert.deepEqual(replay.output, live.output);
+    assert.equal(requests, 1);
+  });
+}
+
+void test("a later run continues from a cut-off reply's saved history", async () => {
+  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const requests: ModelRequest[] = [];
+  let step = 0;
+  const a = agent({
+    *model(request) {
+      requests.push(structuredClone(request));
+      if (++step === 1)
+        return {
+          type: "cut_off",
+          text: "Partial",
+          calls: [{id: "c1", name: "noop", input: {}}],
+          reasoning: {items: [{type: "reasoning", text: "Thinking"}]},
+        };
+      return {type: "final", text: "done"};
+    },
+    tools: {
+      noop: tool({
+        description: "fixture",
+        input: z.object({}),
+        *execute() {
+          throw new Error("a cut-off call never runs");
+        },
+      }),
+    },
+  });
+  await assert.rejects(r.execute(ctx(), a.run("first", {conversation})), (error: unknown) =>
+    isAgentTerminal(error),
+  );
+  const result = await r.execute(ctx(), a.run("second", {conversation}));
+  assert.equal(result.output, "done");
+  // The next request is valid: the cut-off call is answered before the new input.
+  assert.deepEqual(
+    requests[1]!.messages.map((message) => message.role),
+    ["user", "assistant", "tool", "user"],
+  );
+  assert.equal(
+    requests[1]!.messages[1]!.role === "assistant" && requests[1]!.messages[1]!.cutOff,
+    true,
+  );
+});
+
+void test("a cut-off reply with nothing in it saves no assistant message", async () => {
+  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const a = agent({
+    *model() {
+      return {type: "cut_off", text: ""};
+    },
+  });
+  await assert.rejects(r.execute(ctx(), a.run("go", {conversation})), {
+    name: "AgentTerminalError",
+  });
+  const saved = await r.execute(ctx(), conversation.load());
+  assert.deepEqual(saved.messages, [{role: "user", content: "go"}]);
+});
+
+void test("cut-off text longer than maxOutputChars is clipped as recorded", async () => {
+  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const a = agent({
+    maxOutputChars: 10,
+    *model() {
+      return {
+        type: "cut_off",
+        text: "x".repeat(50),
+        reasoning: {
+          items: [],
+          text: [{text: "x".repeat(50), providerOptions: {google: {thoughtSignature: "s"}}}],
+        },
+      };
+    },
+  });
+  await assert.rejects(r.execute(ctx(), a.run("go", {conversation})), {
+    name: "AgentTerminalError",
+  });
+  const saved = await r.execute(ctx(), conversation.load());
+  // The signed text no longer matches the clipped text, so it is left out.
+  assert.deepEqual(saved.messages[1], {
+    role: "assistant",
+    content: "x".repeat(10),
+    reasoning: {items: []},
+    cutOff: true,
+  });
+});
+
+void test("maxOutputTokens reaches the provider only when set", async () => {
+  const limits: (number | undefined)[] = [];
   const provider = new MockLanguageModelV4({
     doGenerate: async (options) => {
-      prompts.push(options.prompt);
-      const truncated = prompts.length === 1;
+      limits.push(options.maxOutputTokens);
       return {
-        content: [{type: "text", text: truncated ? "partial" : "complete"}],
-        finishReason: truncated
-          ? {unified: "length", raw: "length"}
-          : {unified: "stop", raw: "stop"},
+        content: [{type: "text", text: "done"}],
+        finishReason: {unified: "stop", raw: "stop"},
         usage,
         warnings: [],
       };
     },
   });
-  const a = agent({model: aiModel({model: provider})});
-  const handler = (context: Context) => r.execute(context, a.run("go"));
-  const first = await runHandler(handler);
-  assert.equal(first.output.output, "complete");
-  // The model learns why, but never sees the cut-off text as an answer.
-  const retried = JSON.stringify(prompts[1]);
-  assert.match(retried, /incomplete_response/);
-  assert.match(retried, /output token limit/);
-  assert.doesNotMatch(retried, /partial/);
-  assert.equal(first.output.usage.outputTokens, 2);
-  const replay = await runHandler(handler, {replay: first.journal});
-  assert.deepEqual(replay.output, first.output);
-  assert.equal(prompts.length, 2);
+  const model = aiModel({model: provider});
+  await runHandler((context: Context) => r.execute(context, agent({model}).run("go")));
+  await runHandler((context: Context) =>
+    r.execute(context, agent({model, maxOutputTokens: 2048}).run("go")),
+  );
+  assert.deepEqual(limits, [undefined, 2048]);
 });
 
 void test("live chunks occur only during provider I/O and are not replayed", async () => {

@@ -81,7 +81,7 @@ reads, and `cacheWriteInputTokens` the writes.
 `result.usage` sums the usage of every model call a run makes: its steps,
 in-run compaction, and the summary of a stopped or interrupted run, including
 responses the run discards, such as an answer superseded by steering or a reply
-cut off at `maxOutputTokens`. It also includes each sub-agent run by
+stopped by a content filter. It also includes each sub-agent run by
 `agentTool` and each fork run by `forkAgentTool`, whether it completes, stops,
 or fails. `totalTokens` is `inputTokens + outputTokens`. Calls that
 report no usage add nothing. Model calls made by other tools or by hooks, and
@@ -125,13 +125,19 @@ at once. Either way, `run()` throws the `TerminalError`, because the next model
 call would fail the same way. A custom model that throws a `TerminalError` ends
 the run too.
 
-A response that the model can fix goes back to the model instead: a reply cut
-off at `maxOutputTokens` or by a content filter, an empty reply, or one that
-announces tool calls without making any. The run discards the reply, gives the
-model a note that says why, and starts the next step, so a model that keeps
-failing ends the run as `stopped`. The journal records the failed call, so a
-replay repeats the step without calling the provider. See `error-handling.md`
-for how these failures fit the run's other error rules.
+A response that the model can fix goes back to the model instead: a reply
+stopped by a content filter, an empty reply, or one that announces tool calls
+without making any. The run discards the reply, gives the model a note that
+says why, and starts the next step, so a model that keeps failing ends the run
+as `stopped`. The journal records the failed call, so a replay repeats the step
+without calling the provider.
+
+A reply cut off at the output token limit fails the run with an
+`AgentTerminalError` instead. `aiModel` returns it as a `cut_off` response,
+which the journal records; the run keeps the reply's reasoning and text in its
+history, marked `cutOff: true`, gives its complete tool calls a failed result
+without running them, and fails. See `error-handling.md` for what a failed run
+keeps and how these failures fit the run's other error rules.
 
 ### Stream model text with `onChunk`
 
