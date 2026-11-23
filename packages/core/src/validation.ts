@@ -125,12 +125,14 @@ export function history(
 }
 
 /** Rejects a history whose tool results do not answer the calls before them, in
- * order. Structural only: callers pass messages that were already validated. */
+ * order, and returns the calls at its end that have no result yet. Those fail too,
+ * unless `unfinished` allows them. Structural only: callers pass messages that were
+ * already validated. */
 export function checkProtocol(
   messages: readonly Message[],
   fail: (message: string) => Error = (message) => new RunInputError(message),
   unfinished = false,
-): void {
+): {id: string; name: string}[] {
   const ids = new Set<string>();
   const pending = new Map<string, string>();
   for (const message of messages) {
@@ -151,6 +153,7 @@ export function checkProtocol(
     }
   }
   if (pending.size > 0 && !unfinished) throw fail("History contains unfinished tool calls");
+  return [...pending].map(([id, name]) => ({id, name}));
 }
 
 /** The messages a `beforeStep` hook returned for one request. Messages it kept from

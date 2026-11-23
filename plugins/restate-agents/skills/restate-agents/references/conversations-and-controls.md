@@ -124,9 +124,10 @@ turn after the failed one. To retry the same request, call the handler with an
 idempotency key.
 
 A killed invocation (`restate invocations kill`) runs no more code, so calls it
-saved can stay without results, and the next run fails with `History contains
-unfinished tool calls`. Cancel an invocation instead: a cancelled run closes its
-calls and saves them.
+saved can stay without results. The next run closes each one with a
+`cancelled` result saying that the call was interrupted and may have taken
+effect, and its first save stores it. A cancelled run closes its calls itself,
+with the reason, so prefer cancelling.
 
 When a run starts and the conversation compaction fails, the run logs a
 warning and continues with the history it loaded; the next run tries again.

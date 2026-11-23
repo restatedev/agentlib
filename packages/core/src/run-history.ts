@@ -4,7 +4,7 @@ import type {Message} from "./types.js";
 import {RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
-import {checkProtocol, history} from "./validation.js";
+import {checkProtocol, history, parseMessages} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
 
@@ -61,6 +61,28 @@ function modelTranscript(events: readonly Message[], unfinished = false): Messag
   return transcript;
 }
 
+/** The result a run records for a call that an earlier run left without one. */
+const INTERRUPTED =
+  "Interrupted: the run that made this call ended before the call returned a result. It may have taken effect.";
+
+/** Validates the history a run continues from its conversation, in the same pass
+ * that checks it. The run owns the conversation, so it closes calls that a killed
+ * run left without results: each gets a cancelled result, which the run's first
+ * save stores. Any other problem fails validation. Returns the history and how
+ * many results it added. */
+function continuedHistory(loaded: readonly Message[]): {messages: Message[]; closed: number} {
+  const messages = parseMessages(loaded);
+  const open = checkProtocol(messages, undefined, true);
+  for (const {id, name} of open)
+    messages.push({
+      role: "tool",
+      callId: id,
+      name,
+      result: {status: "cancelled", message: INTERRUPTED},
+    });
+  return {messages, closed: open.length};
+}
+
 /** Owns the append-only event history and its persistence cursor. Every message enters
  * a run as a copy the run owns, validated once. Model requests and hooks share these
  * messages instead of copying the history, as the AI SDK does: they read them and never
@@ -101,12 +123,15 @@ export class RunHistory {
     if (conversation && source.messages)
       throw new RunInputError("Use either conversation or messages");
     const snapshot = conversation ? yield* conversation.load() : undefined;
-    const messages = history(snapshot?.messages ?? source.messages ?? []);
+    // A caller's messages come from a finished or failed run, which closes its calls.
+    const {messages, closed} = snapshot
+      ? continuedHistory(snapshot.messages)
+      : {messages: history(source.messages ?? []), closed: 0};
     const run = new RunHistory(
       input,
       messages,
       snapshot?.version ?? 0,
-      messages.length,
+      messages.length - closed,
       conversation,
     );
     run.previews = previews;
@@ -296,12 +321,13 @@ export class RunHistory {
     const result = yield* this.conversation.compact();
     if (result === "skipped") return;
     const compacted = yield* this.conversation.load();
-    this.messages.splice(0, this.messages.length, ...history(compacted.messages), {
+    const {messages, closed} = continuedHistory(compacted.messages);
+    this.messages.splice(0, this.messages.length, ...messages, {
       role: "user",
       content: this.input,
     });
-    this.persisted = compacted.messages.length;
-    this.inputAt = compacted.messages.length;
+    this.persisted = messages.length - closed;
+    this.inputAt = messages.length;
     this.version = compacted.version;
   }
 }

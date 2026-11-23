@@ -48,6 +48,8 @@ const success = (id: string, output: string) => resultOf(id, {status: "success",
 const cancelled = (id: string, message: string) => resultOf(id, {status: "cancelled", message});
 const note = (type: string, message: string): Message =>
   user(JSON.stringify({source: "agent-runtime", type, message}));
+const interrupted =
+  "Interrupted: the run that made this call ended before the call returned a result. It may have taken effect.";
 const pairs = (n: number): Message[] =>
   Array.from({length: n}, (_, i) => [user(`question ${i}`), answer(`answer ${i}`)]).flat();
 const stop = (message: string): never => {
@@ -394,21 +396,80 @@ void test("an interrupted run saves its calls as they start and closes them when
   });
 });
 
-void test("the next run rejects calls that a killed run left without results", async () => {
+void test("the next run closes the calls a killed run left without results", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   await execute(function* () {
-    // A run saved its calls, then its invocation was killed before they finished.
-    yield* conversation.append([user("pay"), calls("charge")], 0);
+    // A run saved its calls and one result, then its invocation was killed.
+    const left = [user("pay"), calls("charge", "email"), success("charge", "ok")];
+    yield* conversation.append(left, 0);
     // Readers accept calls that are still running.
-    assert.deepEqual((yield* conversation.load()).messages, [user("pay"), calls("charge")]);
+    assert.deepEqual((yield* conversation.load()).messages, left);
+    const closed = cancelled("email", interrupted);
+    const a = agent({
+      *model(request) {
+        assert.deepEqual(request.messages, [...left, closed, user("status?")]);
+        return done;
+      },
+    });
+    const result = yield* a.run("status?", {conversation});
+    // The run's save stores the closing result, so the stored history is complete again.
+    const saved = (yield* conversation.load()).messages;
+    history(saved);
+    assert.deepEqual(saved, result.messages);
+  });
+});
+
+void test("compaction before a run keeps the closing results", async () => {
+  const {store} = memoryStore();
+  const summarize: Model = function* () {
+    return {type: "final", text: "ten earlier questions"};
+  };
+  const conversation = new LazyStateConversation({
+    store,
+    compaction: {model: summarize, policy: {maxMessages: 8, retainMessages: 2}},
+  });
+  await execute(function* () {
+    yield* conversation.append([...pairs(10), user("pay"), calls("charge")], 0);
+    const closed = cancelled("charge", interrupted);
+    const a = agent({
+      *model(request) {
+        assert.match(JSON.stringify(request.messages[0]), /ten earlier questions/);
+        assert.deepEqual(request.messages.slice(1), [
+          user("pay"),
+          calls("charge"),
+          closed,
+          user("status?"),
+        ]);
+        return done;
+      },
+    });
+    assert.equal((yield* a.run("status?", {conversation})).status, "completed");
+    assert.deepEqual((yield* conversation.page(20)).messages, [
+      user("pay"),
+      calls("charge"),
+      closed,
+      user("status?"),
+      answer("done"),
+    ]);
+  });
+});
+
+void test("a run still rejects other broken histories, and repairs only its conversation", async () => {
+  const {store} = memoryStore();
+  const conversation = new LazyStateConversation({store});
+  await execute(function* () {
     const a = agent({
       *model() {
         return assert.fail("the run must not call the model");
       },
     });
-    const error = yield* failure(a.run("status?", {conversation}));
-    assert.match(String(error), /History contains unfinished tool calls/);
+    // A message after a call without a result is not an abandoned batch.
+    yield* conversation.append([user("pay"), calls("charge"), user("again")], 0);
+    assert.match(String(yield* failure(a.run("go", {conversation}))), /answer every tool call/);
+    // Messages a caller passes in are not repaired.
+    const messages = [user("pay"), calls("charge")];
+    assert.match(String(yield* failure(a.run("go", {messages}))), /unfinished tool calls/);
   });
 });
 
