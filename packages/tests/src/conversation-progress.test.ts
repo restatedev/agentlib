@@ -94,13 +94,13 @@ void test("a shared reader sees each model call while the run continues", async 
       },
     });
     const result = yield* a.run("go", {conversation});
-    // The batch's result is saved with the next model call, after the second request.
+    // The batch's result is saved with the next save: here, when the turn ends.
     assert.deepEqual(seen, [[], [user("go"), calls("lookup")], [user("go"), calls("lookup")]]);
     assert.deepEqual((yield* reader.page()).messages, result.messages);
   });
 });
 
-void test("background results are saved with the next model call", async () => {
+void test("background results are saved with the next save", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   const reader = new LazyStateConversation({store});

@@ -673,7 +673,7 @@ const session = r.object({
             if (ending === "failed mid-batch") calls.push({id: "halt", name: "halt", input: {}});
             return {type: "tool_calls", calls};
           }
-          // The batch's result is saved with this model call, so the request sees only the call.
+          // The batch's result is saved with the next save, so this request sees only the call.
           assert.deepEqual(
             saved.map((message) => message.role),
             ["user", "assistant"],
