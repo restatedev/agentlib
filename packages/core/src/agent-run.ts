@@ -182,11 +182,11 @@ function resolveControls<C>(options?: RunOptions<C>): RunControls {
  *   response: the model must see them before acting.
  *
  * With a conversation, the run saves after each model call that returns tool calls
- * and after each accepted steering message, so a shared handler can read its
- * progress, and when the turn ends: finish() commits the answer, and a failed run
- * saves its committed history with a note on the failure; see fail(). Tool results
- * and background results are saved with the next of these saves. Progress events
- * report each of them as it happens. */
+ * and after accepted steering, so a shared handler can read its progress, and when
+ * the turn ends: finish() commits the answer, and a failed run saves its committed
+ * history with a note on the failure; see fail(). A batch's calls are saved before
+ * they run; their results and background results are saved with the next save.
+ * Progress events report them as they happen. */
 class AgentRun<C, O> {
   private step = 0;
   private steeringSource: SteeringSource | undefined;
@@ -623,7 +623,7 @@ class AgentRun<C, O> {
       loaded: [...this.catalog.search.loaded],
     });
     const foreground = this.tools.startBatch(action, this.step, this.active, this.catalog);
-    // The calls are saved before their results, so a shared handler can show them.
+    // Saved before the calls run, with the previous batch's results.
     yield* this.history.save();
     while (Object.keys(foreground).length > 0) {
       const {tag} = yield* this.race({...foreground, ...this.tools.pendingTasks()});
@@ -768,8 +768,9 @@ class AgentRun<C, O> {
       }
     }
     this.history.appendSteering(message);
-    // Saved before it is reported. Mid-batch, the note follows the batch's results,
-    // so the next model call saves both; a save now would only add results.
+    // Saved before the event, so a reader that gets the event finds the note.
+    // During a batch, the note must follow the batch's results, so the next save
+    // stores it after them.
     if (!this.tools.inBatch) yield* this.history.save();
     yield* this.emit({type: "steering", message, ...withData});
     return true;

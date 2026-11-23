@@ -2,17 +2,13 @@ import {TerminalError} from "@restatedev/restate-sdk";
 import {contextLocal, sharedState, state, type Operation} from "@restatedev/restate-sdk-gen";
 import {readable} from "./context-size.js";
 import type {Message, Model} from "./types.js";
-import {checkProtocol, history, modelResponse, parseMessages, type OpenCall} from "./validation.js";
+import {history, modelResponse, parseMessages} from "./validation.js";
 
 export type ConversationSnapshot = {messages: Message[]; version: number};
 export type ConversationCompactionStatus = "skipped" | "applied" | "stale";
-/** Where a run loads its history and saves its progress.
- *
- * A run saves while it runs, not only at its end. Each `append` continues the
- * messages before it, so it can start with results for tool calls saved by an
- * earlier append, and end with tool calls whose results a later append adds:
- * the run saves a batch's calls as soon as the model makes them. Between those
- * two appends, `load` returns a history that ends with unfinished calls. */
+/** Where a run loads its history and saves its progress. A run saves a batch's
+ * tool calls before they run, so a stored history can end with calls that have no
+ * results yet, and the next `append` can start with their results. */
 export interface Conversation {
   load(): Operation<ConversationSnapshot>;
   append(messages: readonly Message[], expectedVersion: number): Operation<number>;
@@ -30,12 +26,7 @@ export type CompactionPlan = {
   messages: Message[];
 };
 export type CompactionResult = {plan: CompactionPlan; summary: string};
-type Meta = {
-  count: number;
-  summary?: {through: number; text: string};
-  /** Calls at the end of the stored messages that have no result yet. */
-  open?: OpenCall[];
-};
+type Meta = {count: number; summary?: {through: number; text: string}};
 /** Another writer changed the conversation since this run loaded it. */
 export class ConversationConflictError extends TerminalError {
   constructor(message: string) {
@@ -127,11 +118,10 @@ export class LazyStateConversation implements Conversation {
     return structuredClone(messages);
   }
 
-  /** The history a run continues. It ends with unfinished tool calls while a run's
-   * batch is running, or after that run was killed; the next run closes them. */
   *load(): Operation<ConversationSnapshot> {
     const meta = yield* this.meta();
     const range = yield* this.range(meta.summary?.through ?? 0, meta.count);
+    // It may end with calls that are still running.
     const messages = history(range, {unfinished: true});
     if (meta.summary)
       messages.unshift({
@@ -142,15 +132,12 @@ export class LazyStateConversation implements Conversation {
   }
 
   *append(messages: readonly Message[], expectedVersion: number): Operation<number> {
+    // A save can start with results for calls that the previous save stored.
     const additions = parseMessages(messages);
     const meta = yield* this.meta();
     if (meta.count !== expectedVersion)
       throw new ConversationConflictError("Conversation changed since it was loaded");
     if (!additions.length) return meta.count;
-    // The additions may first answer the calls the last append left open.
-    const open = checkProtocol(additions, {unanswered: meta.open ?? []});
-    if (open.length) meta.open = open;
-    else delete meta.open;
     let offset = 0;
     while (offset < additions.length) {
       const index = Math.floor(meta.count / CHUNK_SIZE);
@@ -183,7 +170,7 @@ export class LazyStateConversation implements Conversation {
       throw new TypeError("Compaction limits must be positive safe integers");
     const meta = yield* this.meta();
     const baseThrough = meta.summary?.through ?? 0;
-    // A run may be in the middle of a batch: the boundary stays before its calls.
+    // The boundary stays before calls that are still running.
     const messages = history(yield* this.range(baseThrough, meta.count), {unfinished: true});
     // Measured as a summarizer reads them: encrypted reasoning would inflate the count.
     const chars = JSON.stringify(messages.map(readable)).length;

@@ -292,7 +292,7 @@ void test("a cancelled invocation saves its closed calls with a cancellation not
   });
 });
 
-void test("steering is saved when it arrives, and mid-batch with the next model call", async () => {
+void test("steering is saved when it arrives, and during a batch with the next save", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   const reader = new LazyStateConversation({store});
@@ -344,8 +344,8 @@ void test("steering is saved when it arrives, and mid-batch with the next model 
     assert.deepEqual(snapshots, [
       // During the first model call: the input and the steering note, at once.
       [user("go"), note("steering", "Use the new address")],
-      // Mid-batch: nothing new. The note follows the batch's results, which are
-      // saved with the next model call.
+      // During the batch: nothing new. The note follows the batch's results, so a
+      // later save stores it after them.
       [user("go"), note("steering", "Use the new address"), calls("write", "steer")],
     ]);
     const saved = (yield* reader.page()).messages;
@@ -394,34 +394,21 @@ void test("an interrupted run saves its calls as they start and closes them when
   });
 });
 
-void test("the next run closes the calls a killed run left without results", async () => {
+void test("the next run rejects calls that a killed run left without results", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   await execute(function* () {
-    // A run saved its calls and one result, then its invocation was killed.
-    yield* conversation.append([user("pay"), calls("charge", "email"), success("charge", "ok")], 0);
-    const closed = cancelled(
-      "email",
-      "The run that made this call ended before the call returned a result. It may have taken effect.",
-    );
+    // A run saved its calls, then its invocation was killed before they finished.
+    yield* conversation.append([user("pay"), calls("charge")], 0);
+    // Readers accept calls that are still running.
+    assert.deepEqual((yield* conversation.load()).messages, [user("pay"), calls("charge")]);
     const a = agent({
-      *model(request) {
-        assert.deepEqual(request.messages, [
-          user("pay"),
-          calls("charge", "email"),
-          success("charge", "ok"),
-          closed,
-          user("status?"),
-        ]);
-        return done;
+      *model() {
+        return assert.fail("the run must not call the model");
       },
     });
-    const result = yield* a.run("status?", {conversation});
-    const saved = (yield* conversation.load()).messages;
-    // The repair is saved with the run, so the stored history is complete again.
-    history(saved);
-    assert.deepEqual(saved, result.messages);
-    assert.deepEqual(saved.slice(3, 5), [closed, user("status?")]);
+    const error = yield* failure(a.run("status?", {conversation}));
+    assert.match(String(error), /History contains unfinished tool calls/);
   });
 });
 
@@ -479,9 +466,18 @@ void test("another writer fails the run's next save, which then saves no failure
   const writer = new LazyStateConversation({store});
   await execute(function* () {
     const a = agent({
+      tools: {
+        lookup: tool({
+          ...base,
+          *execute() {
+            return "found";
+          },
+        }),
+      },
       *model() {
+        // Another writer appends before the run's first save.
         yield* writer.append([user("someone else")], 0);
-        return batch("missing");
+        return batch("lookup");
       },
     });
     const error = yield* failure(a.run("go", {conversation}));

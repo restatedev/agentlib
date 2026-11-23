@@ -95,17 +95,17 @@ A run saves to its `conversation` while it runs, so `page()` in a shared
 handler shows the turn that is running:
 
 - **After each model call that returns tool calls.** The calls are saved before
-  they run, with the results of the previous batch.
+  they run, with the previous batch's results. While the tools run, the saved
+  history ends with calls that have no results yet.
 - **When steering is accepted.** Steering that arrives during a batch is saved
-  with the next model call, after the batch's results, because results must
-  follow their calls.
-- **When the turn ends.** The final answer is saved once `afterRun` accepts it,
-  with the last batch's results.
+  with the next save, after the batch's results, because results must follow
+  their calls.
+- **When the turn ends**, with the final answer once `afterRun` accepts it.
 
-Tool results are saved with the next of these saves. A background call's result
-is its pending acknowledgment; the real result is saved with the next save after
-the run collects it. To show each result as it happens, use `onProgress`
-events; `page()` returns the history as of the last save.
+Tool results and background results are saved with the next save. A background
+call's result is its pending acknowledgment until the run collects the real
+result. To show results as they happen, use `onProgress` events; `page()`
+returns the history as of the last save.
 
 Each save appends to the last one. The saved history stays the full record:
 error notes, rejected answers, and in-run compaction never reach it.
@@ -118,15 +118,15 @@ invocation gets the values from its first read; call it once per invocation.
 
 A run that fails with a terminal error saves what it recorded, closes
 unfinished calls with `cancelled` results, and adds a note on the failure; see
-`error-handling.md`. The input is saved with the first model call, so a caller
+`error-handling.md`. The input is saved with the run's first save, so a caller
 that calls the handler again with the same input after a failure starts a new
 turn after the failed one. To retry the same request, call the handler with an
 idempotency key.
 
-A killed invocation (`restate invocations kill`) runs no more code, so its
-batch's calls can stay without results. The next run gives each such call a
-`cancelled` result saying that it may have taken effect, and saves it with its
-first save.
+A killed invocation (`restate invocations kill`) runs no more code, so calls it
+saved can stay without results, and the next run fails with `History contains
+unfinished tool calls`. Cancel an invocation instead: a cancelled run closes its
+calls and saves them.
 
 When a run starts and the conversation compaction fails, the run logs a
 warning and continues with the history it loaded; the next run tries again.

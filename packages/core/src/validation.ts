@@ -105,20 +105,6 @@ export function toolOutput(value: unknown): JsonValue {
   return result.data;
 }
 
-/** A tool call that has no result yet. */
-export type OpenCall = {id: string; name: string};
-
-/** A history whose last tool calls have no results. A run saves its tool calls as
- * soon as the model makes them and their results when the batch ends, so a
- * conversation holds one while a batch runs, and keeps it if the invocation is
- * killed before the batch ends. */
-export class UnfinishedToolCallsError extends RunInputError {
-  constructor(readonly calls: readonly OpenCall[]) {
-    super("History contains unfinished tool calls");
-    this.name = "UnfinishedToolCallsError";
-  }
-}
-
 /** Clones and validates messages, without checking the tool-call protocol. */
 export function parseMessages(value: readonly Message[]): Message[] {
   const parsed = z.array(messageSchema).safeParse(value);
@@ -126,33 +112,27 @@ export function parseMessages(value: readonly Message[]): Message[] {
   return parsed.data;
 }
 
-/** Clone and reject incomplete histories before making any model call. A history
- * whose last calls have no results fails with `UnfinishedToolCallsError`, unless
- * `unfinished` allows it, as for a conversation read while a batch runs. */
+/** Clone and reject incomplete histories before making any model call. With
+ * `unfinished`, the history may end with calls that have no results yet, as a
+ * stored conversation does while a run's tools are running. */
 export function history(
   value: readonly Message[],
-  options: {unfinished?: boolean} = {},
+  {unfinished = false}: {unfinished?: boolean} = {},
 ): Message[] {
   const messages = parseMessages(value);
-  const open = checkProtocol(messages);
-  if (open.length && !options.unfinished) throw new UnfinishedToolCallsError(open);
+  checkProtocol(messages, undefined, unfinished);
   return messages;
 }
 
 /** Rejects a history whose tool results do not answer the calls before them, in
- * order, and returns the calls at its end that have no result yet. A caller that
- * needs a complete history rejects those. `unanswered` are calls from messages
- * before these, still waiting for the results these messages may start with.
- * Structural only: callers pass messages that were already validated. */
+ * order. Structural only: callers pass messages that were already validated. */
 export function checkProtocol(
   messages: readonly Message[],
-  {
-    fail = (message) => new RunInputError(message),
-    unanswered = [],
-  }: {fail?: (message: string) => Error; unanswered?: readonly OpenCall[]} = {},
-): OpenCall[] {
-  const ids = new Set<string>(unanswered.map((call) => call.id));
-  const pending = new Map<string, string>(unanswered.map((call) => [call.id, call.name]));
+  fail: (message: string) => Error = (message) => new RunInputError(message),
+  unfinished = false,
+): void {
+  const ids = new Set<string>();
+  const pending = new Map<string, string>();
   for (const message of messages) {
     if (message.role === "tool") {
       if (pending.get(message.callId) !== message.name) {
@@ -170,7 +150,7 @@ export function checkProtocol(
       }
     }
   }
-  return [...pending].map(([id, name]) => ({id, name}));
+  if (pending.size > 0 && !unfinished) throw fail("History contains unfinished tool calls");
 }
 
 /** The messages a `beforeStep` hook returned for one request. Messages it kept from
@@ -190,8 +170,10 @@ export function stepMessages(
       throw new TypeError(`beforeStep returned an invalid message: ${parsed.error.message}`);
     return parsed.data;
   });
-  const fail = (problem: string) =>
-    new TypeError(`beforeStep returned messages that break the tool-call protocol: ${problem}`);
-  if (checkProtocol(messages, {fail}).length) throw fail("History contains unfinished tool calls");
+  checkProtocol(
+    messages,
+    (problem) =>
+      new TypeError(`beforeStep returned messages that break the tool-call protocol: ${problem}`),
+  );
   return messages;
 }
