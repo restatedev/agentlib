@@ -8,7 +8,9 @@ Lessons:
 ## Remember earlier requests
 
 A conversation belongs to a key, so keep it in a virtual object. Load the
-messages, pass them in, and save `result.messages`:
+messages, pass them in, and save `result.messages`. A run that throws returns
+no result; `messagesOf(error)` returns its history up to the failure, with a
+note on why it failed:
 
 ```ts
 import {agent, type Message} from "@restatedev/agentlib";
@@ -86,6 +88,46 @@ export const aiSession = restate.object({
   `state: {preload: false}`; the metadata key is then read lazily as well.
 - To set it for one handler only, put `state` in `options.handlers`. The
   deprecated `enableLazyState: true` equals `state: {preload: false}`.
+
+### When a run saves
+
+A run saves to its `conversation` while it runs, so `page()` in a shared
+handler shows the turn that is running:
+
+- **After each model call that returns tool calls.** The calls are saved before
+  they run, with the previous batch's results. While the tools run, the saved
+  history ends with calls that have no results yet.
+- **When steering is accepted.** Steering that arrives during a batch is saved
+  with the next save, after the batch's results, because results must follow
+  their calls.
+- **When the turn ends**, with the final answer once `afterRun` accepts it.
+
+Tool results and background results are saved with the next save. A background
+call's result is its pending acknowledgment until the run collects the real
+result. To show results as they happen, use `onProgress` events; `page()`
+returns the history as of the last save.
+
+Each save appends to the last one. The saved history stays the full record:
+error notes, rejected answers, and in-run compaction never reach it.
+
+Restate journals every state read with its value. Within one invocation,
+`LazyStateConversation` reads each state key at most once and keeps what it
+read and wrote, so the load, compaction, and saves of a run don't journal the
+same messages again. A shared handler that calls `page()` twice in one
+invocation gets the values from its first read; call it once per invocation.
+
+A run that fails with a terminal error saves what it recorded, closes
+unfinished calls with `cancelled` results, and adds a note on the failure; see
+`error-handling.md`. The input is saved with the run's first save, so a caller
+that calls the handler again with the same input after a failure starts a new
+turn after the failed one. To retry the same request, call the handler with an
+idempotency key.
+
+A killed invocation (`restate invocations kill`) runs no more code, so calls it
+saved can stay without results. The next run closes each one with a
+`cancelled` result saying that the call was interrupted and may have taken
+effect, and its first save stores it. A cancelled run closes its calls itself,
+with the reason, so prefer cancelling.
 
 When a run starts and the conversation compaction fails, the run logs a
 warning and continues with the history it loaded; the next run tries again.

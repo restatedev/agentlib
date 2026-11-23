@@ -105,20 +105,34 @@ export function toolOutput(value: unknown): JsonValue {
   return result.data;
 }
 
-/** Clone and reject incomplete histories before making any model call. */
-export function history(value: readonly Message[]): Message[] {
+/** Clones and validates messages, without checking the tool-call protocol. */
+export function parseMessages(value: readonly Message[]): Message[] {
   const parsed = z.array(messageSchema).safeParse(value);
   if (!parsed.success) throw new RunInputError(`Invalid history: ${parsed.error.message}`);
-  checkProtocol(parsed.data);
   return parsed.data;
 }
 
+/** Clone and reject incomplete histories before making any model call. With
+ * `unfinished`, the history may end with calls that have no results yet, as a
+ * stored conversation does while a run's tools are running. */
+export function history(
+  value: readonly Message[],
+  {unfinished = false}: {unfinished?: boolean} = {},
+): Message[] {
+  const messages = parseMessages(value);
+  checkProtocol(messages, undefined, unfinished);
+  return messages;
+}
+
 /** Rejects a history whose tool results do not answer the calls before them, in
- * order. Structural only: callers pass messages that were already validated. */
+ * order, and returns the calls at its end that have no result yet. Those fail too,
+ * unless `unfinished` allows them. Structural only: callers pass messages that were
+ * already validated. */
 export function checkProtocol(
   messages: readonly Message[],
   fail: (message: string) => Error = (message) => new RunInputError(message),
-): void {
+  unfinished = false,
+): {id: string; name: string}[] {
   const ids = new Set<string>();
   const pending = new Map<string, string>();
   for (const message of messages) {
@@ -138,7 +152,8 @@ export function checkProtocol(
       }
     }
   }
-  if (pending.size > 0) throw fail("History contains unfinished tool calls");
+  if (pending.size > 0 && !unfinished) throw fail("History contains unfinished tool calls");
+  return [...pending].map(([id, name]) => ({id, name}));
 }
 
 /** The messages a `beforeStep` hook returned for one request. Messages it kept from

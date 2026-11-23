@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {after, before, test} from "node:test";
-import {TerminalError} from "@restatedev/restate-sdk";
+import {InvocationIdParser, TerminalError} from "@restatedev/restate-sdk";
 import {connect} from "@restatedev/restate-sdk-clients";
 import {RestateContainer, RestateTestEnvironment} from "@restatedev/restate-sdk-testcontainers";
 import * as r from "@restatedev/restate-sdk-gen";
@@ -629,7 +629,7 @@ const runner = r.service({
 const session = r.object({
   name: "SdkConversation",
   handlers: {
-    *persistTurn(ending: "completed" | "stopped" | "interrupted" | "failed") {
+    *persistTurn(ending: TurnEnding) {
       const stored = new LazyStateConversation();
       let loads = 0;
       let appends = 0;
@@ -656,11 +656,28 @@ const session = r.object({
               return "written";
             },
           }),
+          halt: tool({
+            ...base,
+            *execute() {
+              // Ends the run after `write` has returned.
+              yield* r.sleep(200);
+              throw new AgentTerminalError("halted");
+            },
+          }),
         },
         *model(request): r.Operation<ModelResponse> {
-          assert.deepEqual((yield* stored.page()).messages, []);
-          if (request.step === 1)
-            return {type: "tool_calls", calls: [{id: "write", name: "write", input: {}}]};
+          const saved = (yield* stored.page()).messages;
+          if (request.step === 1) {
+            assert.deepEqual(saved, []);
+            const calls = [{id: "write", name: "write", input: {}}];
+            if (ending === "failed mid-batch") calls.push({id: "halt", name: "halt", input: {}});
+            return {type: "tool_calls", calls};
+          }
+          // The batch's result is saved with the next save, so this request sees only the call.
+          assert.deepEqual(
+            saved.map((message) => message.role),
+            ["user", "assistant"],
+          );
           if (ending === "failed") throw new TerminalError("failure after effect");
           if (ending === "interrupted") {
             r.invocation(r.handlerRequest().id).signal("interrupt").resolve("stop");
@@ -776,6 +793,39 @@ const session = r.object({
     *history() {
       return yield* new LazyStateConversation().page();
     },
+    /** A turn whose tool waits for `release`, so a shared handler can read it mid-run. */
+    *waitingTurn() {
+      const conversation = new LazyStateConversation();
+      const result = yield* agent({
+        finalize: false,
+        tools: {
+          wait: tool({
+            ...base,
+            *execute() {
+              return yield* r.signal<string>("release");
+            },
+          }),
+        },
+        *model(request): r.Operation<ModelResponse> {
+          if (request.step === 1)
+            return {type: "tool_calls", calls: [{id: "wait", name: "wait", input: {}}]};
+          return final;
+        },
+      }).run("go", {conversation});
+      return {status: result.status, messages: result.messages};
+    },
+    *progress() {
+      return yield* new LazyStateConversation().page();
+    },
+    *release(invocationId: string) {
+      r.invocation(invocationId).signal("release").resolve("released");
+    },
+    *cancelTurn(invocationId: string) {
+      r.cancel(InvocationIdParser.fromString(invocationId));
+    },
+  },
+  options: {
+    handlers: {progress: {shared: true}, release: {shared: true}, cancelTurn: {shared: true}},
   },
 });
 // A Restate interface (contract) and its implementation, exercised through serviceTool.
@@ -1299,7 +1349,55 @@ void test(
   },
 );
 
-for (const ending of ["completed", "stopped", "interrupted", "failed"] as const) {
+const input = {role: "user", content: "go"};
+const call = (...ids: string[]) => ({
+  role: "assistant",
+  content: "",
+  calls: ids.map((id) => ({id, name: id, input: {}})),
+});
+const written = {
+  role: "tool",
+  callId: "write",
+  name: "write",
+  result: {status: "success", output: "written"},
+};
+const runtimeNote = (type: string, message: string) => ({
+  role: "user",
+  content: JSON.stringify({source: "agent-runtime", type, message}),
+});
+// The saves a turn makes: after the model call that returns the `write` call, and at the end.
+const turnEndings = {
+  completed: {
+    appends: 2,
+    messages: [input, call("write"), written, {role: "assistant", content: "done"}],
+  },
+  stopped: {appends: 2, messages: [input, call("write"), written]},
+  interrupted: {appends: 2, messages: [input, call("write"), written]},
+  failed: {
+    appends: 2,
+    messages: [input, call("write"), written, runtimeNote("run-failed", "failure after effect")],
+  },
+  "failed mid-batch": {
+    appends: 2,
+    messages: [
+      input,
+      call("write", "halt"),
+      written,
+      {
+        role: "tool",
+        callId: "halt",
+        name: "halt",
+        result: {status: "cancelled", message: "Run failed: halted"},
+      },
+      runtimeNote("run-failed", "halted"),
+    ],
+  },
+};
+type TurnEnding = keyof typeof turnEndings;
+for (const [ending, expected] of Object.entries(turnEndings) as [
+  TurnEnding,
+  (typeof turnEndings)[TurnEnding],
+][]) {
   void test(
     `native always-replay: turn persistence after ${ending}`,
     {timeout: 20000},
@@ -1307,16 +1405,75 @@ for (const ending of ["completed", "stopped", "interrupted", "failed"] as const)
       const result = await connect({url: env.baseUrl()})
         .client(session, `persist-${ending}`)
         .persistTurn(ending);
-      assert.equal(result.status, ending);
+      assert.equal(result.status, ending.startsWith("failed") ? "failed" : ending);
       assert.equal(result.loads, 1);
       assert.equal(result.effect, "written");
-      if (ending === "failed") {
-        assert.equal(result.appends, 0);
-        assert.deepEqual(result.messages, []);
-      } else {
-        assert.equal(result.appends, 1);
-        assert.match(JSON.stringify(result.messages), /written/);
-      }
+      assert.deepEqual(result.messages, expected.messages);
+      assert.equal(result.appends, expected.appends);
     },
   );
 }
+
+/** Reads until `ready` accepts the value, or the deadline passes. */
+async function poll<T>(read: () => Promise<T>, ready: (value: T) => boolean): Promise<T> {
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const value = await read();
+    if (ready(value) || Date.now() > deadline) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+void test(
+  "native always-replay: a shared handler reads a running turn's progress",
+  {timeout: 30000},
+  async () => {
+    const ingress = connect({url: env.baseUrl()});
+    const send = await ingress.sendClient(session, "progress").waitingTurn();
+    const turn = ingress.client(session, "progress");
+    // The call is saved before it runs; the tool waits for the release.
+    const running = await poll(
+      () => turn.progress(),
+      (page) => page.messages.length === 2,
+    );
+    assert.deepEqual(running.messages, [input, call("wait")]);
+    await turn.release(send.invocationId);
+    const finished = await poll(
+      () => turn.progress(),
+      (page) => page.messages.length === 4,
+    );
+    assert.deepEqual(finished.messages, [
+      input,
+      call("wait"),
+      {role: "tool", callId: "wait", name: "wait", result: {status: "success", output: "released"}},
+      {role: "assistant", content: "done"},
+    ]);
+  },
+);
+
+void test(
+  "native always-replay: a cancelled turn saves its closed calls and a cancellation note",
+  {timeout: 30000},
+  async () => {
+    const ingress = connect({url: env.baseUrl()});
+    const send = await ingress.sendClient(session, "cancel").waitingTurn();
+    const turn = ingress.client(session, "cancel");
+    await poll(
+      () => turn.progress(),
+      (page) => page.messages.length === 2,
+    );
+    await turn.cancelTurn(send.invocationId);
+    const saved = (
+      await poll(
+        () => turn.progress(),
+        (page) => page.messages.length === 4,
+      )
+    ).messages;
+    assert.deepEqual(saved.slice(0, 2), [input, call("wait")]);
+    const [closed, cancelled] = saved.slice(2);
+    assert.ok(closed?.role === "tool" && closed.result.status === "cancelled");
+    assert.match(closed.result.message, /^Run cancelled: /);
+    assert.ok(cancelled?.role === "user");
+    assert.match(cancelled.content, /"type":"run-cancelled"/);
+  },
+);

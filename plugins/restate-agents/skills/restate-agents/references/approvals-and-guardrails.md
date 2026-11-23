@@ -156,9 +156,10 @@ skips the summary.
 
 The run's history is what the model sees in later steps, what summaries see,
 `result.messages`, and what a `conversation` saves. A run saves its history
-when it finishes, completed or stopped; a run that fails saves nothing. The
-model also sees the notes about rejections and the answers `afterRun`
-rejected, for the rest of the run, but they are never recorded.
+as it goes and when it ends; a run that fails saves what it recorded, with a
+note on the failure (see `conversations-and-controls.md`). The model also sees
+the notes about rejections and the answers `afterRun` rejected, for the rest of
+the run, but they are never recorded.
 
 | Hook             | Allowed: history keeps  | Rejected: history keeps                         | Replaced: history keeps                                   |
 | ---------------- | ----------------------- | ----------------------------------------------- | --------------------------------------------------------- |

@@ -145,6 +145,7 @@ repeat a completed model call.
 | ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Tools with journaled results | `asyncTool`, `tool`                                                        | [02](packages/examples/src/lessons/02_tools.ts)             |
 | Conversation history         | `run(input, {messages})`, `run(input, {conversation})`                     | [03](packages/examples/src/lessons/03_conversation.ts), 09  |
+| Live and failed-turn history | `{conversation}` saves as the run goes; `messagesOf(error)`                | [09](packages/examples/src/lessons/09_support_session.ts)   |
 | Typed output                 | `agent({output})`                                                          | [04](packages/examples/src/lessons/04_structured_output.ts) |
 | Human approval               | `needsApproval`, `onApproval`, `humanApprovalTool`                         | [06](packages/examples/src/lessons/06_human_approval.ts)    |
 | Steering and interruption    | `run(input, {steeringSignal, interruptSignal})` or `{controls}`            | [09](packages/examples/src/lessons/09_support_session.ts)   |

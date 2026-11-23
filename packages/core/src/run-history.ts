@@ -4,7 +4,7 @@ import type {Message} from "./types.js";
 import {RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
-import {checkProtocol, history} from "./validation.js";
+import {checkProtocol, history, parseMessages} from "./validation.js";
 
 type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
 
@@ -34,8 +34,9 @@ export type NoteMessage = Extract<Message, {role: "user"}>;
 
 /** Events arrive in execution order. Model protocols require each batch's tool
  * results immediately after its assistant call, ahead of intervening steering.
- * Every event was validated when it was recorded, so only the order is checked. */
-function modelTranscript(events: readonly Message[]): Message[] {
+ * Every event was validated when it was recorded, so only the order is checked.
+ * With `unfinished`, the last batch may still wait for its results. */
+function modelTranscript(events: readonly Message[], unfinished = false): Message[] {
   const batchByCall = new Map<string, number>();
   for (const [index, message] of events.entries()) {
     if (message.role !== "assistant") continue;
@@ -56,15 +57,37 @@ function modelTranscript(events: readonly Message[]): Message[] {
     transcript.push(message);
     if (message.role === "assistant") transcript.push(...(resultsByBatch.get(index) ?? []));
   }
-  checkProtocol(transcript);
+  checkProtocol(transcript, undefined, unfinished);
   return transcript;
+}
+
+/** The result a run records for a call that an earlier run left without one. */
+const INTERRUPTED =
+  "Interrupted: the run that made this call ended before the call returned a result. It may have taken effect.";
+
+/** Validates the history a run continues from its conversation, in the same pass
+ * that checks it. The run owns the conversation, so it closes calls that a killed
+ * run left without results: each gets a cancelled result, which the run's first
+ * save stores. Any other problem fails validation. Returns the history and how
+ * many results it added. */
+function continuedHistory(loaded: readonly Message[]): {messages: Message[]; closed: number} {
+  const messages = parseMessages(loaded);
+  const open = checkProtocol(messages, undefined, true);
+  for (const {id, name} of open)
+    messages.push({
+      role: "tool",
+      callId: id,
+      name,
+      result: {status: "cancelled", message: INTERRUPTED},
+    });
+  return {messages, closed: open.length};
 }
 
 /** Owns the append-only event history and its persistence cursor. Every message enters
  * a run as a copy the run owns, validated once. Model requests and hooks share these
  * messages instead of copying the history, as the AI SDK does: they read them and never
- * change them. The run saves
- * a model-valid transcript at finalization; earlier failures save nothing.
+ * change them. The run saves its committed transcript as it goes (see `save`), and a
+ * failed run saves it with its open calls closed and a note on the failure.
  * Provisional messages, such as a rejected answer, never leave the run. */
 export class RunHistory {
   private readonly provisional = new Set<Message>();
@@ -100,12 +123,15 @@ export class RunHistory {
     if (conversation && source.messages)
       throw new RunInputError("Use either conversation or messages");
     const snapshot = conversation ? yield* conversation.load() : undefined;
-    const messages = history(snapshot?.messages ?? source.messages ?? []);
+    // A caller's messages come from a finished or failed run, which closes its calls.
+    const {messages, closed} = snapshot
+      ? continuedHistory(snapshot.messages)
+      : {messages: history(source.messages ?? []), closed: 0};
     const run = new RunHistory(
       input,
       messages,
       snapshot?.version ?? 0,
-      messages.length,
+      messages.length - closed,
       conversation,
     );
     run.previews = previews;
@@ -277,9 +303,14 @@ export class RunHistory {
     this.messages.push(...messages);
   }
 
+  /** Appends what the run committed since its last save. The run saves after each
+   * model call that returns tool calls and after accepted steering, so a shared
+   * handler can read a run's progress, and when it ends. A batch's calls are saved
+   * before their results. */
   *save(): Operation<void> {
     if (!this.conversation) return;
-    const transcript = this.committed();
+    const committed = this.messages.filter((message) => !this.provisional.has(message));
+    const transcript = modelTranscript(committed, true);
     if (transcript.length === this.persisted) return;
     this.version = yield* this.conversation.append(transcript.slice(this.persisted), this.version);
     this.persisted = transcript.length;
@@ -290,12 +321,31 @@ export class RunHistory {
     const result = yield* this.conversation.compact();
     if (result === "skipped") return;
     const compacted = yield* this.conversation.load();
-    this.messages.splice(0, this.messages.length, ...history(compacted.messages), {
+    const {messages, closed} = continuedHistory(compacted.messages);
+    this.messages.splice(0, this.messages.length, ...messages, {
       role: "user",
       content: this.input,
     });
-    this.persisted = compacted.messages.length;
-    this.inputAt = compacted.messages.length;
+    this.persisted = messages.length - closed;
+    this.inputAt = messages.length;
     this.version = compacted.version;
   }
+}
+
+const failedRuns = new WeakMap<object, Message[]>();
+
+/** The history of the run that threw `error`, or undefined when no run threw it:
+ * its committed messages, with a cancelled result for each call that never
+ * finished and a note that says why the run ended. A run with a `conversation`
+ * saves this history when the error is terminal; a run with `messages` can pass
+ * it to the next run. When several runs threw the same error, it holds the last
+ * one's history; for nested runs that is the outermost. */
+export function messagesOf(error: unknown): Message[] | undefined {
+  const messages = typeof error === "object" && error !== null ? failedRuns.get(error) : undefined;
+  return messages && structuredClone(messages);
+}
+
+/** Records a failed run's history for `messagesOf` without changing the error. */
+export function recordFailedHistory(error: unknown, messages: Message[]): void {
+  if (typeof error === "object" && error !== null) failedRuns.set(error, messages);
 }
