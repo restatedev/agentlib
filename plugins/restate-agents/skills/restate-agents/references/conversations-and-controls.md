@@ -94,12 +94,18 @@ export const aiSession = restate.object({
 A run saves to its `conversation` while it runs, so `page()` in a shared
 handler shows the turn that is running:
 
-- **After each model call.** A tool step's calls are saved before they run. A
-  final answer is saved once `afterRun` accepts it.
-- **When a tool batch ends**, with every result. A background call's result is
-  its pending acknowledgment; the real result is saved when the run collects it.
+- **After each model call that returns tool calls.** The calls are saved before
+  they run, with the results of the previous batch.
 - **When steering is accepted.** Steering that arrives during a batch is saved
-  after the batch's results, because results must follow their calls.
+  with the next model call, after the batch's results, because results must
+  follow their calls.
+- **When the turn ends.** The final answer is saved once `afterRun` accepts it,
+  with the last batch's results.
+
+Tool results are saved with the next of these saves. A background call's result
+is its pending acknowledgment; the real result is saved with the next save after
+the run collects it. To show each result as it happens, use `onProgress`
+events; `page()` returns the history as of the last save.
 
 Each save appends to the last one. The saved history stays the full record:
 error notes, rejected answers, and in-run compaction never reach it.

@@ -69,7 +69,7 @@ function* failure(run: r.Operation<unknown>): r.Operation<unknown> {
   return assert.fail("the run must fail");
 }
 
-void test("a shared reader sees each model call and tool batch while the run continues", async () => {
+void test("a shared reader sees each model call while the run continues", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   // Another instance on the same store stands in for a shared handler.
@@ -94,16 +94,13 @@ void test("a shared reader sees each model call and tool batch while the run con
       },
     });
     const result = yield* a.run("go", {conversation});
-    assert.deepEqual(seen, [
-      [],
-      [user("go"), calls("lookup")],
-      [user("go"), calls("lookup"), success("lookup", "found")],
-    ]);
+    // The batch's result is saved with the next model call, after the second request.
+    assert.deepEqual(seen, [[], [user("go"), calls("lookup")], [user("go"), calls("lookup")]]);
     assert.deepEqual((yield* reader.page()).messages, result.messages);
   });
 });
 
-void test("background results are saved when the run collects them", async () => {
+void test("background results are saved with the next model call", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   const reader = new LazyStateConversation({store});
@@ -124,9 +121,8 @@ void test("background results are saved when the run collects them", async () =>
       *model() {
         if (++step === 1) return batch("job");
         if (step === 2) {
-          // The batch ended with the call's pending acknowledgment.
-          const saved = (yield* reader.page()).messages;
-          assert.deepEqual(saved, [
+          // The pending acknowledgment is recorded as the call starts, so it is saved with it.
+          assert.deepEqual((yield* reader.page()).messages, [
             user("go"),
             calls("job"),
             resultOf("job", {status: "pending", operationId: "job"}),
@@ -134,14 +130,16 @@ void test("background results are saved when the run collects them", async () =>
           yield* gate.send(undefined);
           return {type: "final", text: "too early"};
         }
-        const saved = (yield* reader.page()).messages;
-        assert.match(JSON.stringify(saved.at(-1)), /background-tool-result.*finished/);
+        // The run collected the result after the second request; the turn's end saves it.
+        assert.doesNotMatch(JSON.stringify((yield* reader.page()).messages), /finished/);
         return done;
       },
     });
     const result = yield* a.run("go", {conversation});
     assert.equal(step, 3);
-    assert.deepEqual((yield* reader.page()).messages, result.messages);
+    const saved = (yield* reader.page()).messages;
+    assert.match(JSON.stringify(saved), /background-tool-result.*finished/);
+    assert.deepEqual(saved, result.messages);
   });
 });
 
@@ -252,10 +250,14 @@ void test("a retryable error saves no failure note: Restate retries the invocati
     });
     const error = yield* failure(a.run("go", {conversation}));
     assert.ok(!(error instanceof TerminalError));
-    // Saved as the run went; a retry replays these writes and continues.
-    const progress = [user("go"), calls("lookup"), success("lookup", "found")];
-    assert.deepEqual((yield* conversation.load()).messages, progress);
-    assert.deepEqual(messagesOf(error), [...progress, note("run-failed", "connection reset")]);
+    // Saved after the first model call; a retry replays this write and continues.
+    const saved = [user("go"), calls("lookup")];
+    assert.deepEqual((yield* conversation.load()).messages, saved);
+    assert.deepEqual(messagesOf(error), [
+      ...saved,
+      success("lookup", "found"),
+      note("run-failed", "connection reset"),
+    ]);
   });
 });
 
@@ -290,7 +292,7 @@ void test("a cancelled invocation saves its closed calls with a cancellation not
   });
 });
 
-void test("steering is saved when it arrives, and mid-batch after the batch's results", async () => {
+void test("steering is saved when it arrives, and mid-batch with the next model call", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
   const reader = new LazyStateConversation({store});
@@ -342,13 +344,9 @@ void test("steering is saved when it arrives, and mid-batch after the batch's re
     assert.deepEqual(snapshots, [
       // During the first model call: the input and the steering note, at once.
       [user("go"), note("steering", "Use the new address")],
-      // Mid-batch: the results so far are saved; the note waits until the batch ends.
-      [
-        user("go"),
-        note("steering", "Use the new address"),
-        calls("write", "steer"),
-        success("write", "written"),
-      ],
+      // Mid-batch: nothing new. The note follows the batch's results, which are
+      // saved with the next model call.
+      [user("go"), note("steering", "Use the new address"), calls("write", "steer")],
     ]);
     const saved = (yield* reader.page()).messages;
     history(saved);
@@ -530,7 +528,7 @@ void test("a failed run with messages exposes its history for the next run", asy
   });
 });
 
-void test("a run saves at most once per model call and tool batch", async () => {
+void test("a run saves after each tool-call step and at the end, not after a tool batch", async () => {
   const {store} = memoryStore();
   const stored = new LazyStateConversation({store});
   const appended: number[] = [];
@@ -550,22 +548,31 @@ void test("a run saves at most once per model call and tool batch", async () => 
             return "found";
           },
         }),
+        check: tool({
+          ...base,
+          *execute() {
+            return "checked";
+          },
+        }),
       },
       *model(request) {
-        return request.step === 1 ? batch("lookup") : done;
+        if (request.step === 1) return batch("lookup");
+        return request.step === 2 ? batch("check") : done;
       },
     });
     yield* a.run("go", {conversation});
-    // The input and call, the result, then the answer.
-    assert.deepEqual(appended, [2, 1, 1]);
+    // Each tool-call step saves its calls with the previous batch's result: the input
+    // and first call, then the result and second call. The end adds the last result
+    // and the answer.
+    assert.deepEqual(appended, [2, 2, 2]);
     appended.length = 0;
     yield* agent({
       *model() {
         return done;
       },
     }).run("again", {conversation});
-    // The input after the model call, then the reviewed answer.
-    assert.deepEqual(appended, [1, 1]);
+    // Without tool calls, the input and the answer are saved together when the turn ends.
+    assert.deepEqual(appended, [2]);
   });
 });
 
@@ -615,7 +622,7 @@ void test("a run reads each conversation key once, through compaction and every 
     });
     assert.equal((yield* a.run("go", {conversation})).status, "completed");
   });
-  // The load, the compaction, the load after it, and three saves read each key once.
+  // The load, the compaction, the load after it, and two saves read each key once.
   assert.deepEqual(Object.fromEntries(reads), {
     "conversation/meta": 1,
     "conversation/0": 1,

@@ -338,9 +338,9 @@ export class RunHistory {
   }
 
   /** Appends what the run committed since its last save. The run saves after each
-   * model call, after each tool batch, and after steering or background results
-   * arrive, so a shared handler can read a run's progress, and when it ends. A
-   * batch's calls are saved before their results; see `continuedHistory`. */
+   * model call that returns tool calls and each accepted steering message, so a
+   * shared handler can read a run's progress, and when it ends. A batch's calls are
+   * saved before their results; see `continuedHistory`. */
   *save(): Operation<void> {
     if (!this.conversation) return;
     const transcript = this.saveable();

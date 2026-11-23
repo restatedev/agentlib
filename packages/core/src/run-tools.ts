@@ -67,6 +67,11 @@ export class RunTools<C> {
     return this.background.size > 0;
   }
 
+  /** True from `startBatch` until `commitBatch`. */
+  get inBatch(): boolean {
+    return this.batch !== undefined;
+  }
+
   /** Background calls whose results the model has not seen yet. */
   pendingCalls(): {operationId: string; name: string}[] {
     return [...this.background.values()].map(({call}) => ({operationId: call.id, name: call.name}));

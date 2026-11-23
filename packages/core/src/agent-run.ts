@@ -181,10 +181,12 @@ function resolveControls<C>(options?: RunOptions<C>): RunControls {
  * - Background results completed during a model request also invalidate its
  *   response: the model must see them before acting.
  *
- * With a conversation, the run saves as it goes, so a shared handler can read its
- * progress: after each model call, each tool batch, and accepted steering or
- * background results, then once more when finish() commits the answer. A failed
- * run saves its committed history with a note on the failure; see fail(). */
+ * With a conversation, the run saves after each model call that returns tool calls
+ * and after each accepted steering message, so a shared handler can read its
+ * progress, and when the turn ends: finish() commits the answer, and a failed run
+ * saves its committed history with a note on the failure; see fail(). Tool results
+ * and background results are saved with the next of these saves. Progress events
+ * report each of them as it happens. */
 class AgentRun<C, O> {
   private step = 0;
   private steeringSource: SteeringSource | undefined;
@@ -326,13 +328,11 @@ class AgentRun<C, O> {
       yield* this.emit({type: "step", step: this.step});
       yield* this.compactContext();
       const response = yield* this.ask();
-      if (!response || (yield* this.collectBackground())) continue;
+      if (!response || this.collectBackground()) continue;
       if (response.type === "tool_calls") {
         yield* this.toolPhase(response);
         continue;
       }
-      // The answer itself waits for review; this saves what came before it, such as the input.
-      yield* this.history.save();
       const result = yield* this.complete(response);
       if (result) return result;
     }
@@ -632,11 +632,10 @@ class AgentRun<C, O> {
         continue;
       }
       delete foreground[tag];
-      yield* this.collectBackground();
+      this.collectBackground();
     }
     const transfer = this.tools.commitBatch();
-    yield* this.collectBackground();
-    yield* this.history.save();
+    this.collectBackground();
     if (transfer) {
       this.active = transfer();
       yield* this.emit({type: "handoff", agent: this.active.name});
@@ -646,13 +645,11 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Moves finished background results into history and saves them; true when any arrived. */
-  private *collectBackground(): Operation<boolean> {
+  /** Moves finished background results into history; true when any arrived. */
+  private collectBackground(): boolean {
     const completed = this.tools.drainCompleted();
-    if (!completed.length) return false;
     this.history.append(...completed);
-    yield* this.history.save();
-    return true;
+    return completed.length > 0;
   }
 
   private *complete(action: ModelFinalResponse): Operation<RunResult<O> | undefined> {
@@ -661,7 +658,7 @@ class AgentRun<C, O> {
       // Its result, or steering, gives the model a reason to reconsider.
       if (this.step < this.config.maxSteps) {
         yield* this.race(this.tools.pendingTasks());
-        yield* this.collectBackground();
+        this.collectBackground();
       }
       return undefined;
     }
@@ -771,8 +768,9 @@ class AgentRun<C, O> {
       }
     }
     this.history.appendSteering(message);
-    // Saved before it is reported. Mid-batch, the note waits for the batch's results.
-    yield* this.history.save();
+    // Saved before it is reported. Mid-batch, the note follows the batch's results,
+    // so the next model call saves both; a save now would only add results.
+    if (!this.tools.inBatch) yield* this.history.save();
     yield* this.emit({type: "steering", message, ...withData});
     return true;
   }

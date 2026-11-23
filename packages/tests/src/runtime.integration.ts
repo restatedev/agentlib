@@ -673,10 +673,10 @@ const session = r.object({
             if (ending === "failed mid-batch") calls.push({id: "halt", name: "halt", input: {}});
             return {type: "tool_calls", calls};
           }
-          // The call and its result were saved when the batch ended.
+          // The batch's result is saved with this model call, so the request sees only the call.
           assert.deepEqual(
             saved.map((message) => message.role),
-            ["user", "assistant", "tool"],
+            ["user", "assistant"],
           );
           if (ending === "failed") throw new TerminalError("failure after effect");
           if (ending === "interrupted") {
@@ -1365,16 +1365,16 @@ const runtimeNote = (type: string, message: string) => ({
   role: "user",
   content: JSON.stringify({source: "agent-runtime", type, message}),
 });
-// The saves a turn makes: after the model's call, after the batch, and at the end.
+// The saves a turn makes: after the model call that returns the `write` call, and at the end.
 const turnEndings = {
   completed: {
-    appends: 3,
+    appends: 2,
     messages: [input, call("write"), written, {role: "assistant", content: "done"}],
   },
   stopped: {appends: 2, messages: [input, call("write"), written]},
   interrupted: {appends: 2, messages: [input, call("write"), written]},
   failed: {
-    appends: 3,
+    appends: 2,
     messages: [input, call("write"), written, runtimeNote("run-failed", "failure after effect")],
   },
   "failed mid-batch": {
