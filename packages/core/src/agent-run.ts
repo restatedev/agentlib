@@ -287,8 +287,6 @@ class AgentRun<C, O> {
       };
       this.catalog = createToolCatalog(this.active.tools, this.runTools());
     }
-    yield* this.compactConversation();
-    // Compaction rebuilds the message list, so the note follows it.
     if (rejected) yield* this.reject(rejected);
     const controls = resolveControls(this.options);
     this.steeringSource = controls.steering;
@@ -308,17 +306,6 @@ class AgentRun<C, O> {
       return undefined;
     } catch (error) {
       return rejection("beforeRun", error);
-    }
-  }
-
-  /** Compacts the conversation before the run. A failure leaves the history as it
-   * was loaded, the way a failed summary inside the run falls back to truncation. */
-  private *compactConversation(): Operation<void> {
-    try {
-      yield* this.history.compact();
-    } catch (error) {
-      if (mustPropagate(error)) throw error;
-      logger().warn("Conversation compaction failed; the run continues without it:", error);
     }
   }
 
@@ -442,7 +429,9 @@ class AgentRun<C, O> {
         }
       } catch (error) {
         if (mustPropagate(error)) throw error;
-        // Summaries stop for this run; truncation keeps it within bounds.
+        // Summaries stop for this run; truncation keeps it within bounds. The
+        // next run tries again, since a truncation is never stored.
+        logger().warn("Context compaction failed; the run truncates from now on:", error);
         this.compactionFailed = true;
         yield* this.emit({
           type: "compaction",

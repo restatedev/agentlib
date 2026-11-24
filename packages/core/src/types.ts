@@ -285,7 +285,9 @@ export type RunOptions<Context> = {
   messages?: readonly Message[];
   /** Where the run loads its history and saves its progress: after each model call
    * that returns tool calls, after accepted steering, and when it ends. A run that
-   * a terminal error fails saves what it recorded, with a note on the failure. Use
+   * a terminal error fails saves what it recorded, with a note on the failure. The
+   * run loads the conversation's summary and the messages after it, and stores its
+   * own summary when it summarizes its context (see the agent's `compaction`). Use
    * either this or `messages`. */
   conversation?: import("./conversation.js").Conversation;
   name?: string;
@@ -378,8 +380,10 @@ export type AgentOptions<Context, Output = string> = {
    * reported plus an estimate for messages added since, or an estimate of the
    * messages, instructions and tools before any report. The newest messages
    * that fit `retainTokens` (default a quarter of maxTokens, and at most half
-   * of what instructions and tools leave) stay verbatim. The saved
-   * and returned transcript is unchanged. `model` defaults to the agent's. */
+   * of what instructions and tools leave) stay verbatim. With a `conversation`,
+   * the run stores the summary in it at the next save, and the next run starts
+   * from the summary and the messages after it instead of the whole history. The
+   * returned transcript keeps every message. `model` defaults to the agent's. */
   compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
   /** The model's context window in tokens. Before each model call, a view that
    * would not fit with `maxOutputTokens` is shrunk first: summarized when

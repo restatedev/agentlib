@@ -1,8 +1,9 @@
-import type {Operation} from "@restatedev/restate-sdk-gen";
+import {logger, type Operation} from "@restatedev/restate-sdk-gen";
 import type {Conversation} from "./conversation.js";
 import type {Message} from "./types.js";
-import {RunInputError} from "./errors.js";
+import {mustPropagate, RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
+import {summaryNote} from "./context-compaction.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
 import {checkProtocol, history, parseMessages} from "./validation.js";
 
@@ -93,10 +94,14 @@ export class RunHistory {
   private readonly provisional = new Set<Message>();
   /** Steering notes and their messages, so a truncation can restate what it drops. */
   private readonly steering = new WeakMap<Message, string>();
-  /** Set by in-run compaction: the model sees `note` instead of the events before `from`. */
+  /** Set by in-run compaction: the model sees `note` instead of the events before `from`.
+   * A run with a conversation summary starts with it as the note. */
   private view: View | undefined;
+  /** The run's latest summary, until the conversation stores it: it replaces the events
+   * before `from`. */
+  private unstored: {from: number; summary: string} | undefined;
   /** Index of this run's input message among the events. */
-  private inputAt: number;
+  private readonly inputAt: number;
   /** The input tokens the model reported for a request built at `mark`. */
   private measured: Measured | undefined;
   private previews: PreviewSettings | undefined;
@@ -134,6 +139,8 @@ export class RunHistory {
       messages.length - closed,
       conversation,
     );
+    // The model sees a stored summary the way it sees a summary the run makes itself.
+    if (snapshot?.summary) run.view = {from: 0, note: summaryNote(snapshot.summary)};
     run.previews = previews;
     run.append({role: "user", content: input});
     return run;
@@ -201,6 +208,11 @@ export class RunHistory {
     return withNote(this.view?.note, modelTranscript(this.shown(events)));
   }
 
+  /** Whether `message` is provisional: model-visible in this run, never saved or returned. */
+  isProvisional(message: Message): boolean {
+    return this.provisional.has(message);
+  }
+
   /** Every event so far, whole, for reading a previewed result back. */
   events(): readonly Message[] {
     return this.messages;
@@ -262,10 +274,12 @@ export class RunHistory {
     return this.inputAt < index;
   }
 
-  /** Shows the model `note` instead of the events before `through`. The saved
-   * and returned transcript is unchanged. */
-  compactContext(through: number, note: NoteMessage): void {
+  /** Shows the model `note` instead of the events before `through`. The returned
+   * transcript is unchanged. A `summary` of those events is stored in the
+   * conversation at the next save; a truncation has none. */
+  compactContext(through: number, note: NoteMessage, summary?: string): void {
     this.view = {from: through, note};
+    if (summary !== undefined) this.unstored = {from: through, summary};
   }
 
   /** What the turn commits: the persisted and returned transcript. Its messages were
@@ -306,29 +320,48 @@ export class RunHistory {
   /** Appends what the run committed since its last save. The run saves after each
    * model call that returns tool calls and after accepted steering, so a shared
    * handler can read a run's progress, and when it ends. A batch's calls are saved
-   * before their results. */
+   * before their results. A save also stores the run's latest summary, once the
+   * messages it replaces are saved. */
   *save(): Operation<void> {
     if (!this.conversation) return;
     const committed = this.messages.filter((message) => !this.provisional.has(message));
     const transcript = modelTranscript(committed, true);
-    if (transcript.length === this.persisted) return;
-    this.version = yield* this.conversation.append(transcript.slice(this.persisted), this.version);
-    this.persisted = transcript.length;
+    if (transcript.length > this.persisted) {
+      this.version = yield* this.conversation.append(
+        transcript.slice(this.persisted),
+        this.version,
+      );
+      this.persisted = transcript.length;
+    }
+    yield* this.storeSummary();
   }
 
-  *compact(): Operation<void> {
-    if (!this.conversation?.compact) return;
-    const result = yield* this.conversation.compact();
-    if (result === "skipped") return;
-    const compacted = yield* this.conversation.load();
-    const {messages, closed} = continuedHistory(compacted.messages);
-    this.messages.splice(0, this.messages.length, ...messages, {
-      role: "user",
-      content: this.input,
-    });
-    this.persisted = messages.length - closed;
-    this.inputAt = messages.length;
-    this.version = compacted.version;
+  /** Stores the run's latest summary in the conversation once every message it
+   * replaces is saved, so the next run starts from it instead of summarizing the
+   * same messages again. A failure is logged and the run goes on; the next run
+   * then summarizes again. */
+  private *storeSummary(): Operation<void> {
+    const pending = this.unstored;
+    if (!pending || !this.conversation?.storeSummary) return;
+    // The saved transcript moves results next to their calls, but a cut never
+    // separates them, so the events before the cut are the first saved messages.
+    let covered = 0;
+    for (const message of this.messages.slice(0, pending.from))
+      if (!this.provisional.has(message)) covered++;
+    // Wait for a save that includes every message the summary replaces.
+    if (covered > this.persisted) return;
+    this.unstored = undefined;
+    if (covered === 0) return;
+    try {
+      yield* this.conversation.storeSummary(
+        pending.summary,
+        this.persisted - covered,
+        this.version,
+      );
+    } catch (error) {
+      if (mustPropagate(error)) throw error;
+      logger().warn("Could not store the run's summary in its conversation:", error);
+    }
   }
 }
 

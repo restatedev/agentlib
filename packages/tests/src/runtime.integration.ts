@@ -642,7 +642,7 @@ const session = r.object({
           appends++;
           return yield* stored.append(messages, version);
         },
-        compact: () => stored.compact(),
+        storeSummary: (summary, keep, version) => stored.storeSummary(summary, keep, version),
       };
       const a = agent({
         maxSteps: ending === "stopped" ? 1 : 3,
@@ -765,9 +765,11 @@ const session = r.object({
       return {result, history: yield* conversation.page()};
     },
     *turn(input: string) {
-      const conversation = new LazyStateConversation({
+      const conversation = new LazyStateConversation();
+      const a = agent({
+        // Small enough that the third turn summarizes the first two and stores the summary.
         compaction: {
-          policy: {maxMessages: 4, retainMessages: 2},
+          maxTokens: 30,
           model: function* (req) {
             return yield* r.run(
               async () => ({
@@ -778,8 +780,6 @@ const session = r.object({
             );
           },
         },
-      });
-      const a = agent({
         *model(req): r.Operation<ModelResponse> {
           yield* r.sleep(2);
           return {
@@ -1139,14 +1139,28 @@ void test(
     const client = connect({url: env.baseUrl()});
     assert.equal((await client.client(runner).gateway()).status, "completed");
     const convo = client.client(session, "one");
-    for (let i = 0; i < 4; i++)
-      assert.equal((await convo.turn(`message ${i}`)).status, "completed");
+    const outputs: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const result = await convo.turn(`message ${i}`);
+      assert.equal(result.status, "completed");
+      outputs.push(String(result.output));
+    }
+    // Turn 3 outgrows maxTokens and summarizes the first two turns before its first
+    // step; turn 4 starts from that summary and folds turn 3 into a new one.
+    assert.deepEqual(outputs, [
+      "answer to message 0; 1 context messages",
+      "answer to message 1; 3 context messages",
+      "answer to message 2; 2 context messages",
+      "answer to message 3; 2 context messages",
+    ]);
     const transcript = await convo.history();
     assert.equal(transcript.messages.length, 8);
     assert.match(JSON.stringify(transcript.messages), /message 0/);
     const meta = await env
       .stateOf(session, "one")
-      .get<{summary: {text: string}}>("conversation/meta");
+      .get<{count: number; summary: {through: number; text: string}}>("conversation/meta");
+    assert.equal(meta!.count, 8);
+    assert.equal(meta!.summary.through, 6);
     assert.match(meta!.summary.text, /preserve outstanding work/);
   },
 );

@@ -59,7 +59,9 @@ The accumulated model context across runs, including user messages, assistant
 messages, tool exchanges, and runtime observations. A run saves to it while it
 runs, after each model call that returns tool calls and after accepted
 steering, so a running turn can be read; a failed run saves what it committed,
-with a note on the failure.
+with a note on the failure. When a run summarizes its context, it stores the
+summary in the conversation, and the next run starts from the summary and the
+messages after it; every message stays stored.
 _Avoid_: Public transcript, session
 
 **Session**:

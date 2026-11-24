@@ -99,8 +99,6 @@ void test("compaction and summary calls are journaled under their own names", as
   let reads = 0;
   // One model serves every call, so each journal name comes from its request.
   const model = journaledModel(async (request): Promise<ModelResponse> => {
-    if (request.instructions?.startsWith("Summarize the supplied conversation"))
-      return {type: "final", text: "earlier questions answered"};
     if (lastText(request).includes('"type":"handoff-note-request"'))
       return {type: "final", text: "read some pages"};
     if (lastText(request).startsWith("The run stopped"))
@@ -123,10 +121,7 @@ void test("compaction and summary calls are journaled under their own names", as
       ctx,
       (function* () {
         const {store} = memoryStore();
-        const conversation = new LazyStateConversation({
-          store,
-          compaction: {model, policy: {maxMessages: 8, retainMessages: 4}},
-        });
+        const conversation = new LazyStateConversation({store});
         yield* conversation.append(earlier, 0);
         const a = agent({
           tools: {read},
@@ -143,7 +138,7 @@ void test("compaction and summary calls are journaled under their own names", as
   assert.equal(live.output.output, "Stopped after reading");
   assert.deepEqual(
     [...new Set(runNames(live.journal))],
-    ["Summarize conversation", "Ask model", "Compact context", "Summarize stopped run"],
+    ["Ask model", "Compact context", "Summarize stopped run"],
   );
   const replay = await runHandler(handler, {replay: live.journal});
   assert.deepEqual(replay.output, live.output);

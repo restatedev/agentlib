@@ -10,7 +10,6 @@ import {
   agent,
   journaledModel,
   LazyStateConversation,
-  summarizeConversation,
   tool,
   type Message,
   type Model,
@@ -203,49 +202,31 @@ void test("reasoning counts at its reported tokens, not by its encrypted charact
 
 void test("summaries read reasoning as text, never its signatures or encrypted content", async () => {
   let seen = "";
-  await r.execute(
-    context(),
-    summarizeConversation(
-      function* (request) {
+  const a = agent({
+    *model() {
+      return {type: "final", text: "Done"};
+    },
+    // The history outgrows maxTokens before the first step, and only the input fits retainTokens.
+    compaction: {
+      maxTokens: 50,
+      retainTokens: 10,
+      *model(request) {
         seen = JSON.stringify(request.messages);
         return {type: "final", text: "Summary"};
       },
-      {
-        messages: [
-          {role: "user", content: "Hi"},
-          {role: "assistant", content: "Hello", reasoning: signed("Greet them back.", "SECRET")},
-        ],
-        through: 2,
-        baseThrough: 0,
-      },
-    ),
+    },
+  });
+  await r.execute(
+    context(),
+    a.run("Next", {
+      messages: [
+        {role: "user", content: "Hi"},
+        {role: "assistant", content: "Hello", reasoning: signed("Greet them back.", "SECRET")},
+      ],
+    }),
   );
   assert.match(seen, /Greet them back/);
   assert.doesNotMatch(seen, /SECRET/);
-});
-
-void test("a conversation's maxChars ignores encrypted reasoning", async () => {
-  const convo = new LazyStateConversation({store: memoryStore().store});
-  await r.execute(
-    context(),
-    (function* () {
-      const encrypted: Reasoning = {
-        items: [{type: "reasoning", text: "", providerOptions: {openai: {enc: "x".repeat(5000)}}}],
-        tokens: 14,
-      };
-      yield* convo.append(
-        [
-          {role: "user", content: "Hi"},
-          {role: "assistant", content: "Hello", reasoning: encrypted},
-        ],
-        0,
-      );
-      assert.equal(
-        yield* convo.prepareCompaction({maxMessages: 64, maxChars: 1000, retainMessages: 1}),
-        undefined,
-      );
-    })(),
-  );
 });
 
 // --- Through the AI SDK, per provider -----------------------------------------------------

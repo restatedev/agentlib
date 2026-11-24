@@ -147,3 +147,73 @@ void test(
     });
   },
 );
+
+void test(
+  "replay stores a run's summary again, and the next run starts from it",
+  {timeout: 60000},
+  async () => {
+    const state = {values: new Map() as Store, writes: 0};
+    const firstRequests: string[] = [];
+    const fetch = tool({
+      description: "Fetch an order's history",
+      input: z.object({}),
+      *execute() {
+        return "x".repeat(1000);
+      },
+    });
+    // One journaled model writes the steps and, on the cached prefix, the summary.
+    const model = journaledModel(async (request): Promise<ModelResponse> => {
+      if (request.name === "Compact context")
+        return {type: "final", text: "order 1 history fetched; it has shipped"};
+      const last = request.messages.at(-1);
+      if (request.step === 1 && last?.role === "user" && last.content === "And order 2?") {
+        firstRequests.push(JSON.stringify(request.messages));
+        return {type: "final", text: "Order 2 is on its way."};
+      }
+      if (request.step === 1)
+        return {type: "tool_calls", calls: [{id: "f1", name: "fetch", input: {}}]};
+      return {type: "final", text: "Order 1 has shipped."};
+    });
+    // The fetched history outgrows maxTokens; nothing of it fits retainTokens.
+    const a = agent({
+      tools: {fetch},
+      codeMode: false,
+      toolResults: false,
+      model,
+      compaction: {maxTokens: 400, retainTokens: 40},
+    });
+    const handler = (ctx: Context) =>
+      r.execute(
+        ctx,
+        (function* () {
+          const conversation = new LazyStateConversation({store: journaledStore(state)});
+          const first = yield* a.run("Where is order 1?", {conversation});
+          const second = yield* a.run("And order 2?", {conversation});
+          const loaded = yield* conversation.load();
+          return {
+            statuses: [first.status, second.status],
+            summary: loaded.summary,
+            loaded: loaded.messages,
+            saved: (yield* conversation.page()).messages,
+          };
+        })(),
+      );
+    const output = (await checkReplay(state, handler)) as {
+      statuses: string[];
+      summary: string;
+      loaded: unknown[];
+      saved: unknown[];
+    };
+    assert.deepEqual(output.statuses, ["completed", "completed"]);
+    assert.equal(output.summary, "order 1 history fetched; it has shipped");
+    assert.equal(output.saved.length, 6);
+    assert.deepEqual(output.loaded, [
+      {role: "assistant", content: "Order 1 has shipped."},
+      {role: "user", content: "And order 2?"},
+      {role: "assistant", content: "Order 2 is on its way."},
+    ]);
+    // The second run started from the summary, not from the fetched history.
+    assert.match(firstRequests[0]!, /order 1 history fetched/);
+    assert.doesNotMatch(firstRequests[0]!, /xxxxxxxxxx/);
+  },
+);

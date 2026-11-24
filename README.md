@@ -164,7 +164,7 @@ repeat a completed model call.
 | Web search                   | Example-local `asyncTool` calling Tavily                                   | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Skills                       | `agent({skills})` with any `SkillSource`, `skills([...])`                  | [19](packages/examples/src/lessons/19_skills.ts)            |
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
-| Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | —                                                           |
+| Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | [09](packages/examples/src/lessons/09_support_session.ts)   |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |
 | Usage totals                 | `result.usage`, and `usageOf(error)` for a failed run                      | —                                                           |
 | Custom model adapters        | `journaledModel`                                                           | —                                                           |
