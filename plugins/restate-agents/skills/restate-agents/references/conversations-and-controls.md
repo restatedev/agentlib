@@ -36,10 +36,10 @@ turns never interleave.
 ## Long conversations: LazyStateConversation
 
 For long histories, pass a `conversation` instead of `messages`. It stores
-messages in chunks in object state. The agent's `compaction`, on by default,
-keeps what the model reads short: when a run summarizes its context, it stores
-the summary in the conversation, and the next run starts from the summary and
-the messages after it (see [Long runs](#long-runs-large-results-and-compaction)):
+messages in chunks in object state. Set `compaction` on the agent to keep what
+the model reads short: when a run summarizes its context, it stores the summary
+in the conversation, and the next run starts from the summary and the messages
+after it (see [Long runs](#long-runs-large-results-and-compaction)):
 
 ```ts
 const support = agent({model, instructions, tools, compaction: {maxTokens: 64000}});
@@ -168,9 +168,9 @@ const researcher = agent({
   the model gets an `unknown_ref` error.
 - `read_tool_result` is a reserved name while previews are on.
 
-**Compaction is on by default.** Before a model call, once the view passes
-`maxTokens`, the run summarizes its older messages with a model call. Set
-`compaction` to change its options, or pass `compaction: false` to turn it off:
+**Compaction is opt-in**, because it costs a model call. Set `compaction` to
+summarize the run's older messages before a model call once the view passes
+`maxTokens`:
 
 ```ts
 const researcher = agent({
@@ -214,8 +214,8 @@ const researcher = agent({
 
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
 that would not fit the window with `maxOutputTokens`, or with 32,768 tokens for
-the reply when `maxOutputTokens` is unset, is shrunk first: summarized unless
-`compaction` is `false`, truncated otherwise, to `compaction.retainTokens` or a
+the reply when `maxOutputTokens` is unset, is shrunk first: summarized when
+`compaction` is set, truncated otherwise, to `compaction.retainTokens` or a
 quarter of the window, whichever is smaller, and at most half of what
 instructions, tools and the reply leave. A window of 32,768 tokens or less
 needs `maxOutputTokens`.

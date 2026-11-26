@@ -22,13 +22,13 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   const outputSchema = options.output ? z.toJSONSchema(options.output) : undefined;
   const maxOutputChars = positiveInteger(options.maxOutputChars ?? 128000, "maxOutputChars");
   let compaction: RunConfiguration["compaction"];
-  if (options.compaction !== false) {
+  if (options.compaction) {
     const maxTokens = positiveInteger(
-      options.compaction?.maxTokens ?? 100000,
+      options.compaction.maxTokens ?? 100000,
       "compaction.maxTokens",
     );
     const retainTokens = positiveInteger(
-      options.compaction?.retainTokens ?? Math.floor(maxTokens / 4),
+      options.compaction.retainTokens ?? Math.floor(maxTokens / 4),
       "compaction.retainTokens",
     );
     if (retainTokens >= maxTokens)

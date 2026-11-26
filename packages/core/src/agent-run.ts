@@ -384,8 +384,8 @@ class AgentRun<C, O> {
 
   /** Shrinks the model's view: past `compaction.maxTokens`, when the next
    * request would not fit `contextWindow`, or always after an overflow, which
-   * keeps at most half of the view. A summary comes first unless compaction is
-   * off; truncation needs no model, so it is the fallback.
+   * keeps at most half of the view. A summary comes first when compaction is
+   * set; truncation needs no model, so it is the fallback.
    * Not raced against controls: steering and interrupts are handled once the
    * smaller view is in place, so a stopped run still has room to finalize. */
   private *compactContext(overflow = false): Operation<boolean> {
@@ -417,8 +417,7 @@ class AgentRun<C, O> {
     }
     const pending = this.tools.pendingCalls();
     if (settings && !this.compactionFailed) {
-      const {compaction} = this.root;
-      const model = (compaction ? compaction.model : undefined) ?? this.root.model;
+      const model = this.root.compaction?.model ?? this.root.model;
       // The note can reuse the cached prefix of the last request when the same
       // model writes it; a window or overflow cut means that prefix no longer fits.
       // Its reply limit is the run's, and like the run's, left out when unset.

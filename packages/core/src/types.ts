@@ -412,21 +412,20 @@ export type AgentOptions<Context, Output = string> = {
   /** Tool-free model call that summarizes an interrupted or step-limited run. Default: model; false skips it. */
   finalize?: Model | false;
   /** Summarizes this run's older messages when the model's view outgrows
-   * `maxTokens` (default 100000). On by default; `false` turns it off. The
-   * size is the input tokens the model last reported plus an estimate for
-   * messages added since, or an estimate of the messages, instructions and
-   * tools before any report. The newest messages that fit `retainTokens`
-   * (default a quarter of maxTokens, and at most half of what instructions
-   * and tools leave) stay verbatim. With a `conversation`, the run stores the
-   * summary in it at the next save, and the next run starts from the summary
-   * and the messages after it instead of the whole history. The returned
-   * transcript keeps every message. `model` defaults to the agent's. */
-  compaction?: false | {model?: Model; maxTokens?: number; retainTokens?: number};
+   * `maxTokens` (default 100000). The size is the input tokens the model last
+   * reported plus an estimate for messages added since, or an estimate of the
+   * messages, instructions and tools before any report. The newest messages
+   * that fit `retainTokens` (default a quarter of maxTokens, and at most half
+   * of what instructions and tools leave) stay verbatim. With a `conversation`,
+   * the run stores the summary in it at the next save, and the next run starts
+   * from the summary and the messages after it instead of the whole history. The
+   * returned transcript keeps every message. `model` defaults to the agent's. */
+  compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
   /** The model's context window in tokens. Before each model call, a view that
    * would not fit with `maxOutputTokens`, or with 32,768 tokens for the reply
-   * when it is unset, is shrunk first: summarized unless `compaction` is
-   * `false`, truncated otherwise, to `compaction.retainTokens` or a quarter of
-   * the window, whichever is smaller. A window of 32,768 tokens or less needs
+   * when it is unset, is shrunk first: summarized when `compaction` is set,
+   * truncated otherwise, to `compaction.retainTokens` or a quarter of the
+   * window, whichever is smaller. A window of 32,768 tokens or less needs
    * `maxOutputTokens`. Without `contextWindow`, only an
    * overflow error the model reports as such (a `ContextOverflowError`) is
    * recovered from; some providers give an overflow no distinct code. */

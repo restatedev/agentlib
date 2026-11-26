@@ -469,7 +469,7 @@ function windowed(limit: number, steps: number) {
 void test("an overflow truncates the view and asks again", async () => {
   const fixture = windowed(6, 5);
   const events: ProgressEvent[] = [];
-  const a = agent({tools: {small}, model: fixture.model, compaction: false});
+  const a = agent({tools: {small}, model: fixture.model});
   const result = await r.execute(
     context(),
     a.run("Go", {
@@ -530,7 +530,7 @@ void test("with compaction set, an overflow summarizes below the threshold", asy
 void test("an overflow that shrinking cannot fix fails the run", async () => {
   // Even the input alone overflows.
   const fixture = windowed(0, 1);
-  const a = agent({tools: {small}, model: fixture.model, compaction: false});
+  const a = agent({tools: {small}, model: fixture.model});
   await assert.rejects(r.execute(context(), a.run("Go")), (error) => isContextOverflow(error));
   // One recovery: the input gives way to a note restating it, which still overflows.
   assert.equal(fixture.overflows(), 2);
@@ -539,7 +539,6 @@ void test("an overflow that shrinking cannot fix fails the run", async () => {
   let asked = 0;
   const always = agent({
     tools: {small},
-    compaction: false,
     *model() {
       if (++asked > 1) throw new ContextOverflowError("prompt is too long");
       return call("s1", "small");
@@ -679,7 +678,7 @@ void test("contextWindow shrinks a view that would not fit before asking", async
               },
             },
           }
-        : {compaction: false as const}),
+        : {}),
       *model(request) {
         requests.push(structuredClone(request));
         step++;
@@ -730,7 +729,6 @@ void test("contextWindow counts instructions and tools before any usage report",
     },
     contextWindow: 6000,
     maxOutputTokens: 1000,
-    compaction: false,
     *model() {
       // No usage: the estimate alone must see that the view no longer fits.
       return ++step <= 6 ? call(`m${step}`, "medium") : {type: "final", text: "Done"};
@@ -792,7 +790,6 @@ void test("without maxOutputTokens, the window check leaves 32768 tokens for the
         }),
       },
       toolResults: false,
-      compaction: false,
       contextWindow: 50000,
       ...(maxOutputTokens === undefined ? {} : {maxOutputTokens}),
       *model() {
@@ -818,8 +815,8 @@ void test("without maxOutputTokens, the window check leaves 32768 tokens for the
   assert.equal(await compactions(), 1);
 });
 
-void test("compaction summarizes past 100000 tokens by default, unless it is false", async () => {
-  const run = async (compaction?: false) => {
+void test("compaction is off by default, and once set summarizes past 100000 tokens", async () => {
+  const run = async (compaction?: {}) => {
     const events: ProgressEvent[] = [];
     let notes = 0;
     let step = 0;
@@ -860,9 +857,9 @@ void test("compaction summarizes past 100000 tokens by default, unless it is fal
     assert.equal(result.status, "completed");
     return {events, notes};
   };
-  assert.deepEqual(await run(), {
+  assert.deepEqual(await run(), {events: [], notes: 0});
+  assert.deepEqual(await run({}), {
     events: [{type: "compaction", mode: "summary", status: "applied", reason: "threshold"}],
     notes: 1,
   });
-  assert.deepEqual(await run(false), {events: [], notes: 0});
 });
