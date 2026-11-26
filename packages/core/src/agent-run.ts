@@ -70,7 +70,7 @@ export type RunConfiguration = ToolExecutionLimits &
     /** Unset, requests leave it out and the provider picks the limit. */
     maxOutputTokens?: number;
     outputSchema?: Record<string, unknown>;
-    compaction?: {maxTokens: number; retainTokens: number};
+    compaction?: {maxTokens: number; retainTokens: number; instructions?: string};
     toolResults?: PreviewSettings;
     contextWindow?: number;
   }>;
@@ -419,7 +419,9 @@ class AgentRun<C, O> {
     if (settings && !this.compactionFailed) {
       const model = this.root.compaction?.model ?? this.root.model;
       // The note can reuse the cached prefix of the last request when the same
-      // model writes it; a window or overflow cut means that prefix no longer fits.
+      // model writes it. Models are compared by identity, so a second object for
+      // the same provider model gets the separate request. A window or overflow
+      // cut means that prefix no longer fits.
       // Its reply limit is the run's, and like the run's, left out when unset.
       const prefix =
         reason === "threshold" && model === this.active.model && this.lastRequest
@@ -428,7 +430,11 @@ class AgentRun<C, O> {
       try {
         const counted = this.usage.count(model);
         if (
-          yield* summarizeContext(this.history, {model: counted, retainTokens, prefix}, pending)
+          yield* summarizeContext(
+            this.history,
+            {model: counted, retainTokens, instructions: settings.instructions, prefix},
+            pending,
+          )
         ) {
           yield* this.emit({type: "compaction", mode: "summary", status: "applied", reason});
           return true;

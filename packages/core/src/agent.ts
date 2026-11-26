@@ -33,7 +33,10 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     );
     if (retainTokens >= maxTokens)
       throw new TypeError("compaction.retainTokens must be less than compaction.maxTokens");
-    compaction = {maxTokens, retainTokens};
+    const {instructions} = options.compaction;
+    if (instructions !== undefined && (typeof instructions !== "string" || !instructions.trim()))
+      throw new TypeError("compaction.instructions must be a nonempty string");
+    compaction = {maxTokens, retainTokens, ...(instructions === undefined ? {} : {instructions})};
   }
   let toolResults: RunConfiguration["toolResults"];
   if (options.toolResults !== false) {
