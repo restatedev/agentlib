@@ -814,3 +814,52 @@ void test("without maxOutputTokens, the window check leaves 32768 tokens for the
   assert.equal(await compactions(1000), 0);
   assert.equal(await compactions(), 1);
 });
+
+void test("compaction is off by default, and once set summarizes past 100000 tokens", async () => {
+  const run = async (compaction?: {}) => {
+    const events: ProgressEvent[] = [];
+    let notes = 0;
+    let step = 0;
+    const a = agent({
+      tools: {
+        // About 30000 tokens, more than the default retainTokens of 25000.
+        large: tool({
+          description: "A large result",
+          input: z.object({}),
+          *execute() {
+            return "x".repeat(60000);
+          },
+        }),
+      },
+      toolResults: false,
+      ...(compaction === undefined ? {} : {compaction}),
+      *model(request) {
+        // The agent's own model writes the note, asked for at the end of its view.
+        if (JSON.stringify(request.messages.at(-1)).includes("handoff-note-request")) {
+          notes++;
+          return {type: "final", text: "note"};
+        }
+        // About 120000 tokens in the next request.
+        const usage = {inputTokens: 90000, outputTokens: 10};
+        return ++step === 1
+          ? {...call("m1", "large"), usage}
+          : {type: "final", text: "Done", usage};
+      },
+    });
+    const result = await r.execute(
+      context(),
+      a.run("Go", {
+        *onProgress(event) {
+          if (event.type === "compaction") events.push(event);
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    return {events, notes};
+  };
+  assert.deepEqual(await run(), {events: [], notes: 0});
+  assert.deepEqual(await run({}), {
+    events: [{type: "compaction", mode: "summary", status: "applied", reason: "threshold"}],
+    notes: 1,
+  });
+});
