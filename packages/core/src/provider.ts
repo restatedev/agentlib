@@ -3,6 +3,8 @@ import type {ClientFuture, RetryOptions} from "@restatedev/restate-sdk-gen";
 import {
   APICallError,
   generateText,
+  InvalidToolInputError,
+  JSONParseError,
   jsonSchema as aiSchema,
   LoadAPIKeyError,
   NoObjectGeneratedError,
@@ -53,14 +55,14 @@ export type ProviderOptions = {
     info: {step: number; signal: AbortSignal},
   ): Promise<void>;
 };
-/** A response that stopped before it finished, for example at the output token
- * limit, goes back to the model as a note, with another step to try again. */
+/** A response that stopped before it finished, for example at a content filter,
+ * goes back to the model as a note, with another step to try again. A reply cut
+ * off at the output token limit (see `reachedLimit`) is returned instead, as
+ * `cut_off`: asking again would most likely be cut off again. Callers check the
+ * limit first, so a reply that used it all is a cut-off whatever its finish reason. */
 function finished(reason: string | undefined, usage: ModelUsage | undefined) {
-  if (reason === "stop" || reason === "tool-calls") return;
+  if (reason === "stop" || reason === "tool-calls" || reason === "length") return;
   let message = `The response ended before it was complete (${reason ?? "unknown"}).`;
-  if (reason === "length")
-    message =
-      "The response was cut off at the output token limit. Respond more briefly, or split the work into several steps.";
   if (reason === "content-filter") message = "The provider's content filter stopped the response.";
   throw new ModelResponseError(message, "incomplete_response", usage);
 }
@@ -240,22 +242,33 @@ function responseReasoning(
   return parsed.success ? (parsed.data as Reasoning) : undefined;
 }
 
-function toolCalls(
-  calls: readonly {
-    toolCallId: string;
-    toolName: string;
-    input: unknown;
-    invalid?: boolean;
-    error?: unknown;
-    providerExecuted?: boolean;
-  }[],
-): ToolCall[] {
-  return calls.map((call) => {
+type SdkToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  invalid?: boolean;
+  error?: unknown;
+  providerExecuted?: boolean;
+};
+
+/** Whether a call's arguments are not JSON, as when the reply was cut off part way through them. */
+function unparsed(call: SdkToolCall): boolean {
+  return (
+    call.invalid === true &&
+    InvalidToolInputError.isInstance(call.error) &&
+    JSONParseError.isInstance(call.error.cause)
+  );
+}
+
+/** The response's tool calls. A cut-off reply keeps only the calls whose arguments are complete. */
+function toolCalls(calls: readonly SdkToolCall[], cutOff: boolean): ToolCall[] {
+  return calls.flatMap((call) => {
     if (call.providerExecuted)
       throw new UnsupportedFunctionalityError({
         functionality: "provider-executed tools",
         message: "Provider-executed tools are not supported by this executor",
       });
+    if (cutOff && unparsed(call)) return [];
     return {
       id: call.toolCallId,
       name: call.toolName,
@@ -298,7 +311,8 @@ function settingsFor(
         : request.instructions,
     messages: messages(request, caching),
     tools,
-    maxOutputTokens: request.maxOutputTokens,
+    // Unset, the provider picks the limit.
+    ...(request.maxOutputTokens === undefined ? {} : {maxOutputTokens: request.maxOutputTokens}),
     maxRetries: 0,
     abortSignal: signal,
     // OpenAI keeps nothing: its reasoning comes back encrypted and lives in the history,
@@ -314,14 +328,31 @@ function settingsFor(
   };
 }
 
+/** Whether a reply was cut off at the output token limit. Some providers report
+ * another finish reason for a reply cut off inside a tool call, with the call's
+ * arguments closed early into valid JSON (DeepInfra, streaming, reports
+ * `tool_calls`), so a reply that used the whole limit counts as cut off too:
+ * its calls never run. */
+function reachedLimit(
+  reason: string | undefined,
+  settings: GenerateSettings,
+  usage: ModelUsage | undefined,
+) {
+  if (reason === "length") return true;
+  const limit = settings.maxOutputTokens;
+  return limit !== undefined && usage !== undefined && usage.outputTokens >= limit;
+}
+
 async function generate(settings: GenerateSettings, wantsOutput: boolean): Promise<Generation> {
   const result = await generateText(settings);
   const usage = modelUsage(result.usage);
-  finished(result.finishReason, usage);
-  const calls = toolCalls(result.toolCalls);
-  const output = wantsOutput && !calls.length ? result.output : undefined;
+  const cutOff = reachedLimit(result.finishReason, settings, usage);
+  if (!cutOff) finished(result.finishReason, usage);
+  const calls = toolCalls(result.toolCalls, cutOff);
+  // A cut-off reply's output is incomplete, so it is never parsed.
+  const output = wantsOutput && !cutOff && !calls.length ? result.output : undefined;
   return {
-    finishReason: result.finishReason,
+    finishReason: cutOff ? "length" : result.finishReason,
     text: result.text,
     calls,
     reasoning: responseReasoning(result.responseMessages, result.usage),
@@ -347,13 +378,14 @@ async function stream(
   const finishReason = await result.finishReason;
   const rawUsage = await result.usage;
   const usage = modelUsage(rawUsage);
-  finished(finishReason, usage);
+  const cutOff = reachedLimit(finishReason, settings, usage);
+  if (!cutOff) finished(finishReason, usage);
   const text = await result.text;
-  const calls = toolCalls(await result.toolCalls);
-  const output = wantsOutput && !calls.length ? await result.output : undefined;
+  const calls = toolCalls(await result.toolCalls, cutOff);
+  const output = wantsOutput && !cutOff && !calls.length ? await result.output : undefined;
   const reasoning = responseReasoning(await result.responseMessages, rawUsage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, reasoning, output, usage};
+  return {finishReason: cutOff ? "length" : finishReason, text, calls, reasoning, output, usage};
 }
 
 /** Gemini reuses a text-block ID across signed segments. Give each segment its
@@ -451,13 +483,16 @@ export function aiModel(options: ProviderOptions): Model {
       const {finishReason, text, calls, reasoning, output, usage} = options.onChunk
         ? await stream(settings, wantsOutput, options, {step: request.step ?? 0, signal})
         : await generate(settings, wantsOutput);
+      const reported = {...(usage ? {usage} : {}), ...(reasoning ? {reasoning} : {})};
+      // Journaled as the step's result, so a replay ends the run the same way.
+      if (finishReason === "length")
+        return {type: "cut_off", text, ...(calls.length ? {calls} : {}), ...reported};
       if (finishReason === "tool-calls" && !calls.length)
         throw new ModelResponseError(
           "The response announced tool calls but contained none. Call a tool, or respond with text.",
           "invalid_response",
           usage,
         );
-      const reported = {...(usage ? {usage} : {}), ...(reasoning ? {reasoning} : {})};
       if (calls.length) return {type: "tool_calls", calls, text, ...reported};
       return {
         type: "final",
@@ -467,10 +502,16 @@ export function aiModel(options: ProviderOptions): Model {
       };
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
-        finished(error.finishReason, error.usage && modelUsage(error.usage));
+        const usage = error.usage && modelUsage(error.usage);
+        const text = error.text ?? "";
+        // generateText parses the output before generate() can check the limit,
+        // so output cut off with another finish reason arrives here.
+        if (reachedLimit(error.finishReason, settings, usage))
+          return {type: "cut_off", text, ...(usage ? {usage} : {})};
+        finished(error.finishReason, usage);
         return {
           type: "final",
-          text: error.text ?? "",
+          text,
           validationError: "The response did not match the requested output schema.",
         };
       }

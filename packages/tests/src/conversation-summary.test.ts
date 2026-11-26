@@ -187,6 +187,8 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
     codeMode: false,
     toolResults: previews ? {maxTokens: 60, previewTokens: 30} : false,
     maxSteps: 2 + pick(7),
+    // The window sizes above leave room for this reply limit.
+    maxOutputTokens: 4096,
     ...(contextWindow ? {contextWindow} : {}),
     compaction: {
       maxTokens,

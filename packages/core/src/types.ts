@@ -32,10 +32,18 @@ export type Reasoning = {
   tokens?: number;
 };
 
-/** Model context, including complete tool-call/result pairs. Caller-owned. */
+/** Model context, including complete tool-call/result pairs. Caller-owned. `cutOff`
+ * marks a reply cut off at the output token limit: its text may be partial, and
+ * none of its calls ran. */
 export type Message =
   | {role: "user"; content: string}
-  | {role: "assistant"; content: string; calls?: ToolCall[]; reasoning?: Reasoning}
+  | {
+      role: "assistant";
+      content: string;
+      calls?: ToolCall[];
+      reasoning?: Reasoning;
+      cutOff?: true;
+    }
   | {role: "tool"; callId: string; name: string; result: ToolResult};
 export type ToolManifest = {
   name: string;
@@ -48,6 +56,7 @@ export type ModelRequest = {
   messages: Message[];
   tools: ToolManifest[];
   outputSchema?: Record<string, unknown>;
+  /** Unset, the model's provider picks the limit. */
   maxOutputTokens?: number;
   step?: number;
   /** Journal entry name for this call, such as "Compact context". Steps leave
@@ -92,7 +101,18 @@ export type ModelToolCallsResponse = {
   usage?: ModelUsage;
   reasoning?: Reasoning;
 };
-export type ModelResponse = ModelFinalResponse | ModelToolCallsResponse;
+/** A reply cut off at the output token limit. `calls` holds the tool calls whose
+ * arguments were complete; a model leaves out a call cut off part way. The run
+ * keeps the reply in its history, marked `cutOff`, never runs its calls, and
+ * fails with an `AgentTerminalError`. */
+export type ModelCutOffResponse = {
+  type: "cut_off";
+  text: string;
+  calls?: ToolCall[];
+  usage?: ModelUsage;
+  reasoning?: Reasoning;
+};
+export type ModelResponse = ModelFinalResponse | ModelToolCallsResponse | ModelCutOffResponse;
 /** A local journaled call or an RPC to a model gateway are both operations. */
 export type Model = (request: ModelRequest) => Operation<ModelResponse>;
 export type RunContext<Context> = {
@@ -302,6 +322,12 @@ export type RunOptions<Context> = {
 export type AgentOptions<Context, Output = string> = {
   /** JSON-Schema-representable output validation; transforms are not supported. */
   output?: z.ZodType<Output>;
+  /** The most tokens a model reply may use. Unset, requests leave it out and the
+   * model's AI SDK provider picks the limit, which differs per provider (see the
+   * README). Set it when you expect long replies. A reply cut off at the limit,
+   * including one that uses the whole limit whatever its finish reason, fails the
+   * run with an `AgentTerminalError` after the run records it in its history (see
+   * `ModelCutOffResponse`). */
   maxOutputTokens?: number;
   name?: string;
   model: Model;
@@ -386,9 +412,11 @@ export type AgentOptions<Context, Output = string> = {
    * returned transcript keeps every message. `model` defaults to the agent's. */
   compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
   /** The model's context window in tokens. Before each model call, a view that
-   * would not fit with `maxOutputTokens` is shrunk first: summarized when
-   * `compaction` is set, truncated otherwise, to `compaction.retainTokens` or
-   * a quarter of the window, whichever is smaller. Without it, only an
+   * would not fit with `maxOutputTokens`, or with 32,768 tokens for the reply
+   * when it is unset, is shrunk first: summarized when `compaction` is set,
+   * truncated otherwise, to `compaction.retainTokens` or a quarter of the
+   * window, whichever is smaller. A window of 32,768 tokens or less needs
+   * `maxOutputTokens`. Without `contextWindow`, only an
    * overflow error the model reports as such (a `ContextOverflowError`) is
    * recovered from; some providers give an overflow no distinct code. */
   contextWindow?: number;

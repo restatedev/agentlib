@@ -213,10 +213,12 @@ const researcher = agent({
   `AgentTerminalError` from the compactor fails the run instead.
 
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
-that would not fit the window with `maxOutputTokens` is shrunk first:
-summarized when `compaction` is set, truncated otherwise, to
-`compaction.retainTokens` or a quarter of the window, whichever is smaller,
-and at most half of what instructions, tools and `maxOutputTokens` leave.
+that would not fit the window with `maxOutputTokens`, or with 32,768 tokens for
+the reply when `maxOutputTokens` is unset, is shrunk first: summarized when
+`compaction` is set, truncated otherwise, to `compaction.retainTokens` or a
+quarter of the window, whichever is smaller, and at most half of what
+instructions, tools and the reply leave. A window of 32,768 tokens or less
+needs `maxOutputTokens`.
 
 ```ts
 const researcher = agent({model, tools: {search, fetchPage}, contextWindow: 200000});

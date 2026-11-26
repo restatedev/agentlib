@@ -176,13 +176,26 @@ const writer = agent({
 count. Using up `maxSteps` (default 10) or `maxToolCalls` (default 128,
 counting calls a program makes) stops the run with a summary rather than
 failing it. `maxToolDepth` (default 16) bounds nested tool calls,
-`maxOutputTokens` (default 4096) each model reply, and `maxOutputChars`
-(default 128000) the model's text, a tool's output, the final output, and a
-tool's display information and progress. A nested call deeper than
-`maxToolDepth` fails with code `depth_limit`, and the tool that made it
-receives the error. A reply cut off at `maxOutputTokens`, or model text over
-`maxOutputChars`, goes back to the model with a note, and the model tries
-again in its next step. A tool's output over the limit fails the call with
+`maxOutputTokens` each model reply, and `maxOutputChars` (default 128000) the
+model's text, a tool's output, the final output, and a tool's display
+information and progress. A nested call deeper than `maxToolDepth` fails with
+code `depth_limit`, and the tool that made it receives the error.
+
+When `maxOutputTokens` is unset, requests carry no limit, and each AI SDK
+provider picks one: `@ai-sdk/anthropic` uses the model's maximum from its own
+table (128,000 for recent Claude models), or 4,096 for a model name it doesn't
+know, and lowers a value above a known maximum with a warning.
+`@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/amazon-bedrock` and
+`@ai-sdk/openai-compatible` send no limit, so the model API's own default
+applies, and `@ai-sdk/gateway` forwards the request for Vercel AI Gateway to
+decide. Set `maxOutputTokens` when you expect long replies.
+
+A reply cut off at the output token limit fails the run with an
+`AgentTerminalError`, after the run records the reply in its history. See
+`error-handling.md` for what the run keeps.
+
+Model text over `maxOutputChars` goes back to the model with a note, and the
+model tries again in its next step. A tool's output over the limit fails the call with
 code `output_limit`. Display information, progress, or an `afterRun`
 replacement over the limit throws a `RangeError`: a mistake in your code,
 which Restate retries until you deploy a fix. Retries are configured on the

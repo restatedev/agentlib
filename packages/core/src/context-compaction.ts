@@ -97,8 +97,9 @@ export function* summarizeContext(
   let text: string | undefined;
   if (settings.prefix) {
     // Tools stay listed, since changing them would miss the cache; a model
-    // that calls one anyway gets the separate request below. Without provisional
-    // messages, which are usually the newest, the cached prefix still mostly applies.
+    // that calls one anyway gets the separate request below, and so does a
+    // summary cut off at the output token limit. Without provisional messages,
+    // which are usually the newest, the cached prefix still mostly applies.
     const kept = events.slice(cut).filter(recorded).length;
     const response = modelResponse(
       yield* settings.model({
@@ -130,6 +131,8 @@ export function* summarizeContext(
         name: JOURNAL_NAME,
       }),
     );
+    if (response.type === "cut_off")
+      throw new TerminalError("The context summary was cut off at the output token limit");
     if (response.type !== "final" || !response.text.trim())
       throw new TerminalError("Context compaction must return a text note");
     text = response.text;
