@@ -409,8 +409,20 @@ export type AgentOptions<Context, Output = string> = {
    * of what instructions and tools leave) stay verbatim. With a `conversation`,
    * the run stores the summary in it at the next save, and the next run starts
    * from the summary and the messages after it instead of the whole history. The
-   * returned transcript keeps every message. `model` defaults to the agent's. */
-  compaction?: {model?: Model; maxTokens?: number; retainTokens?: number};
+   * returned transcript keeps every message. `model` defaults to the agent's.
+   * When `model` is left out or is the agent's `Model` object itself, the run
+   * asks for the summary at the end of its last request, which the provider
+   * serves from its cache. Any other `model`, including a second `aiModel(...)`
+   * for the same provider model, gets a separate request that sends the older
+   * messages again. `instructions` replaces the default guidance on what the
+   * summary covers and how long it is; the run still says which messages the
+   * summary replaces and asks for it. */
+  compaction?: {
+    model?: Model;
+    maxTokens?: number;
+    retainTokens?: number;
+    instructions?: string;
+  };
   /** The model's context window in tokens. Before each model call, a view that
    * would not fit with `maxOutputTokens`, or with 32,768 tokens for the reply
    * when it is unset, is shrunk first: summarized when `compaction` is set,

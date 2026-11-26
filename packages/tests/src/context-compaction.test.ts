@@ -4,6 +4,7 @@ import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
+  LazyStateConversation,
   tool,
   type Message,
   type Model,
@@ -14,7 +15,7 @@ import {
 import {z} from "zod";
 import {history} from "../../core/src/validation.js";
 import {runHandler} from "./replay-harness.mjs";
-import {testContext} from "./helpers.js";
+import {memoryStore, testContext} from "./helpers.js";
 
 const context = () => testContext("context-compaction");
 const read = tool({
@@ -40,8 +41,14 @@ function note(messages: readonly Message[]): Record<string, unknown> | undefined
   return parsed?.type === "context-compacted" ? parsed : undefined;
 }
 
+const asksForNote = (request: ModelRequest) => {
+  const last = request.messages.at(-1);
+  return last?.role === "user" && last.content.includes('"type":"handoff-note-request"');
+};
+
 void test("a long run compacts its view but saves every message", async () => {
   const requests: ModelRequest[] = [];
+  const compactorRequests: ModelRequest[] = [];
   const compactorInputs: Record<string, unknown>[] = [];
   const events: ProgressEvent[] = [];
   const a = agent({
@@ -57,6 +64,7 @@ void test("a long run compacts its view but saves every message", async () => {
       ...compaction,
       *model(request) {
         assert.deepEqual(request.tools, []);
+        compactorRequests.push(structuredClone(request));
         compactorInputs.push(JSON.parse((request.messages[0] as {content: string}).content));
         return {type: "final", text: `read ${compactorInputs.length} batch of pages`};
       },
@@ -93,16 +101,102 @@ void test("a long run compacts its view but saves every message", async () => {
       reason: "threshold",
     })),
   );
-  assert.equal(compactorInputs[0]!.previousNote, null);
-  // A later compaction folds the earlier note into the new one.
+  assert.equal(compactorInputs[0]!.previousSummary, null);
+  // A later compaction folds the earlier summary into the new one. The compactor
+  // gets the summary's text, never the note that tells the agent to continue.
   assert.ok(compactorInputs.length >= 2);
-  assert.match(String(compactorInputs[1]!.previousNote), /read 1 batch/);
+  assert.equal(compactorInputs[1]!.previousSummary, "read 1 batch of pages");
+  for (const request of compactorRequests) {
+    assert.doesNotMatch(JSON.stringify(request.messages), /Continue from where things stand/);
+    // The request asks for the summary after the data.
+    assert.deepEqual(request.messages.at(-1), {
+      role: "user",
+      content:
+        "Write the summary of the data above now. Do not continue the agent's task. Return only the summary.",
+    });
+  }
 });
 
-const asksForNote = (request: ModelRequest) => {
-  const last = request.messages.at(-1);
-  return last?.role === "user" && last.content.includes('"type":"handoff-note-request"');
-};
+for (const ownModel of [false, true])
+  void test(`a second summary in a run folds in the first, and the conversation stores it (${ownModel ? "agent's model" : "compactor"})`, async () => {
+    let compactions = 0;
+    let steps = 0;
+    // Each summary folds in the earlier summary that its request carries.
+    const summarize = (earlier: unknown): ModelResponse => ({
+      type: "final",
+      text: [earlier, `batch ${++compactions}`].filter(Boolean).join("; "),
+    });
+    const a = agent({
+      tools: {read},
+      codeMode: false,
+      compaction: ownModel
+        ? compaction
+        : {
+            ...compaction,
+            *model(request) {
+              const data = JSON.parse((request.messages[0] as {content: string}).content);
+              return summarize(data.previousSummary);
+            },
+          },
+      *model(request) {
+        if (asksForNote(request)) return summarize(note(request.messages)?.handoff);
+        return ++steps <= 7 ? reads(`r${steps}`) : {type: "final", text: "Done"};
+      },
+    });
+    const stored = await r.execute(
+      context(),
+      (function* () {
+        const conversation = new LazyStateConversation({store: memoryStore().store});
+        const result = yield* a.run("Go", {conversation});
+        assert.equal(result.status, "completed");
+        return yield* conversation.load();
+      })(),
+    );
+    assert.ok(compactions >= 2);
+    assert.match(stored.summary!, /^batch 1; batch 2/);
+  });
+
+for (const ownModel of [false, true])
+  void test(`compaction.instructions replaces the guidance on what a summary covers (${ownModel ? "agent's model" : "compactor"})`, async () => {
+    const asked: string[] = [];
+    let steps = 0;
+    const instructions = "List only the page ids that were read.";
+    const a = agent({
+      tools: {read},
+      codeMode: false,
+      compaction: {
+        ...compaction,
+        instructions,
+        ...(ownModel
+          ? {}
+          : {
+              *model(request: ModelRequest): r.Operation<ModelResponse> {
+                asked.push(request.instructions!);
+                return {type: "final", text: "pages r1-r3"};
+              },
+            }),
+      },
+      *model(request) {
+        if (asksForNote(request)) {
+          asked.push(
+            JSON.parse((request.messages.at(-1) as {content: string}).content).instruction,
+          );
+          return {type: "final", text: "pages r1-r3"};
+        }
+        return ++steps <= 5 ? reads(`r${steps}`) : {type: "final", text: "Done"};
+      },
+    });
+    const result = await r.execute(context(), a.run("Go"));
+    assert.equal(result.status, "completed");
+    assert.ok(asked.length > 0);
+    for (const text of asked) {
+      assert.ok(text.includes(instructions));
+      assert.doesNotMatch(text, /^Cover:| Cover: /);
+      // The rest of the request stays: which messages the summary replaces.
+      assert.match(text, /verbatim after it/);
+      assert.match(text, /Return only the summary\.$/);
+    }
+  });
 
 void test("the run's own model writes the note from the cached prefix of its last request", async () => {
   const requests: ModelRequest[] = [];
@@ -405,6 +499,19 @@ void test("compaction replays from the journal without calling the compactor aga
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);
   assert.equal(compactions, calls);
+});
+
+void test("compaction.instructions must not be empty", () => {
+  assert.throws(
+    () =>
+      agent({
+        model: function* () {
+          return {type: "final", text: ""};
+        },
+        compaction: {instructions: " "},
+      }),
+    /compaction.instructions must be a nonempty string/,
+  );
 });
 
 void test("retainTokens must be below maxTokens", () => {
