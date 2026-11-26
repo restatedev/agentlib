@@ -14,7 +14,6 @@ import {z} from "zod";
 import {
   agent,
   handoff,
-  summarizeConversation,
   tool,
   ToolError,
   RunInputError,
@@ -506,20 +505,6 @@ void test("maxOutputChars bounds tool output for the model and fails an oversize
   const brief = await execute(context(), verbose.run("Go"));
   assert.equal(brief.output, "z".repeat(20));
   assert.equal(brief.steps, 2);
-});
-
-void test("conversation summaries must be text, not tool calls", async () => {
-  await assert.rejects(
-    execute(
-      context(),
-      summarizeConversation(scripted(call("t", "tool")), {
-        messages: [{role: "user", content: "Hi"}],
-        through: 1,
-        baseThrough: 0,
-      }),
-    ),
-    /must not call tools/,
-  );
 });
 
 const lookup = tool({

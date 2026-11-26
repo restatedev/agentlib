@@ -36,12 +36,15 @@ turns never interleave.
 ## Long conversations: LazyStateConversation
 
 For long histories, pass a `conversation` instead of `messages`. It stores
-messages in chunks in object state and summarizes old ones:
+messages in chunks in object state. Set `compaction` on the agent to keep what
+the model reads short: when a run summarizes its context, it stores the summary
+in the conversation, and the next run starts from the summary and the messages
+after it (see [Long runs](#long-runs-large-results-and-compaction)):
 
 ```ts
-const conversation = new LazyStateConversation({
-  compaction: {model, policy: {maxMessages: 64, retainMessages: 12}},
-});
+const support = agent({model, instructions, tools, compaction: {maxTokens: 64000}});
+
+const conversation = new LazyStateConversation();
 const result = yield* support.run(message, {conversation});
 ```
 
@@ -107,13 +110,14 @@ call's result is its pending acknowledgment until the run collects the real
 result. To show results as they happen, use `onProgress` events; `page()`
 returns the history as of the last save.
 
-Each save appends to the last one. The saved history stays the full record:
-error notes, rejected answers, and in-run compaction never reach it.
+Each save appends to the last one. The saved messages stay the full record:
+error notes and rejected answers never reach them. A run's summary is stored in
+`conversation/meta`, not as a message, so `page()` still returns every message.
 
 Restate journals every state read with its value. Within one invocation,
 `LazyStateConversation` reads each state key at most once and keeps what it
-read and wrote, so the load, compaction, and saves of a run don't journal the
-same messages again. A shared handler that calls `page()` twice in one
+read and wrote, so the load, the saves, and storing a summary don't journal
+the same messages again. A shared handler that calls `page()` twice in one
 invocation gets the values from its first read; call it once per invocation.
 
 A run that fails with a terminal error saves what it recorded, closes
@@ -129,16 +133,16 @@ saved can stay without results. The next run closes each one with a
 effect, and its first save stores it. A cancelled run closes its calls itself,
 with the reason, so prefer cancelling.
 
-When a run starts and the conversation compaction fails, the run logs a
-warning and continues with the history it loaded; the next run tries again.
-An `AgentTerminalError` from the compaction model fails the run instead.
+If storing a summary fails with an error, the run logs a warning and continues.
+The next run then loads every message after the last stored summary and
+summarizes again. A conversation that another writer changed, or that already
+holds a summary covering as many messages, stores nothing, without a warning.
 
 ## Long runs: large results and compaction
 
-Conversation compaction runs before a run starts. A single run can still
-outgrow the model's window as its tool results pile up. Two settings keep it
-in bounds, and neither changes the transcript: `result.messages` and the
-saved conversation keep every message whole.
+A run's context grows with every step as its tool results pile up. Two
+settings keep it in bounds, and neither changes the transcript:
+`result.messages` and the conversation's `page()` keep every message whole.
 
 **Tool-result previews are on by default.** A result estimated above
 `toolResults.maxTokens` reaches the model as its head and tail, with a ref.
@@ -159,7 +163,9 @@ const researcher = agent({
   returns up to four times `maxTokens` worth of characters.
 - Background results are previewed the same way; their ref is the operation ID.
 - Reads come from the journaled history, so they work after a restart and on
-  replay, and for earlier turns of a saved conversation.
+  replay, and for earlier turns of a saved conversation back to its stored
+  summary. A later run cannot read a ref from a message the summary replaced:
+  the model gets an `unknown_ref` error.
 - `read_tool_result` is a reserved name while previews are on.
 
 **Compaction is opt-in**, because it costs a model call. Set `compaction` to
@@ -182,17 +188,29 @@ const researcher = agent({
   adapters report usage.
 - The newest messages that fit `retainTokens`, and at most half of what
   instructions and tools leave of `maxTokens`, stay verbatim; a tool call is
-  never separated from its results. The rest become one handoff note, which
-  restates the run's input once it is summarized and lists background calls
-  still running. A previewed result keeps its ref, so it can still be read.
+  never separated from its results. The rest become one summary. The note
+  that carries it also restates the run's input once the input is summarized,
+  and lists background calls still running. A previewed result keeps its
+  ref, so it can still be read for the rest of the run.
+- With a `conversation`, the run stores the summary in it at its next save,
+  in place of the messages the summary replaces. The next run loads the
+  summary and the messages after it, so it does not summarize the same
+  messages again. The restated input and the pending calls are not stored.
+  The summary covers each request and how far it got, because later turns
+  read it too. Like the conversation, it leaves out rejected answers and error
+  notes.
+- A later run knows only the tool-call IDs after the stored summary. If a
+  provider reuses an earlier ID, the run accepts the call, and `page()` returns
+  the ID twice. Providers that generate unique IDs are not affected.
 - The tool-free finalization of a stopped run also sees the compacted view.
 - Compaction summaries do not run `beforeStep`: the compaction model gets the
   history as recorded. Redact with `beforeRun`, `beforeSteering` and `afterTool`
   instead.
 - Steering and interrupts wait until compaction finishes. If the compactor
-  fails, the run stops summarizing and truncates instead: the older messages
-  give way to a short note that restates the input and lists pending calls.
-  An `AgentTerminalError` from the compactor fails the run instead.
+  fails, the run logs it, stops summarizing and truncates instead: the older
+  messages give way to a short note that restates the input and lists pending
+  calls. A truncation is never stored, so the next run summarizes again. An
+  `AgentTerminalError` from the compactor fails the run instead.
 
 **Set `contextWindow` to avoid overflows.** Before each model call, a view
 that would not fit the window with `maxOutputTokens` is shrunk first:

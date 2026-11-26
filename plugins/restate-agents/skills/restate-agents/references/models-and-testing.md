@@ -84,9 +84,8 @@ responses the run discards, such as an answer superseded by steering or a reply
 cut off at `maxOutputTokens`. It also includes each sub-agent run by
 `agentTool` and each fork run by `forkAgentTool`, whether it completes, stops,
 or fails. `totalTokens` is `inputTokens + outputTokens`. Calls that
-report no usage add nothing. Model calls made by other tools or by hooks,
-conversation-store compaction, and calls cancelled before they return are not
-counted.
+report no usage add nothing. Model calls made by other tools or by hooks, and
+calls cancelled before they return, are not counted.
 
 When `run()` throws, `usageOf(error)` returns the totals up to the failure (see
 the example in `agent-basics.md`). Record them only for terminal errors: after

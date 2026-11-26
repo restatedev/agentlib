@@ -13,8 +13,8 @@ import {
   LazyStateConversation,
   messagesOf,
   tool,
-  type CompactionPlan,
   type Conversation,
+  type ConversationSnapshot,
   type ConversationStore,
   type Message,
   type Model,
@@ -420,21 +420,27 @@ void test("the next run closes the calls a killed run left without results", asy
   });
 });
 
-void test("compaction before a run keeps the closing results", async () => {
+void test("compaction at the start of a run keeps the closing results", async () => {
   const {store} = memoryStore();
-  const summarize: Model = function* () {
-    return {type: "final", text: "ten earlier questions"};
-  };
-  const conversation = new LazyStateConversation({
-    store,
-    compaction: {model: summarize, policy: {maxMessages: 8, retainMessages: 2}},
-  });
+  const conversation = new LazyStateConversation({store});
+  const long = (i: number) => [
+    user(`question ${i} ${"x".repeat(1000)}`),
+    answer(`answer ${i} ${"x".repeat(1000)}`),
+  ];
   await execute(function* () {
-    yield* conversation.append([...pairs(10), user("pay"), calls("charge")], 0);
+    yield* conversation.append([...long(0), ...long(1), user("pay"), calls("charge")], 0);
     const closed = cancelled("charge", interrupted);
     const a = agent({
+      // The two long turns outgrow maxTokens; the killed run's turn fits retainTokens.
+      compaction: {
+        maxTokens: 400,
+        retainTokens: 300,
+        *model() {
+          return {type: "final", text: "two earlier questions"};
+        },
+      },
       *model(request) {
-        assert.match(JSON.stringify(request.messages[0]), /ten earlier questions/);
+        assert.match(JSON.stringify(request.messages[0]), /two earlier questions/);
         assert.deepEqual(request.messages.slice(1), [
           user("pay"),
           calls("charge"),
@@ -445,7 +451,9 @@ void test("compaction before a run keeps the closing results", async () => {
       },
     });
     assert.equal((yield* a.run("status?", {conversation})).status, "completed");
-    assert.deepEqual((yield* conversation.page(20)).messages, [
+    const loaded = yield* conversation.load();
+    assert.equal(loaded.summary, "two earlier questions");
+    assert.deepEqual(loaded.messages, [
       user("pay"),
       calls("charge"),
       closed,
@@ -473,51 +481,56 @@ void test("a run still rejects other broken histories, and repairs only its conv
   });
 });
 
-void test("compaction prepared mid-run stays before the open batch and applies after the run", async () => {
+void test("a summary made mid-run is stored at the next save, so a shared reader loads it", async () => {
   const {store} = memoryStore();
   const conversation = new LazyStateConversation({store});
-  // Another handler prepares and applies compaction.
-  const other = new LazyStateConversation({store});
+  // Another instance on the same store stands in for a shared handler.
+  const reader = new LazyStateConversation({store});
+  let midRun: ConversationSnapshot | undefined;
   await execute(function* () {
-    yield* conversation.append(pairs(6), 0);
-    let plan: CompactionPlan | undefined;
     const a = agent({
+      codeMode: false,
+      toolResults: false,
+      // The big result outgrows maxTokens before step 2, and it alone exceeds retainTokens.
+      compaction: {
+        maxTokens: 500,
+        retainTokens: 150,
+        *model() {
+          return {type: "final", text: "looked up the big record"};
+        },
+      },
       tools: {
-        lookup: tool({
+        big: tool({
           ...base,
           *execute() {
-            plan = yield* other.prepareCompaction({maxMessages: 8, retainMessages: 2});
-            return "found";
+            return "x".repeat(1000);
+          },
+        }),
+        small: tool({
+          ...base,
+          *execute() {
+            midRun = yield* reader.load();
+            return "ok";
           },
         }),
       },
       *model(request) {
-        return request.step === 1 ? batch("lookup") : done;
-      },
-    });
-    yield* a.run("go", {conversation});
-    assert.ok(plan);
-    // The boundary stops at the run's input: the open batch stays verbatim.
-    assert.equal(plan.through, 12);
-    history(plan.messages);
-    assert.equal(yield* other.applyCompaction({plan, summary: "six earlier questions"}), true);
-    const loaded = yield* conversation.load();
-    history(loaded.messages);
-    assert.match(loaded.messages[0]!.role === "user" ? loaded.messages[0].content : "", /six/);
-    assert.deepEqual(loaded.messages.slice(1), [
-      user("go"),
-      calls("lookup"),
-      success("lookup", "found"),
-      answer("done"),
-    ]);
-    // The next run continues from the compacted history, and its saves pass the version check.
-    const next = yield* agent({
-      *model() {
+        if (request.step === 1) return batch("big");
+        if (request.step === 2) return batch("small");
         return done;
       },
-    }).run("again", {conversation});
-    assert.equal(next.status, "completed");
-    assert.deepEqual((yield* other.page(16)).messages, [user("again"), answer("done")]);
+    });
+    assert.equal((yield* a.run("go", {conversation})).status, "completed");
+  });
+  // The save before `small` ran stored the summary in place of the first step.
+  assert.equal(midRun?.summary, "looked up the big record");
+  assert.deepEqual(midRun?.messages, [calls("small")]);
+  await execute(function* () {
+    const loaded = yield* conversation.load();
+    assert.equal(loaded.summary, "looked up the big record");
+    assert.deepEqual(loaded.messages, [calls("small"), success("small", "ok"), answer("done")]);
+    // The chunks keep every message.
+    assert.equal((yield* conversation.page()).messages.length, 6);
   });
 });
 
@@ -652,10 +665,7 @@ void test("a run reads each conversation key once, through compaction and every 
   const summarize: Model = function* () {
     return {type: "final", text: "twenty earlier questions"};
   };
-  const conversation = new LazyStateConversation({
-    store,
-    compaction: {model: summarize, policy: {maxMessages: 8, retainMessages: 4}},
-  });
+  const conversation = new LazyStateConversation({store});
   // Two chunks of history, written by an earlier invocation.
   await execute(function* () {
     yield* new LazyStateConversation({store}).append(pairs(20), 0);
@@ -663,6 +673,10 @@ void test("a run reads each conversation key once, through compaction and every 
   reads.clear();
   await execute(function* () {
     const a = agent({
+      codeMode: false,
+      toolResults: false,
+      // Twenty earlier questions outgrow maxTokens before the first step.
+      compaction: {model: summarize, maxTokens: 200, retainTokens: 50},
       tools: {
         lookup: tool({
           ...base,
@@ -679,7 +693,7 @@ void test("a run reads each conversation key once, through compaction and every 
     });
     assert.equal((yield* a.run("go", {conversation})).status, "completed");
   });
-  // The load, the compaction, the load after it, and two saves read each key once.
+  // The load, storing the summary, and the saves read each key once.
   assert.deepEqual(Object.fromEntries(reads), {
     "conversation/meta": 1,
     "conversation/0": 1,

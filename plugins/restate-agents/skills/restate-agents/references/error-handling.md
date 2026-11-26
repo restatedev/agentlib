@@ -347,9 +347,11 @@ check `result.status` before you use `result.output`.
 
 Some failures have a fallback instead of an outcome:
 
-- If a summary for in-run compaction fails, the run truncates older messages.
-- If conversation compaction fails when a run starts, the run continues with
-  the history it loaded and logs a warning.
+- If a compaction summary fails, the run logs a warning and truncates older
+  messages. A truncation is never stored, so the next run summarizes again.
+- If storing a summary in the conversation fails with an error, the run logs a
+  warning and continues; the next run loads the whole history since the last
+  stored summary.
 - If the summary of a stopped run fails, or is longer than `maxOutputChars`,
   the result gets a fixed text instead, or no summary when even that text is
   too long.

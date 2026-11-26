@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import {TerminalError, type Context} from "@restatedev/restate-sdk";
+import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
   AgentTerminalError,
   ConversationConflictError,
   LazyStateConversation,
+  type Conversation,
   type Message,
   type Model,
+  type ModelResponse,
 } from "@restatedev/agentlib";
 import {z} from "zod";
 import {history} from "../../core/src/validation.js";
@@ -102,7 +104,7 @@ void test("a conversation lazily persists chunks and supplies history across emb
   assert.equal((values.get("convo/1") as Message[]).length, 10);
 });
 
-void test("compaction retains complete tool exchanges and leaves the original log available", async () => {
+void test("a stored summary replaces older messages for the next load, and page() keeps them", async () => {
   const {store} = memoryStore();
   const convo = new LazyStateConversation({store});
   await r.execute(
@@ -115,107 +117,67 @@ void test("compaction retains complete tool exchanges and leaves the original lo
         ...pairs(2),
       ];
       yield* convo.append(messages, 0);
-      // Desired cut falls between a call and its result; move it back to the
-      // user message that asked for the call.
-      const plan = yield* convo.prepareCompaction({maxMessages: 8, retainMessages: 5});
-      assert.ok(plan);
-      assert.equal(plan.through, 4);
-      history(plan.messages);
-      assert.equal(
-        yield* convo.applyCompaction({plan, summary: "earlier goals and results"}),
-        true,
-      );
+      // Keeping five messages would start them with a result whose call is summarized.
+      try {
+        yield* convo.storeSummary("earlier goals and results", 5, 12);
+        assert.fail("must reject a result without its call");
+      } catch (error) {
+        assert.match(String(error), /unmatched or duplicate tool result/);
+      }
+      assert.equal(yield* convo.storeSummary("earlier goals and results", 4, 12), true);
       const snapshot = yield* convo.load();
-      assert.equal(snapshot.messages.length, 9);
-      assert.deepEqual(snapshot.messages[1], {role: "user", content: "question 2"});
-      history(snapshot.messages);
-      assert.match(JSON.stringify(snapshot.messages[0]), /earlier goals/);
+      assert.equal(snapshot.summary, "earlier goals and results");
+      assert.equal(snapshot.version, 12);
+      assert.deepEqual(snapshot.messages, pairs(2));
       assert.deepEqual((yield* convo.page()).messages, messages);
     })(),
   );
 });
 
-void test("the retained tail starts at a user message", async () => {
-  const {store} = memoryStore();
-  const convo = new LazyStateConversation({store});
-  await r.execute(
-    context(),
-    (function* () {
-      yield* convo.append(pairs(6), 0);
-      // Retaining 3 would start the tail at "answer 4"; keep its question too.
-      const plan = yield* convo.prepareCompaction({maxMessages: 8, retainMessages: 3});
-      assert.ok(plan);
-      assert.equal(plan.through, 8);
-      assert.deepEqual(plan.messages.at(-1), {role: "assistant", content: "answer 3"});
-    })(),
-  );
-});
-
-void test("a summary without text fails compaction terminally and keeps history", async () => {
-  const {store} = memoryStore();
-  const convo = new LazyStateConversation({
-    store,
-    compaction: {
-      *model() {
-        return {type: "final", text: " ", output: {summary: "structured"}};
-      },
-      policy: {maxMessages: 4, retainMessages: 2},
-    },
-  });
-  await r.execute(
-    context(),
-    (function* () {
-      yield* convo.append(pairs(4), 0);
-      try {
-        yield* convo.compact();
-        assert.fail("must fail");
-      } catch (error) {
-        assert.ok(error instanceof TerminalError);
-        assert.match(String(error), /empty summary/);
-      }
-      assert.deepEqual((yield* convo.load()).messages, pairs(4));
-    })(),
-  );
-});
-
-void test("compaction tolerates concurrent appends but refuses an overlapping stale summary", async () => {
+void test("a summary is stored only for the current version and a boundary that moves forward", async () => {
   const {store} = memoryStore();
   const convo = new LazyStateConversation({store});
   await r.execute(
     context(),
     (function* () {
       yield* convo.append(pairs(10), 0);
-      const old = yield* convo.prepareCompaction({maxMessages: 8, retainMessages: 4});
-      assert.ok(old);
-      yield* convo.append(
-        [
-          {role: "user", content: "new steering"},
-          {role: "assistant", content: "new answer"},
-        ],
-        20,
-      );
-      assert.equal(yield* convo.applyCompaction({plan: old, summary: "first summary"}), true);
-      const loaded = yield* convo.load();
-      assert.equal(loaded.version, 22);
-      assert.match(JSON.stringify(loaded.messages), /new steering/);
-      assert.equal(yield* convo.applyCompaction({plan: old, summary: "stale summary"}), false);
-      assert.equal(yield* convo.applyCompaction({plan: old, summary: "first summary"}), true);
+      // Another writer appended since version 18.
+      assert.equal(yield* convo.storeSummary("first summary", 4, 18), false);
+      assert.equal(yield* convo.storeSummary("first summary", 4, 20), true);
+      // The stored summary already covers as many messages, or more.
+      assert.equal(yield* convo.storeSummary("same boundary", 4, 20), false);
+      assert.equal(yield* convo.storeSummary("older boundary", 6, 20), false);
+      // Appends after a summary keep the version check.
+      assert.equal(yield* convo.append(pairs(1), 20), 22);
       try {
         yield* convo.append(pairs(1), 20);
         assert.fail("stale writer accepted");
-      } catch (e) {
-        assert.ok(e instanceof ConversationConflictError);
+      } catch (error) {
+        assert.ok(error instanceof ConversationConflictError);
       }
+      const loaded = yield* convo.load();
+      assert.equal(loaded.summary, "first summary");
+      assert.deepEqual(loaded.messages, [...pairs(10).slice(16), ...pairs(1)]);
+      for (const [summary, keep] of [
+        [" ", 2],
+        ["x".repeat(64001), 2],
+        ["valid", -1],
+      ] as const)
+        try {
+          yield* convo.storeSummary(summary, keep, 22);
+          assert.fail("invalid summary accepted");
+        } catch (error) {
+          assert.ok(error instanceof TypeError);
+        }
     })(),
   );
 });
 
-void test("automatic model compaction and conversation writes are replayable", async () => {
+void test("a run stores its summary, the next run starts from it, and both replay", async () => {
   let summaries = 0;
-  const initial = pairs(10);
   const summarize: Model = function* (request) {
     assert.deepEqual(request.tools, []);
-    assert.match(request.instructions!, /unresolved/);
+    assert.match(request.instructions!, /later turns/);
     return yield* r.run(
       async () => {
         summaries++;
@@ -229,76 +191,66 @@ void test("automatic model compaction and conversation writes are replayable", a
       ctx,
       (function* () {
         const {store} = memoryStore();
-        const convo = new LazyStateConversation({
-          store,
-          compaction: {model: summarize, policy: {maxMessages: 8, retainMessages: 4}},
-        });
-        yield* convo.append(initial, 0);
+        const convo = new LazyStateConversation({store});
+        yield* convo.append(pairs(30), 0);
+        const requests: Message[][] = [];
+        // The loaded history outgrows maxTokens; after the summary, the next run fits.
         const a = agent({
+          compaction: {model: summarize, maxTokens: 300, retainTokens: 30},
           *model(request) {
-            assert.equal(request.messages.length, 6);
-            assert.match(JSON.stringify(request.messages[0]), /unfinished task/);
+            requests.push([...request.messages]);
             return {type: "final", text: "done"};
           },
         });
-        const result = yield* a.run("continue", {conversation: convo});
-        return {result, history: yield* convo.page()};
+        yield* a.run("continue", {conversation: convo});
+        yield* a.run("and then?", {conversation: convo});
+        return {requests, snapshot: yield* convo.load(), history: yield* convo.page()};
       })(),
     );
   const first = await runHandler(handler);
   assert.equal(summaries, 1);
-  assert.equal(first.output.history.messages.length, 22);
+  const {requests, snapshot, history: saved} = first.output;
+  for (const request of requests)
+    assert.match(JSON.stringify(request[0]), /context-compacted.*user goals; unfinished task/);
+  assert.deepEqual(requests[1]!.slice(-3), [
+    {role: "user", content: "continue"},
+    {role: "assistant", content: "done"},
+    {role: "user", content: "and then?"},
+  ]);
+  assert.equal(snapshot.summary, "user goals; unfinished task remains");
+  assert.equal(saved.messages.length, 64);
   const replay = await runHandler(handler, {replay: first.journal});
   assert.deepEqual(replay.output, first.output);
   assert.equal(summaries, 1);
 });
 
-void test("a failed compactor never removes history or installs a partial checkpoint", async () => {
-  const {store} = memoryStore();
-  const convo = new LazyStateConversation({
-    store,
-    compaction: {
-      model: function* () {
-        throw new Error("summarizer failed");
-      },
-      policy: {maxMessages: 4, retainMessages: 2},
-    },
+/** A conversation long enough that a run compacts it before its first step, with
+ * an agent whose input and one note fit retainTokens. */
+function* compactingConversation() {
+  const convo = new LazyStateConversation({store: memoryStore().store});
+  const long = (role: "user" | "assistant", i: number): Message => ({
+    role,
+    content: `${role} ${i} ${"x".repeat(400)}`,
   });
-  await r.execute(
-    context(),
-    (function* () {
-      yield* convo.append(pairs(4), 0);
-      try {
-        yield* convo.compact();
-        assert.fail("must fail");
-      } catch (error) {
-        assert.match(String(error), /summarizer failed/);
-      }
-      assert.deepEqual((yield* convo.load()).messages, pairs(4));
-    })(),
+  yield* convo.append(
+    [0, 1, 2].flatMap((i) => [long("user", i), long("assistant", i)]),
+    0,
   );
-});
-
-/** A conversation long enough that a run compacts it before its first step. */
-function* compactingConversation(onSummary: () => void) {
-  const {store} = memoryStore();
-  const convo = new LazyStateConversation({
-    store,
-    compaction: {
-      model: function* () {
-        onSummary();
-        return {type: "final", text: "summary"};
-      },
-      policy: {maxMessages: 2, retainMessages: 1},
-    },
-  });
-  yield* convo.append(pairs(3), 0);
   return convo;
 }
+const compactingWith = (onSummary: () => void) => ({
+  maxTokens: 200,
+  retainTokens: 80,
+  *model(): r.Operation<ModelResponse> {
+    onSummary();
+    return {type: "final", text: "summary"};
+  },
+});
 
-void test("beforeRun can stop the run before all model work, including automatic compaction", async () => {
+void test("beforeRun can stop the run before all model work, including compaction", async () => {
   let summarized = false;
   const a = agent({
+    compaction: compactingWith(() => (summarized = true)),
     *beforeRun() {
       throw new AgentTerminalError("This request is out of scope");
     },
@@ -310,7 +262,7 @@ void test("beforeRun can stop the run before all model work, including automatic
     r.execute(
       context(),
       (function* () {
-        const convo = yield* compactingConversation(() => (summarized = true));
+        const convo = yield* compactingConversation();
         return yield* a.run("go", {conversation: convo});
       })(),
     ),
@@ -319,10 +271,11 @@ void test("beforeRun can stop the run before all model work, including automatic
   assert.equal(summarized, false);
 });
 
-void test("a beforeRun rejection reaches the model after automatic compaction", async () => {
+void test("a beforeRun rejection reaches the model after compaction", async () => {
   let summarized = false;
   let seen: Message[] = [];
   const a = agent({
+    compaction: compactingWith(() => (summarized = true)),
     *beforeRun() {
       return "Not today";
     },
@@ -331,16 +284,24 @@ void test("a beforeRun rejection reaches the model after automatic compaction", 
       return {type: "final", text: "Sorry, I can't help with that."};
     },
   });
-  const result = await r.execute(
+  const {result, stored} = await r.execute(
     context(),
     (function* () {
-      const convo = yield* compactingConversation(() => (summarized = true));
-      return yield* a.run("go", {conversation: convo});
+      const convo = yield* compactingConversation();
+      const result = yield* a.run("go", {conversation: convo});
+      return {result, stored: yield* convo.load()};
     })(),
   );
   assert.equal(summarized, true);
-  // Compaction rebuilt the history, and the note still follows the input.
-  assert.deepEqual(seen.slice(-2), [
+  // The summary is stored in place of the earlier turns; the rejection note is not.
+  assert.equal(stored.summary, "summary");
+  assert.deepEqual(stored.messages, [
+    {role: "user", content: "go"},
+    {role: "assistant", content: "Sorry, I can't help with that."},
+  ]);
+  // The summary replaced the earlier turns, and the note still follows the input.
+  assert.match(JSON.stringify(seen[0]), /context-compacted/);
+  assert.deepEqual(seen.slice(1), [
     {role: "user", content: "go"},
     {
       role: "user",
@@ -349,4 +310,75 @@ void test("a beforeRun rejection reaches the model after automatic compaction", 
     },
   ]);
   assert.doesNotMatch(JSON.stringify(result.messages), /Not today/);
+});
+
+void test("a truncation keeps the stored summary, and stores nothing", async () => {
+  let seen: Message[] = [];
+  const a = agent({
+    // Without compaction, a request that would not fit the window is truncated.
+    maxOutputTokens: 100,
+    contextWindow: 300,
+    *model(request) {
+      seen = request.messages;
+      return {type: "final", text: "done"};
+    },
+  });
+  const stored = await r.execute(
+    context(),
+    (function* () {
+      const convo = new LazyStateConversation({store: memoryStore().store});
+      // The two messages the summary keeps are too long to survive the truncation.
+      yield* convo.append(
+        [
+          ...pairs(2),
+          {role: "user", content: "x".repeat(400)},
+          {role: "assistant", content: "y".repeat(400)},
+        ],
+        0,
+      );
+      yield* convo.storeSummary("the stored summary", 2, 6);
+      yield* a.run("next", {conversation: convo});
+      return yield* convo.load();
+    })(),
+  );
+  const note = JSON.parse((seen[0] as {content: string}).content);
+  assert.equal(note.type, "context-truncated");
+  assert.equal(note.handoff, "the stored summary");
+  assert.deepEqual(seen.slice(1), [{role: "user", content: "next"}]);
+  assert.equal(stored.summary, "the stored summary");
+  assert.equal(stored.messages.length, 4);
+});
+
+void test("a conversation without storeSummary keeps working, and each run summarizes again", async () => {
+  let summaries = 0;
+  const a = agent({
+    compaction: {
+      maxTokens: 60,
+      retainTokens: 20,
+      *model() {
+        summaries++;
+        return {type: "final", text: "summary"};
+      },
+    },
+    *model() {
+      return {type: "final", text: "done"};
+    },
+  });
+  const loaded = await r.execute(
+    context(),
+    (function* () {
+      const inner = new LazyStateConversation({store: memoryStore().store});
+      const plain: Conversation = {
+        load: () => inner.load(),
+        append: (messages, version) => inner.append(messages, version),
+      };
+      yield* inner.append(pairs(5), 0);
+      yield* a.run("first", {conversation: plain});
+      yield* a.run("second", {conversation: plain});
+      return yield* inner.load();
+    })(),
+  );
+  assert.equal(summaries, 2);
+  assert.equal(loaded.summary, undefined);
+  assert.equal(loaded.messages.length, 14);
 });

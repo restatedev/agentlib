@@ -1092,51 +1092,54 @@ void test("agent() rejects tools no run could list when it is defined", () => {
   );
 });
 
-void test("a failed conversation compaction lets the run continue with the history it loaded", async () => {
+void test("a failed summary lets a conversation's run continue, and stores no summary", async () => {
   const history: Message[] = [
-    {role: "user", content: "first"},
-    {role: "assistant", content: "one"},
+    {role: "user", content: "first ".repeat(40)},
+    {role: "assistant", content: "one ".repeat(40)},
     {role: "user", content: "second"},
     {role: "assistant", content: "two"},
   ];
-  const compactingWith = (failure: () => never) => {
-    const {store} = memoryStore();
-    return new LazyStateConversation({
-      store,
+  let seen: Message[] = [];
+  // The loaded history outgrows maxTokens before the first step; the last
+  // turn and the input fit retainTokens.
+  const compactingWith = (failure: () => never) =>
+    agent({
+      *model(request) {
+        seen = request.messages;
+        return done;
+      },
       compaction: {
+        maxTokens: 60,
+        retainTokens: 20,
         *model() {
           return failure();
         },
-        policy: {maxMessages: 2, retainMessages: 1},
       },
     });
-  };
-  let seen: Message[] = [];
-  const a = agent({
-    *model(request) {
-      seen = request.messages;
-      return done;
-    },
-  });
-  const result = await r.execute(
+  const {result, stored} = await r.execute(
     ctx(),
     (function* () {
-      const conversation = compactingWith(fail);
+      const conversation = new LazyStateConversation({store: memoryStore().store});
       yield* conversation.append(history, 0);
-      return yield* a.run("third", {conversation});
+      const result = yield* compactingWith(fail).run("third", {conversation});
+      return {result, stored: yield* conversation.load()};
     })(),
   );
   assert.equal(result.status, "completed");
-  assert.deepEqual(seen, [...history, {role: "user", content: "third"}]);
+  // The run truncated its view instead, and a truncation is never stored.
+  assert.match(JSON.stringify(seen[0]), /context-truncated/);
+  assert.deepEqual(seen.slice(1), [...history.slice(2), {role: "user", content: "third"}]);
+  assert.equal(stored.summary, undefined);
+  assert.equal(stored.messages.length, 6);
 
   // An AgentTerminalError from the compaction model still fails the run.
   await assert.rejects(
     r.execute(
       ctx(),
       (function* () {
-        const conversation = compactingWith(stop);
+        const conversation = new LazyStateConversation({store: memoryStore().store});
         yield* conversation.append(history, 0);
-        return yield* a.run("third", {conversation});
+        return yield* compactingWith(stop).run("third", {conversation});
       })(),
     ),
     {name: "AgentTerminalError"},
