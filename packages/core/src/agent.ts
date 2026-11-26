@@ -9,8 +9,8 @@ import {checkTool} from "./tool-catalog.js";
 export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): Agent<C, O> {
   // A tool no run could list fails here, at startup, rather than in every run.
   for (const [name, definition] of Object.entries(options.tools ?? {})) checkTool(name, definition);
-  const maxSteps = positiveInteger(options.maxSteps ?? 100, "maxSteps");
-  const maxToolCalls = positiveInteger(options.maxToolCalls ?? 256, "maxToolCalls");
+  const maxSteps = positiveInteger(options.maxSteps ?? 10, "maxSteps");
+  const maxToolCalls = positiveInteger(options.maxToolCalls ?? 128, "maxToolCalls");
   const maxToolDepth = positiveInteger(options.maxToolDepth ?? 16, "maxToolDepth");
   // Unset, it is left out of requests, so each provider picks the limit.
   const maxOutputTokens =

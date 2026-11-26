@@ -342,9 +342,8 @@ export type AgentOptions<Context, Output = string> = {
   model: Model;
   tools?: Record<string, Tool<Context>>;
   instructions?: string | ((context: RunContext<Context>) => Operation<string>);
-  /** Maximum number of planning model calls, including the final answer. Default: 100. */
+  /** Maximum number of planning model calls, including the final answer. Default: 10. */
   maxSteps?: number;
-  /** Maximum number of tool calls in a run, including the calls a program makes. Default: 256. */
   maxToolCalls?: number;
   maxToolDepth?: number;
   maxOutputChars?: number;

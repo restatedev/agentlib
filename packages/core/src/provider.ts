@@ -57,8 +57,9 @@ export type ProviderOptions = {
 };
 /** A response that stopped before it finished, for example at a content filter,
  * goes back to the model as a note, with another step to try again. A reply cut
- * off at the output token limit (`length`) is returned instead, as `cut_off`:
- * asking again would most likely be cut off again. */
+ * off at the output token limit (see `reachedLimit`) is returned instead, as
+ * `cut_off`: asking again would most likely be cut off again. Callers check the
+ * limit first, so a reply that used it all is a cut-off whatever its finish reason. */
 function finished(reason: string | undefined, usage: ModelUsage | undefined) {
   if (reason === "stop" || reason === "tool-calls" || reason === "length") return;
   let message = `The response ended before it was complete (${reason ?? "unknown"}).`;
@@ -345,8 +346,8 @@ function reachedLimit(
 async function generate(settings: GenerateSettings, wantsOutput: boolean): Promise<Generation> {
   const result = await generateText(settings);
   const usage = modelUsage(result.usage);
-  finished(result.finishReason, usage);
   const cutOff = reachedLimit(result.finishReason, settings, usage);
+  if (!cutOff) finished(result.finishReason, usage);
   const calls = toolCalls(result.toolCalls, cutOff);
   // A cut-off reply's output is incomplete, so it is never parsed.
   const output = wantsOutput && !cutOff && !calls.length ? result.output : undefined;
@@ -377,8 +378,8 @@ async function stream(
   const finishReason = await result.finishReason;
   const rawUsage = await result.usage;
   const usage = modelUsage(rawUsage);
-  finished(finishReason, usage);
   const cutOff = reachedLimit(finishReason, settings, usage);
+  if (!cutOff) finished(finishReason, usage);
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls, cutOff);
   const output = wantsOutput && !cutOff && !calls.length ? await result.output : undefined;
@@ -502,12 +503,12 @@ export function aiModel(options: ProviderOptions): Model {
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
         const usage = error.usage && modelUsage(error.usage);
-        finished(error.finishReason, usage);
         const text = error.text ?? "";
         // generateText parses the output before generate() can check the limit,
         // so output cut off with another finish reason arrives here.
         if (reachedLimit(error.finishReason, settings, usage))
           return {type: "cut_off", text, ...(usage ? {usage} : {})};
+        finished(error.finishReason, usage);
         return {
           type: "final",
           text,

@@ -553,17 +553,24 @@ void test("cut-off text longer than maxOutputChars is clipped as recorded", asyn
   });
 });
 
-for (const streaming of [false, true]) {
-  void test(`a reply that used the whole output limit counts as cut off whatever its finish reason (${streaming ? "stream" : "generate"})`, async () => {
-    // DeepInfra, streaming, reports tool_calls for a reply cut off inside a call,
-    // with the call's arguments closed early into valid JSON.
+// DeepInfra, streaming, reports tool_calls for a reply cut off inside a call, with
+// the call's arguments closed early into valid JSON. A reply that used the whole
+// limit is a cut-off before any other finish reason, also one that is a note otherwise.
+const limitReasons = [
+  {unified: "tool-calls", raw: "tool_calls"},
+  {unified: "content-filter", raw: "content_filter"},
+  {unified: "other", raw: "unknown"},
+] as const;
+for (const [streaming, finishReason] of [false, true].flatMap((s) =>
+  limitReasons.map((reason) => [s, reason] as const),
+)) {
+  void test(`a reply that used the whole output limit counts as cut off whatever its finish reason (${finishReason.unified}, ${streaming ? "stream" : "generate"})`, async () => {
     const call = {
       type: "tool-call" as const,
       toolCallId: "w1",
       toolName: "write",
       input: JSON.stringify({path: "a.txt"}),
     };
-    const finishReason = {unified: "tool-calls" as const, raw: "tool_calls"};
     const full = {...usage, outputTokens: {total: 300, text: 300, reasoning: 0}};
     const provider = new MockLanguageModelV4({
       doGenerate: async () => ({content: [call], finishReason, usage: full, warnings: []}),

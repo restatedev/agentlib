@@ -14,7 +14,7 @@ import {z} from "zod";
 const assistant = agent({
   model, // see models-and-testing.md
   instructions: "Answer briefly.",
-  maxSteps: 6, // model calls per run, including the final answer (default 100)
+  maxSteps: 6, // model calls per run, including the final answer (default 10)
 });
 
 export const hello = restate.service({
@@ -173,7 +173,7 @@ const writer = agent({
 
 `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, and
 `maxOutputTokens` bound a run. `maxSteps` is a loop bound, not a retry
-count. Using up `maxSteps` (default 100) or `maxToolCalls` (default 256,
+count. Using up `maxSteps` (default 10) or `maxToolCalls` (default 128,
 counting calls a program makes) stops the run with a summary rather than
 failing it. `maxToolDepth` (default 16) bounds nested tool calls,
 `maxOutputTokens` each model reply, and `maxOutputChars` (default 128000) the
