@@ -28,8 +28,10 @@ export interface ConversationStore {
   get<T>(key: string): Operation<T | undefined>;
   set<T>(key: string, value: T): Operation<void>;
 }
-type Meta = {count: number; summary?: {through: number; text: string}};
-/** The longest summary `LazyStateConversation` stores. Every save rewrites it with the metadata. */
+/** The message count, and how many of the first messages the summary replaces. The
+ * summary's text has its own key, so a save does not rewrite it. */
+type Meta = {count: number; summary?: {through: number}};
+/** The longest summary `LazyStateConversation` stores. Every run that loads the conversation reads it. */
 const MAX_SUMMARY_CHARS = 64000;
 /** Another writer changed the conversation since this run loaded it. */
 export class ConversationConflictError extends TerminalError {
@@ -38,7 +40,7 @@ export class ConversationConflictError extends TerminalError {
     this.name = "ConversationConflictError";
   }
 }
-const CHUNK_SIZE = 32;
+const DEFAULT_CHUNK_SIZE = 8;
 /** The value of each key this invocation read or wrote, per store. */
 const known = contextLocal<WeakMap<ConversationStore, Map<string, unknown>>>();
 const restateStore: ConversationStore = {
@@ -53,9 +55,14 @@ const restateStore: ConversationStore = {
 /** Append-only chunks in an application-owned exclusive Virtual Object handler.
  * No constructor I/O. Use one writer per conversation.
  *
+ * Each chunk key (`<stateKey>/0`, `<stateKey>/1`, ...) holds `chunkSize` messages,
+ * 8 by default. Keep the same `chunkSize` for a stored conversation: the chunk keys
+ * follow from it, and a load that finds chunks of another size throws.
+ *
  * A run's summary (see `storeSummary`) replaces the older messages for later runs:
- * `load()` returns the summary and the messages after it. The chunks are never
- * changed, so `page()` still returns every message.
+ * `load()` returns the summary and the messages after it. The summary's text is
+ * stored under `<stateKey>/summary`, and the metadata records how many messages it
+ * replaces. The chunks are never changed, so `page()` still returns every message.
  *
  * Within one invocation, each key is read from the store at most once. Restate
  * journals every state read with its value, so a run that loads, compacts, and
@@ -68,17 +75,23 @@ export class LazyStateConversation implements Conversation {
   private readonly store: ConversationStore;
   private readonly metaKey: string;
   private readonly stateKey: string;
+  private readonly chunkSize: number;
 
   constructor(
     options: {
       metaKey?: string;
       stateKey?: string;
       store?: ConversationStore;
+      /** Messages per chunk key. Default 8. */
+      chunkSize?: number;
     } = {},
   ) {
     this.store = options.store ?? restateStore;
     this.stateKey = options.stateKey ?? "conversation";
     this.metaKey = options.metaKey ?? `${this.stateKey}/meta`;
+    this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
+    if (!Number.isSafeInteger(this.chunkSize) || this.chunkSize < 1)
+      throw new TypeError("chunkSize must be a positive safe integer");
   }
 
   private known(): Map<string, unknown> {
@@ -113,13 +126,25 @@ export class LazyStateConversation implements Conversation {
     return `${this.stateKey}/${index}`;
   }
 
+  private get summaryKey() {
+    return `${this.stateKey}/summary`;
+  }
+
   /** Messages in [from, through), read chunk by chunk. */
   private *range(from: number, through: number): Operation<Message[]> {
+    const size = this.chunkSize;
     const messages: Message[] = [];
-    for (let i = Math.floor(from / CHUNK_SIZE); i < Math.ceil(through / CHUNK_SIZE); i++) {
+    for (let i = Math.floor(from / size); i < Math.ceil(through / size); i++) {
       const chunk = yield* this.read<Message[]>(this.key(i));
       if (!chunk) throw new ConversationConflictError(`Missing conversation chunk: ${i}`);
-      const offset = i * CHUNK_SIZE;
+      const offset = i * size;
+      // A chunk of another size was stored with another chunkSize; reading it with
+      // this one would return the wrong messages.
+      if (chunk.length > size || chunk.length < Math.min(size, through - offset))
+        throw new ConversationConflictError(
+          `Conversation chunk ${i} has ${chunk.length} messages, which does not match ` +
+            `chunkSize ${size}. Use the chunkSize the conversation was stored with.`,
+        );
       messages.push(...chunk.slice(Math.max(0, from - offset), through - offset));
     }
     return structuredClone(messages);
@@ -127,10 +152,16 @@ export class LazyStateConversation implements Conversation {
 
   *load(): Operation<ConversationSnapshot> {
     const meta = yield* this.meta();
+    let summary: string | undefined;
+    if (meta.summary) {
+      summary = yield* this.read<string>(this.summaryKey);
+      if (summary === undefined)
+        throw new ConversationConflictError("Missing conversation summary");
+    }
     const range = yield* this.range(meta.summary?.through ?? 0, meta.count);
     // It may end with calls that are still running.
     const messages = history(range, {unfinished: true});
-    return {messages, version: meta.count, ...(meta.summary ? {summary: meta.summary.text} : {})};
+    return {messages, version: meta.count, ...(summary !== undefined ? {summary} : {})};
   }
 
   *append(messages: readonly Message[], expectedVersion: number): Operation<number> {
@@ -142,12 +173,12 @@ export class LazyStateConversation implements Conversation {
     if (!additions.length) return meta.count;
     let offset = 0;
     while (offset < additions.length) {
-      const index = Math.floor(meta.count / CHUNK_SIZE);
-      const used = meta.count % CHUNK_SIZE;
+      const index = Math.floor(meta.count / this.chunkSize);
+      const used = meta.count % this.chunkSize;
       const chunk = used ? yield* this.read<Message[]>(this.key(index)) : [];
       if (!chunk || chunk.length !== used)
         throw new ConversationConflictError("Invalid conversation tail");
-      const next = additions.slice(offset, offset + CHUNK_SIZE - used);
+      const next = additions.slice(offset, offset + this.chunkSize - used);
       yield* this.write(this.key(index), [...chunk, ...next]);
       offset += next.length;
       meta.count += next.length;
@@ -166,9 +197,10 @@ export class LazyStateConversation implements Conversation {
   }
 
   /** Replaces every saved message except the newest `keep` with `summary` for later
-   * runs. The chunks keep every message, so `page()` still returns them. Returns false
-   * when another writer appended since `expectedVersion`, or when the stored summary
-   * already covers as many messages. */
+   * runs. The summary's text goes to its own key and the metadata records how many
+   * messages it replaces. The chunks keep every message, so `page()` still returns
+   * them. Returns false when another writer appended since `expectedVersion`, or when
+   * the stored summary already covers as many messages. */
   *storeSummary(summary: string, keep: number, expectedVersion: number): Operation<boolean> {
     if (!summary.trim() || summary.length > MAX_SUMMARY_CHARS)
       throw new TypeError(`A conversation summary must have 1 to ${MAX_SUMMARY_CHARS} characters`);
@@ -181,7 +213,8 @@ export class LazyStateConversation implements Conversation {
     // The kept messages must be a valid history on their own. They may end with
     // calls that are still running.
     history(yield* this.range(through, meta.count), {unfinished: true});
-    yield* this.write(this.metaKey, {...meta, summary: {through, text: summary}});
+    yield* this.write(this.summaryKey, summary);
+    yield* this.write(this.metaKey, {...meta, summary: {through}});
     return true;
   }
 }

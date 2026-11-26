@@ -666,7 +666,7 @@ void test("a run reads each conversation key once, through compaction and every 
     return {type: "final", text: "twenty earlier questions"};
   };
   const conversation = new LazyStateConversation({store});
-  // Two chunks of history, written by an earlier invocation.
+  // Five chunks of history, written by an earlier invocation.
   await execute(function* () {
     yield* new LazyStateConversation({store}).append(pairs(20), 0);
   });
@@ -698,6 +698,9 @@ void test("a run reads each conversation key once, through compaction and every 
     "conversation/meta": 1,
     "conversation/0": 1,
     "conversation/1": 1,
+    "conversation/2": 1,
+    "conversation/3": 1,
+    "conversation/4": 1,
   });
   await execute(function* () {
     assert.deepEqual((yield* conversation.page(40)).messages, [

@@ -100,12 +100,64 @@ void test("a conversation lazily persists chunks and supplies history across emb
       history(snapshot.messages);
     })(),
   );
-  assert.equal((values.get("convo/0") as Message[]).length, 32);
-  assert.equal((values.get("convo/1") as Message[]).length, 10);
+  // Eight messages per chunk by default.
+  const chunks = [0, 1, 2, 3, 4, 5].map((i) => (values.get(`convo/${i}`) as Message[]).length);
+  assert.deepEqual(chunks, [8, 8, 8, 8, 8, 2]);
+  assert.equal(values.has("convo/6"), false);
+});
+
+void test("the summary is stored under stateKey, not metaKey, so each conversation keeps its own", async () => {
+  const {store, values} = memoryStore();
+  const first = new LazyStateConversation({store, stateKey: "first", metaKey: "first-meta"});
+  const second = new LazyStateConversation({store, stateKey: "second"});
+  await r.execute(
+    context(),
+    (function* () {
+      yield* first.append(pairs(3), 0);
+      yield* second.append(pairs(3), 0);
+      assert.equal(yield* first.storeSummary("first summary", 2, 6), true);
+      assert.equal(yield* second.storeSummary("second summary", 2, 6), true);
+      assert.equal((yield* first.load()).summary, "first summary");
+      assert.equal((yield* second.load()).summary, "second summary");
+    })(),
+  );
+  assert.deepEqual([...values.keys()].sort(), [
+    "first-meta",
+    "first/0",
+    "first/summary",
+    "second/0",
+    "second/meta",
+    "second/summary",
+  ]);
+  assert.deepEqual(values.get("first-meta"), {count: 6, summary: {through: 4}});
+  assert.equal(values.get("first/summary"), "first summary");
+  assert.equal(values.get("second/summary"), "second summary");
+});
+
+void test("chunkSize sets the messages per chunk, and a load with another chunkSize throws", async () => {
+  const {store, values} = memoryStore();
+  await r.execute(
+    context(),
+    (function* () {
+      yield* new LazyStateConversation({store, chunkSize: 3}).append(pairs(4), 0);
+      for (const chunkSize of [2, 4])
+        try {
+          yield* new LazyStateConversation({store, chunkSize}).load();
+          assert.fail("a load with another chunkSize returned messages");
+        } catch (error) {
+          assert.ok(error instanceof ConversationConflictError);
+          assert.match(String(error), /does not match chunkSize/);
+        }
+    })(),
+  );
+  const chunks = [0, 1, 2].map((i) => (values.get(`conversation/${i}`) as Message[]).length);
+  assert.deepEqual(chunks, [3, 3, 2]);
+  for (const chunkSize of [0, 1.5])
+    assert.throws(() => new LazyStateConversation({chunkSize}), TypeError);
 });
 
 void test("a stored summary replaces older messages for the next load, and page() keeps them", async () => {
-  const {store} = memoryStore();
+  const {store, values} = memoryStore();
   const convo = new LazyStateConversation({store});
   await r.execute(
     context(),
@@ -130,8 +182,12 @@ void test("a stored summary replaces older messages for the next load, and page(
       assert.equal(snapshot.version, 12);
       assert.deepEqual(snapshot.messages, pairs(2));
       assert.deepEqual((yield* convo.page()).messages, messages);
+      yield* convo.append(pairs(1), 12);
     })(),
   );
+  // The summary has its own key, so a save rewrites only the count and the boundary.
+  assert.equal(values.get("conversation/summary"), "earlier goals and results");
+  assert.deepEqual(values.get("conversation/meta"), {count: 14, summary: {through: 8}});
 });
 
 void test("a summary is stored only for the current version and a boundary that moves forward", async () => {

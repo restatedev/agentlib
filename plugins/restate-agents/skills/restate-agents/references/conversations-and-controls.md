@@ -36,7 +36,9 @@ turns never interleave.
 ## Long conversations: LazyStateConversation
 
 For long histories, pass a `conversation` instead of `messages`. It stores
-messages in chunks in object state. Set `compaction` on the agent to keep what
+messages in object state, 8 messages per state key by default. To change
+this for a new conversation, set `chunkSize`; a stored conversation must keep
+the `chunkSize` it was stored with. Set `compaction` on the agent to keep what
 the model reads short: when a run summarizes its context, it stores the summary
 in the conversation, and the next run starts from the summary and the messages
 after it (see [Long runs](#long-runs-large-results-and-compaction)):
@@ -74,14 +76,18 @@ export const aiSession = restate.object({
 });
 ```
 
-- `conversation/meta` holds the message count and the latest summary. The
-  chunk keys (`conversation/0`, `conversation/1`, ...) follow from the
-  count, and every load, append and `page()` reads the metadata key first,
-  so always preload it. With a custom `stateKey`, the key is
-  `<stateKey>/meta`; with a custom `metaKey`, list that key.
+- `conversation/meta` holds the message count and how many messages the
+  summary replaces. The chunk keys (`conversation/0`, `conversation/1`,
+  ...) follow from the count, and every load, append and `page()` reads the
+  metadata key first, so always preload it. With a custom `stateKey`, the
+  key is `<stateKey>/meta`; with a custom `metaKey`, list that key.
+- `conversation/summary` holds the latest summary's text. Saves do not
+  rewrite it, and only a run that loads a summarized conversation reads it.
+  With a custom `stateKey`, the key is `<stateKey>/summary`; a custom
+  `metaKey` does not change it.
 - Each key that is not preloaded costs a round trip to Restate when it is
-  read. Loading the conversation reads one chunk key per 32 messages since
-  the last summary.
+  read. Loading the conversation reads the summary key, if the conversation
+  has a summary, and one chunk key per 8 messages since the last summary.
 - On AWS Lambda and other serverless platforms without bidirectional
   streaming, each lazy read adds a suspension: the invocation suspends and
   replays once Restate sends the requested state.
@@ -112,7 +118,7 @@ returns the history as of the last save.
 
 Each save appends to the last one. The saved messages stay the full record:
 error notes and rejected answers never reach them. A run's summary is stored in
-`conversation/meta`, not as a message, so `page()` still returns every message.
+`conversation/summary`, not as a message, so `page()` still returns every message.
 
 Restate journals every state read with its value. Within one invocation,
 `LazyStateConversation` reads each state key at most once and keeps what it
