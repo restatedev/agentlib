@@ -696,6 +696,7 @@ void test("a run reads each conversation key once, through compaction and every 
   // The load, storing the summary, and the saves read each key once.
   assert.deepEqual(Object.fromEntries(reads), {
     "conversation/meta": 1,
+    "conversation/summary": 1,
     "conversation/0": 1,
     "conversation/1": 1,
     "conversation/2": 1,

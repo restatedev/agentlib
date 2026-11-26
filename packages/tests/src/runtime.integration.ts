@@ -1157,9 +1157,10 @@ void test(
     assert.equal(transcript.messages.length, 8);
     assert.match(JSON.stringify(transcript.messages), /message 0/);
     const state = env.stateOf(session, "one");
-    const meta = await state.get<{count: number; summary: {through: number}}>("conversation/meta");
-    assert.deepEqual(meta, {count: 8, summary: {through: 6}});
-    assert.match((await state.get<string>("conversation/summary"))!, /preserve outstanding work/);
+    assert.deepEqual(await state.get("conversation/meta"), {count: 8});
+    const summary = await state.get<{through: number; text: string}>("conversation/summary");
+    assert.equal(summary!.through, 6);
+    assert.match(summary!.text, /preserve outstanding work/);
   },
 );
 

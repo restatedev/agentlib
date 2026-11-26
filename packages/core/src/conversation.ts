@@ -28,9 +28,10 @@ export interface ConversationStore {
   get<T>(key: string): Operation<T | undefined>;
   set<T>(key: string, value: T): Operation<void>;
 }
-/** The message count, and how many of the first messages the summary replaces. The
- * summary's text has its own key, so a save does not rewrite it. */
-type Meta = {count: number; summary?: {through: number}};
+type Meta = {count: number};
+/** The summary of the first `through` messages. It has its own key, so a save does
+ * not rewrite it, and storing a summary writes only this key. */
+type Summary = {through: number; text: string};
 /** The longest summary `LazyStateConversation` stores. Every run that loads the conversation reads it. */
 const MAX_SUMMARY_CHARS = 64000;
 /** Another writer changed the conversation since this run loaded it. */
@@ -58,9 +59,9 @@ const restateStore: ConversationStore = {
  * Each chunk key (`<stateKey>/0`, `<stateKey>/1`, ...) holds 8 messages.
  *
  * A run's summary (see `storeSummary`) replaces the older messages for later runs:
- * `load()` returns the summary and the messages after it. The summary's text is
- * stored under `<stateKey>/summary`, and the metadata records how many messages it
- * replaces. The chunks are never changed, so `page()` still returns every message.
+ * `load()` returns the summary and the messages after it. The summary and the number
+ * of messages it replaces are stored under `<stateKey>/summary`. The chunks are never
+ * changed, so `page()` still returns every message.
  *
  * Within one invocation, each key is read from the store at most once. Restate
  * journals every state read with its value, so a run that loads, compacts, and
@@ -136,16 +137,11 @@ export class LazyStateConversation implements Conversation {
 
   *load(): Operation<ConversationSnapshot> {
     const meta = yield* this.meta();
-    let summary: string | undefined;
-    if (meta.summary) {
-      summary = yield* this.read<string>(this.summaryKey);
-      if (summary === undefined)
-        throw new ConversationConflictError("Missing conversation summary");
-    }
-    const range = yield* this.range(meta.summary?.through ?? 0, meta.count);
+    const summary = yield* this.read<Summary>(this.summaryKey);
+    const range = yield* this.range(summary?.through ?? 0, meta.count);
     // It may end with calls that are still running.
     const messages = history(range, {unfinished: true});
-    return {messages, version: meta.count, ...(summary !== undefined ? {summary} : {})};
+    return {messages, version: meta.count, ...(summary ? {summary: summary.text} : {})};
   }
 
   *append(messages: readonly Message[], expectedVersion: number): Operation<number> {
@@ -181,10 +177,9 @@ export class LazyStateConversation implements Conversation {
   }
 
   /** Replaces every saved message except the newest `keep` with `summary` for later
-   * runs. The summary's text goes to its own key and the metadata records how many
-   * messages it replaces. The chunks keep every message, so `page()` still returns
-   * them. Returns false when another writer appended since `expectedVersion`, or when
-   * the stored summary already covers as many messages. */
+   * runs. The chunks keep every message, so `page()` still returns them. Returns false
+   * when another writer appended since `expectedVersion`, or when the stored summary
+   * already covers as many messages. */
   *storeSummary(summary: string, keep: number, expectedVersion: number): Operation<boolean> {
     if (!summary.trim() || summary.length > MAX_SUMMARY_CHARS)
       throw new TypeError(`A conversation summary must have 1 to ${MAX_SUMMARY_CHARS} characters`);
@@ -193,12 +188,12 @@ export class LazyStateConversation implements Conversation {
     const meta = yield* this.meta();
     if (meta.count !== expectedVersion) return false;
     const through = meta.count - keep;
-    if (through <= (meta.summary?.through ?? 0)) return false;
+    const stored = yield* this.read<Summary>(this.summaryKey);
+    if (through <= (stored?.through ?? 0)) return false;
     // The kept messages must be a valid history on their own. They may end with
     // calls that are still running.
     history(yield* this.range(through, meta.count), {unfinished: true});
-    yield* this.write(this.summaryKey, summary);
-    yield* this.write(this.metaKey, {...meta, summary: {through}});
+    yield* this.write(this.summaryKey, {through, text: summary} satisfies Summary);
     return true;
   }
 }

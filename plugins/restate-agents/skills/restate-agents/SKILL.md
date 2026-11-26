@@ -141,8 +141,9 @@ Restate journals. Move on only when the learner is ready.
       `finally`.
 - [ ] An agent with long or large conversations in a `LazyStateConversation`
       preloads only small keys on its object, such as
-      `options.state: {preload: ["conversation/meta", "active"]}`. Otherwise
-      Restate sends the full history with every invocation of the object.
+      `options.state: {preload: ["conversation/meta", "conversation/summary", "active"]}`.
+      Otherwise Restate sends the full history with every invocation of the
+      object.
       On serverless platforms, each lazy read adds a suspension, so keep the
       default for short conversations. See
       `references/conversations-and-controls.md`.

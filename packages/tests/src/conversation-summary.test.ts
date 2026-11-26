@@ -293,9 +293,8 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
       );
     }
     const loaded = yield* conversation.load();
-    const throughAtLoad =
-      (values.get("conversation/meta") as {summary?: {through: number}} | undefined)?.summary
-        ?.through ?? 0;
+    type Stored = {through: number; text: string} | undefined;
+    const throughAtLoad = (values.get("conversation/summary") as Stored)?.through ?? 0;
     let messages: Message[];
     try {
       const result = yield* a.run(`turn ${seed}.${turn}`, {
@@ -318,8 +317,9 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
       messages = messagesOf(error)!;
     }
     assert.deepEqual(violations, [], where(turn));
-    const meta = values.get("conversation/meta") as {count: number; summary?: {through: number}};
-    const through = meta.summary?.through ?? 0;
+    const meta = values.get("conversation/meta") as {count: number};
+    const stored = values.get("conversation/summary") as Stored;
+    const through = stored?.through ?? 0;
     if (through > throughAtLoad) stats.stored++;
     const saved = (yield* conversation.page(0, 1000)).messages;
     assert.equal(saved.length, meta.count, where(turn));
@@ -336,11 +336,7 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
     const next = yield* conversation.load();
     assert.deepEqual(next.messages, saved.slice(through), where(turn));
     history(next.messages);
-    assert.equal(
-      next.summary,
-      meta.summary ? values.get("conversation/summary") : undefined,
-      where(turn),
-    );
+    assert.equal(next.summary, stored?.text, where(turn));
     if (loaded.summary !== undefined) assert.ok(through >= throughAtLoad, where(turn));
   }
 }

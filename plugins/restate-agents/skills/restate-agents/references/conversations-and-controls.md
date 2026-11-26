@@ -60,40 +60,42 @@ conversation has many turns or large messages, such as long tool results,
 every invocation of the object receives the entire history, although a run
 loads only the chunks after the last summary. Short conversations do not
 need this; keep the default for them. For agents with long or large
-conversations, list the keys to preload: the conversation's metadata key and
-your own small keys. Restate fetches every other key, including each chunk,
-when it is read:
+conversations, list the keys to preload: the conversation's metadata and
+summary keys, and your own small keys. Restate fetches every other key,
+including each chunk, when it is read:
 
 ```ts
 export const aiSession = restate.object({
   name: "AiSession",
   handlers: {doTurn, history, steer, interrupt},
   options: {
-    state: {preload: ["conversation/meta", "active"]}, // chunks are read on demand
+    // Chunks are read on demand. "active" is this app's key for the running turn.
+    state: {preload: ["conversation/meta", "conversation/summary", "active"]},
     handlers: {history: {shared: true}, steer: {shared: true}, interrupt: {shared: true}},
   },
 });
 ```
 
-- `conversation/meta` holds the message count and how many messages the
-  summary replaces. The chunk keys (`conversation/0`, `conversation/1`,
-  ...) follow from the count, and every load, append and `page()` reads the
-  metadata key first, so always preload it. With a custom `stateKey`, the
-  key is `<stateKey>/meta`; with a custom `metaKey`, list that key.
-- `conversation/summary` holds the latest summary's text. Saves do not
-  rewrite it, and only a run that loads a summarized conversation reads it.
-  With a custom `stateKey`, the key is `<stateKey>/summary`; a custom
-  `metaKey` does not change it.
+- `conversation/meta` holds the message count. The chunk keys
+  (`conversation/0`, `conversation/1`, ...) follow from the count, and every
+  load, append and `page()` reads the metadata key first, so always preload
+  it. With a custom `stateKey`, the key is `<stateKey>/meta`; with a custom
+  `metaKey`, list that key.
+- `conversation/summary` holds the latest summary and how many messages it
+  replaces. Every load reads it to find the first message to load, so
+  preload it too. Saves do not rewrite it. With a custom `stateKey`, the key
+  is `<stateKey>/summary`; a custom `metaKey` does not change it.
 - Each key that is not preloaded costs a round trip to Restate when it is
-  read. Loading the conversation reads the summary key, if the conversation
-  has a summary, and one chunk key per 8 messages since the last summary.
+  read. Loading the conversation reads one chunk key per 8 messages since
+  the last summary.
 - On AWS Lambda and other serverless platforms without bidirectional
   streaming, each lazy read adds a suspension: the invocation suspends and
   replays once Restate sends the requested state.
 - A list of keys requires Restate 1.8 or later: an older server rejects the
   deployment at registration because it does not support
   `eagerStateKeysWhitelist`. On older servers, use
-  `state: {preload: false}`; the metadata key is then read lazily as well.
+  `state: {preload: false}`; the metadata and summary keys are then read
+  lazily as well.
 - To set it for one handler only, put `state` in `options.handlers`. The
   deprecated `enableLazyState: true` equals `state: {preload: false}`.
 

@@ -129,9 +129,9 @@ void test("the summary is stored under stateKey, not metaKey, so each conversati
     "second/meta",
     "second/summary",
   ]);
-  assert.deepEqual(values.get("first-meta"), {count: 6, summary: {through: 4}});
-  assert.equal(values.get("first/summary"), "first summary");
-  assert.equal(values.get("second/summary"), "second summary");
+  assert.deepEqual(values.get("first-meta"), {count: 6});
+  assert.deepEqual(values.get("first/summary"), {through: 4, text: "first summary"});
+  assert.deepEqual(values.get("second/summary"), {through: 4, text: "second summary"});
 });
 
 void test("a stored summary replaces older messages for the next load, and page() keeps them", async () => {
@@ -163,9 +163,12 @@ void test("a stored summary replaces older messages for the next load, and page(
       yield* convo.append(pairs(1), 12);
     })(),
   );
-  // The summary has its own key, so a save rewrites only the count and the boundary.
-  assert.equal(values.get("conversation/summary"), "earlier goals and results");
-  assert.deepEqual(values.get("conversation/meta"), {count: 14, summary: {through: 8}});
+  // The summary has its own key, so a save rewrites only the count.
+  assert.deepEqual(values.get("conversation/summary"), {
+    through: 8,
+    text: "earlier goals and results",
+  });
+  assert.deepEqual(values.get("conversation/meta"), {count: 14});
 });
 
 void test("a summary is stored only for the current version and a boundary that moves forward", async () => {
