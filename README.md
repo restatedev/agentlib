@@ -195,7 +195,10 @@ records the reply's reasoning and partial text in its history, marked
 `cutOff`, and gives each complete tool call in the reply a failed result
 without running it. Like any failed run, it saves its conversation with a note
 on the failure, and `messagesOf(error)` returns the same history. A replay of
-the invocation ends the same way.
+the invocation ends the same way. When you set `maxOutputTokens`, a reply that
+uses the whole limit counts as cut off, whatever finish reason the provider
+reports: some providers report a tool call for a reply cut off inside one, with
+its arguments closed early.
 
 ## Skills for coding agents
 

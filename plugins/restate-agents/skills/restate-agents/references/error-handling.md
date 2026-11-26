@@ -257,7 +257,10 @@ model may be looping. Before it fails, the run records the reply in its
 history, marked `cutOff: true`, with its reasoning and its text up to
 `maxOutputChars`. Each complete tool call in the reply gets a failed result
 with code `cut_off` and never runs; a call whose arguments were cut off is
-dropped. The run then keeps its history like any failed run (see
+dropped. With `maxOutputTokens` set, a reply that uses the whole limit counts
+as cut off whatever finish reason the provider reports, because some providers
+report a cut-off tool call as a complete one. The run then keeps its history
+like any failed run (see
 [What a failed run keeps](#what-a-failed-run-keeps)). `aiModel` returns the
 reply as a `cut_off` response, which the journal records, so a replay fails
 the same way without calling the provider. A custom model can return

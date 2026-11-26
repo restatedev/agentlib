@@ -327,16 +327,27 @@ function settingsFor(
   };
 }
 
+/** Whether a reply was cut off at the output token limit. Some providers report
+ * another finish reason for a reply cut off inside a tool call, with the call's
+ * arguments closed early into valid JSON (DeepInfra, streaming, reports
+ * `tool_calls`), so a reply that used the whole limit counts as cut off too:
+ * its calls never run. */
+function reachedLimit(reason: string, settings: GenerateSettings, usage: ModelUsage | undefined) {
+  if (reason === "length") return true;
+  const limit = settings.maxOutputTokens;
+  return limit !== undefined && usage !== undefined && usage.outputTokens >= limit;
+}
+
 async function generate(settings: GenerateSettings, wantsOutput: boolean): Promise<Generation> {
   const result = await generateText(settings);
   const usage = modelUsage(result.usage);
   finished(result.finishReason, usage);
-  const cutOff = result.finishReason === "length";
+  const cutOff = reachedLimit(result.finishReason, settings, usage);
   const calls = toolCalls(result.toolCalls, cutOff);
   // A cut-off reply's output is incomplete, so it is never parsed.
   const output = wantsOutput && !cutOff && !calls.length ? result.output : undefined;
   return {
-    finishReason: result.finishReason,
+    finishReason: cutOff ? "length" : result.finishReason,
     text: result.text,
     calls,
     reasoning: responseReasoning(result.responseMessages, result.usage),
@@ -363,13 +374,13 @@ async function stream(
   const rawUsage = await result.usage;
   const usage = modelUsage(rawUsage);
   finished(finishReason, usage);
-  const cutOff = finishReason === "length";
+  const cutOff = reachedLimit(finishReason, settings, usage);
   const text = await result.text;
   const calls = toolCalls(await result.toolCalls, cutOff);
   const output = wantsOutput && !cutOff && !calls.length ? await result.output : undefined;
   const reasoning = responseReasoning(await result.responseMessages, rawUsage);
   await options.onChunk?.({type: "finish"}, info);
-  return {finishReason, text, calls, reasoning, output, usage};
+  return {finishReason: cutOff ? "length" : finishReason, text, calls, reasoning, output, usage};
 }
 
 /** Gemini reuses a text-block ID across signed segments. Give each segment its

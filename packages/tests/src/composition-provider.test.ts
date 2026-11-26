@@ -553,6 +553,77 @@ void test("cut-off text longer than maxOutputChars is clipped as recorded", asyn
   });
 });
 
+for (const streaming of [false, true]) {
+  void test(`a reply that used the whole output limit counts as cut off whatever its finish reason (${streaming ? "stream" : "generate"})`, async () => {
+    // DeepInfra, streaming, reports tool_calls for a reply cut off inside a call,
+    // with the call's arguments closed early into valid JSON.
+    const call = {
+      type: "tool-call" as const,
+      toolCallId: "w1",
+      toolName: "write",
+      input: JSON.stringify({path: "a.txt"}),
+    };
+    const finishReason = {unified: "tool-calls" as const, raw: "tool_calls"};
+    const full = {...usage, outputTokens: {total: 300, text: 300, reasoning: 0}};
+    const provider = new MockLanguageModelV4({
+      doGenerate: async () => ({content: [call], finishReason, usage: full, warnings: []}),
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+          chunks: [
+            {type: "stream-start", warnings: []},
+            call,
+            {type: "finish", finishReason, usage: full},
+          ],
+        }),
+      }),
+    });
+    const writes: unknown[] = [];
+    const a = agent({
+      model: aiModel({model: provider, ...(streaming ? {onChunk: async () => {}} : {})}),
+      maxOutputTokens: 300,
+      tools: {
+        write: tool({
+          description: "Write a file",
+          input: z.object({path: z.string(), content: z.string().optional()}),
+          *execute(input) {
+            writes.push(input);
+            return "written";
+          },
+        }),
+      },
+    });
+    const {output} = await runHandler((context: Context) =>
+      r.execute(
+        context,
+        (function* () {
+          try {
+            yield* a.run("write it");
+            return {failed: false};
+          } catch (error) {
+            if (!(error instanceof AgentTerminalError)) throw error;
+            return {message: error.message, history: messagesOf(error)};
+          }
+        })(),
+      ),
+    );
+    assert.match(output.message, /cut off at the output token limit/);
+    assert.deepEqual(writes, []);
+    // The call is recorded with a failed result instead of running.
+    assert.deepEqual(output.history[2], {
+      role: "tool",
+      callId: "w1",
+      name: "write",
+      result: {
+        status: "error",
+        code: "cut_off",
+        message: "Not run: the reply was cut off at the output token limit",
+      },
+    });
+  });
+}
+
 void test("maxOutputTokens reaches the provider only when set", async () => {
   const limits: (number | undefined)[] = [];
   const provider = new MockLanguageModelV4({

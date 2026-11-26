@@ -330,7 +330,9 @@ export type AgentOptions<Context, Output = string> = {
    * the provider's own default applies; `@ai-sdk/gateway` forwards the request
    * and Vercel AI Gateway decides. Set it when you expect long replies.
    *
-   * A reply cut off at the limit fails the run with an `AgentTerminalError`.
+   * A reply cut off at the limit fails the run with an `AgentTerminalError`. A
+   * reply that uses the whole limit counts as cut off, whatever finish reason the
+   * provider reports: some report a tool call for a reply cut off inside one.
    * Before it fails, the run records the reply's reasoning and text, up to
    * `maxOutputChars`, marked `cutOff`, and each of its complete tool calls with
    * a failed result, without running it. Like any failed run, it saves this
