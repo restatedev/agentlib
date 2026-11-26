@@ -40,7 +40,7 @@ export class ConversationConflictError extends TerminalError {
     this.name = "ConversationConflictError";
   }
 }
-const DEFAULT_CHUNK_SIZE = 8;
+const CHUNK_SIZE = 8;
 /** The value of each key this invocation read or wrote, per store. */
 const known = contextLocal<WeakMap<ConversationStore, Map<string, unknown>>>();
 const restateStore: ConversationStore = {
@@ -55,9 +55,7 @@ const restateStore: ConversationStore = {
 /** Append-only chunks in an application-owned exclusive Virtual Object handler.
  * No constructor I/O. Use one writer per conversation.
  *
- * Each chunk key (`<stateKey>/0`, `<stateKey>/1`, ...) holds `chunkSize` messages,
- * 8 by default. Keep the same `chunkSize` for a stored conversation: the chunk keys
- * follow from it, and a load that finds chunks of another size throws.
+ * Each chunk key (`<stateKey>/0`, `<stateKey>/1`, ...) holds 8 messages.
  *
  * A run's summary (see `storeSummary`) replaces the older messages for later runs:
  * `load()` returns the summary and the messages after it. The summary's text is
@@ -75,23 +73,17 @@ export class LazyStateConversation implements Conversation {
   private readonly store: ConversationStore;
   private readonly metaKey: string;
   private readonly stateKey: string;
-  private readonly chunkSize: number;
 
   constructor(
     options: {
       metaKey?: string;
       stateKey?: string;
       store?: ConversationStore;
-      /** Messages per chunk key. Default 8. */
-      chunkSize?: number;
     } = {},
   ) {
     this.store = options.store ?? restateStore;
     this.stateKey = options.stateKey ?? "conversation";
     this.metaKey = options.metaKey ?? `${this.stateKey}/meta`;
-    this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
-    if (!Number.isSafeInteger(this.chunkSize) || this.chunkSize < 1)
-      throw new TypeError("chunkSize must be a positive safe integer");
   }
 
   private known(): Map<string, unknown> {
@@ -132,19 +124,11 @@ export class LazyStateConversation implements Conversation {
 
   /** Messages in [from, through), read chunk by chunk. */
   private *range(from: number, through: number): Operation<Message[]> {
-    const size = this.chunkSize;
     const messages: Message[] = [];
-    for (let i = Math.floor(from / size); i < Math.ceil(through / size); i++) {
+    for (let i = Math.floor(from / CHUNK_SIZE); i < Math.ceil(through / CHUNK_SIZE); i++) {
       const chunk = yield* this.read<Message[]>(this.key(i));
       if (!chunk) throw new ConversationConflictError(`Missing conversation chunk: ${i}`);
-      const offset = i * size;
-      // A chunk of another size was stored with another chunkSize; reading it with
-      // this one would return the wrong messages.
-      if (chunk.length > size || chunk.length < Math.min(size, through - offset))
-        throw new ConversationConflictError(
-          `Conversation chunk ${i} has ${chunk.length} messages, which does not match ` +
-            `chunkSize ${size}. Use the chunkSize the conversation was stored with.`,
-        );
+      const offset = i * CHUNK_SIZE;
       messages.push(...chunk.slice(Math.max(0, from - offset), through - offset));
     }
     return structuredClone(messages);
@@ -173,12 +157,12 @@ export class LazyStateConversation implements Conversation {
     if (!additions.length) return meta.count;
     let offset = 0;
     while (offset < additions.length) {
-      const index = Math.floor(meta.count / this.chunkSize);
-      const used = meta.count % this.chunkSize;
+      const index = Math.floor(meta.count / CHUNK_SIZE);
+      const used = meta.count % CHUNK_SIZE;
       const chunk = used ? yield* this.read<Message[]>(this.key(index)) : [];
       if (!chunk || chunk.length !== used)
         throw new ConversationConflictError("Invalid conversation tail");
-      const next = additions.slice(offset, offset + this.chunkSize - used);
+      const next = additions.slice(offset, offset + CHUNK_SIZE - used);
       yield* this.write(this.key(index), [...chunk, ...next]);
       offset += next.length;
       meta.count += next.length;

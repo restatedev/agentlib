@@ -36,12 +36,11 @@ turns never interleave.
 ## Long conversations: LazyStateConversation
 
 For long histories, pass a `conversation` instead of `messages`. It stores
-messages in object state, 8 messages per state key by default. To change
-this for a new conversation, set `chunkSize`; a stored conversation must keep
-the `chunkSize` it was stored with. Set `compaction` on the agent to keep what
-the model reads short: when a run summarizes its context, it stores the summary
-in the conversation, and the next run starts from the summary and the messages
-after it (see [Long runs](#long-runs-large-results-and-compaction)):
+messages in object state, 8 messages per state key. Set `compaction` on the
+agent to keep what the model reads short: when a run summarizes its context,
+it stores the summary in the conversation, and the next run starts from the
+summary and the messages after it (see
+[Long runs](#long-runs-large-results-and-compaction)):
 
 ```ts
 const support = agent({model, instructions, tools, compaction: {maxTokens: 64000}});

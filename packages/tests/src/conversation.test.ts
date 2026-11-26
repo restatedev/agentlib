@@ -134,28 +134,6 @@ void test("the summary is stored under stateKey, not metaKey, so each conversati
   assert.equal(values.get("second/summary"), "second summary");
 });
 
-void test("chunkSize sets the messages per chunk, and a load with another chunkSize throws", async () => {
-  const {store, values} = memoryStore();
-  await r.execute(
-    context(),
-    (function* () {
-      yield* new LazyStateConversation({store, chunkSize: 3}).append(pairs(4), 0);
-      for (const chunkSize of [2, 4])
-        try {
-          yield* new LazyStateConversation({store, chunkSize}).load();
-          assert.fail("a load with another chunkSize returned messages");
-        } catch (error) {
-          assert.ok(error instanceof ConversationConflictError);
-          assert.match(String(error), /does not match chunkSize/);
-        }
-    })(),
-  );
-  const chunks = [0, 1, 2].map((i) => (values.get(`conversation/${i}`) as Message[]).length);
-  assert.deepEqual(chunks, [3, 3, 2]);
-  for (const chunkSize of [0, 1.5])
-    assert.throws(() => new LazyStateConversation({chunkSize}), TypeError);
-});
-
 void test("a stored summary replaces older messages for the next load, and page() keeps them", async () => {
   const {store, values} = memoryStore();
   const convo = new LazyStateConversation({store});
