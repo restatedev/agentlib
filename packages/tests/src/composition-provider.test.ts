@@ -624,6 +624,45 @@ for (const streaming of [false, true]) {
   });
 }
 
+void test("structured output that used the whole output limit counts as cut off whatever its finish reason", async () => {
+  // generateText parses the output itself, so unparsable output fails there,
+  // before the adapter sees the reply's usage.
+  let requests = 0;
+  const provider = new MockLanguageModelV4({
+    doGenerate: async () => {
+      requests++;
+      return {
+        content: [{type: "text", text: '{"answer":"unfini'}],
+        finishReason: {unified: "stop", raw: "stop"},
+        usage: {...usage, outputTokens: {total: 300, text: 300, reasoning: 0}},
+        warnings: [],
+      };
+    },
+  });
+  const a = agent({
+    model: aiModel({model: provider}),
+    maxOutputTokens: 300,
+    output: z.object({answer: z.string()}),
+  });
+  const {output} = await runHandler((context: Context) =>
+    r.execute(
+      context,
+      (function* () {
+        try {
+          yield* a.run("go");
+          return {failed: false};
+        } catch (error) {
+          return {terminal: isAgentTerminal(error), message: (error as Error).message};
+        }
+      })(),
+    ),
+  );
+  assert.equal(output.terminal, true);
+  assert.match(output.message, /cut off at the output token limit/);
+  // A cut-off is not retried as a schema mismatch.
+  assert.equal(requests, 1);
+});
+
 void test("maxOutputTokens reaches the provider only when set", async () => {
   const limits: (number | undefined)[] = [];
   const provider = new MockLanguageModelV4({

@@ -332,7 +332,11 @@ function settingsFor(
  * arguments closed early into valid JSON (DeepInfra, streaming, reports
  * `tool_calls`), so a reply that used the whole limit counts as cut off too:
  * its calls never run. */
-function reachedLimit(reason: string, settings: GenerateSettings, usage: ModelUsage | undefined) {
+function reachedLimit(
+  reason: string | undefined,
+  settings: GenerateSettings,
+  usage: ModelUsage | undefined,
+) {
   if (reason === "length") return true;
   const limit = settings.maxOutputTokens;
   return limit !== undefined && usage !== undefined && usage.outputTokens >= limit;
@@ -500,7 +504,9 @@ export function aiModel(options: ProviderOptions): Model {
         const usage = error.usage && modelUsage(error.usage);
         finished(error.finishReason, usage);
         const text = error.text ?? "";
-        if (error.finishReason === "length")
+        // generateText parses the output before generate() can check the limit,
+        // so output cut off with another finish reason arrives here.
+        if (reachedLimit(error.finishReason, settings, usage))
           return {type: "cut_off", text, ...(usage ? {usage} : {})};
         return {
           type: "final",
