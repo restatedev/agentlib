@@ -316,6 +316,7 @@ void test("a truncation keeps the stored summary, and stores nothing", async () 
   let seen: Message[] = [];
   const a = agent({
     // Without compaction, a request that would not fit the window is truncated.
+    compaction: false,
     maxOutputTokens: 100,
     contextWindow: 300,
     *model(request) {

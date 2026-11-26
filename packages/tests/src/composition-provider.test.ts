@@ -13,6 +13,7 @@ import {
   LazyStateConversation,
   tool,
   usageOf,
+  messagesOf,
   type ModelRequest,
   type ModelResponse,
 } from "@restatedev/agentlib";
@@ -337,6 +338,17 @@ void test("AI SDK provider adapter forwards instructions and schemas and replays
   assert.equal(requests, 1);
 });
 
+// The note every failed run ends its history with, here for a cut-off reply.
+const cutOffNote = {
+  role: "user",
+  content: JSON.stringify({
+    source: "agent-runtime",
+    type: "run-failed",
+    message:
+      "The model's reply was cut off at the output token limit. Raise maxOutputTokens if the reply needs more room; otherwise the model may be looping.",
+  }),
+};
+
 for (const streaming of [false, true]) {
   void test(`a cut-off reply ends the run and keeps its reasoning, text and complete calls (${streaming ? "stream" : "generate"})`, async () => {
     let requests = 0;
@@ -412,7 +424,12 @@ for (const streaming of [false, true]) {
           } catch (error) {
             if (!(error instanceof AgentTerminalError)) throw error;
             const saved = yield* conversation.load();
-            return {message: error.message, usage: usageOf(error), messages: saved.messages};
+            return {
+              message: error.message,
+              usage: usageOf(error),
+              history: messagesOf(error),
+              messages: saved.messages,
+            };
           }
         })(),
       );
@@ -425,7 +442,9 @@ for (const streaming of [false, true]) {
       code: "cut_off",
       message: "Not run: the reply was cut off at the output token limit",
     };
-    // The run saves the reply, marked cut off, without the call it cut off part way.
+    // The run saves the reply, marked cut off, without the call it cut off part
+    // way, and ends with the failed run's note. messagesOf returns the same history.
+    assert.deepEqual(live.output.history, live.output.messages);
     const [input, reply, ...results] = live.output.messages;
     assert.deepEqual(input, {role: "user", content: "write"});
     assert.equal(reply.role, "assistant");
@@ -439,6 +458,7 @@ for (const streaming of [false, true]) {
     assert.deepEqual(results, [
       {role: "tool", callId: "complete", name: "write", result},
       {role: "tool", callId: "mistyped", name: "write", result},
+      cutOffNote,
     ]);
     // The journaled reply ends a replay the same way, without asking the provider.
     const replay = await runHandler(handler, {replay: live.journal});
@@ -478,11 +498,13 @@ void test("a later run continues from a cut-off reply's saved history", async ()
   );
   const result = await r.execute(ctx(), a.run("second", {conversation}));
   assert.equal(result.output, "done");
-  // The next request is valid: the cut-off call is answered before the new input.
+  // The next request is valid: the cut-off call is answered, and the failed run's
+  // note comes before the new input.
   assert.deepEqual(
     requests[1]!.messages.map((message) => message.role),
-    ["user", "assistant", "tool", "user"],
+    ["user", "assistant", "tool", "user", "user"],
   );
+  assert.deepEqual(requests[1]!.messages[3], cutOffNote);
   assert.equal(
     requests[1]!.messages[1]!.role === "assistant" && requests[1]!.messages[1]!.cutOff,
     true,
@@ -500,7 +522,7 @@ void test("a cut-off reply with nothing in it saves no assistant message", async
     name: "AgentTerminalError",
   });
   const saved = await r.execute(ctx(), conversation.load());
-  assert.deepEqual(saved.messages, [{role: "user", content: "go"}]);
+  assert.deepEqual(saved.messages, [{role: "user", content: "go"}, cutOffNote]);
 });
 
 void test("cut-off text longer than maxOutputChars is clipped as recorded", async () => {
