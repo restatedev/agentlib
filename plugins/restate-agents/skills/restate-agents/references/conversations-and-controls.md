@@ -36,59 +36,71 @@ turns never interleave.
 ## Long conversations: LazyStateConversation
 
 For long histories, pass a `conversation` instead of `messages`. It stores
-messages in chunks in object state. Set `compaction` on the agent to keep what
-the model reads short: when a run summarizes its context, it stores the summary
-in the conversation, and the next run starts from the summary and the messages
-after it (see [Long runs](#long-runs-large-results-and-compaction)):
+messages in object state, 8 messages per state key. Set `compaction` on the
+agent to keep what the model reads short: when a run summarizes its context,
+it stores the summary in the conversation, and the next run starts from the
+summary and the messages after it (see
+[Long runs](#long-runs-large-results-and-compaction)). Preload the
+conversation's metadata and summary keys on the object, and let Restate read
+the message chunks when a handler needs them:
 
 ```ts
 const support = agent({model, instructions, tools, compaction: {maxTokens: 64000}});
 
-const conversation = new LazyStateConversation();
-const result = yield* support.run(message, {conversation});
-```
-
-Read it from a shared handler with `yield* new LazyStateConversation().page()`.
-
-**Preload only small keys for long or large conversations.** By default,
-Restate sends a snapshot of all of the object's state when each invocation
-starts, including invocations of shared handlers such as `steer` and
-`status`. Compaction changes what the model reads, not what is stored: every
-chunk stays in state so `page()` can return the full history. Once a
-conversation has many turns or large messages, such as long tool results,
-every invocation of the object receives the entire history, although a run
-loads only the chunks after the last summary. Short conversations do not
-need this; keep the default for them. For agents with long or large
-conversations, list the keys to preload: the conversation's metadata key and
-your own small keys. Restate fetches every other key, including each chunk,
-when it is read:
-
-```ts
 export const aiSession = restate.object({
   name: "AiSession",
-  handlers: {doTurn, history, steer, interrupt},
+  handlers: {
+    *doTurn(message: string) {
+      const conversation = new LazyStateConversation();
+      const result = yield* support.run(message, {conversation});
+      if (result.status !== "completed") return result.output ?? result.reason;
+      return result.output;
+    },
+    // The saved conversation, including a turn that is still running.
+    *history() {
+      return yield* new LazyStateConversation().page();
+    },
+  },
   options: {
-    state: {preload: ["conversation/meta", "active"]}, // chunks are read on demand
-    handlers: {history: {shared: true}, steer: {shared: true}, interrupt: {shared: true}},
+    // Message chunks are read on demand.
+    state: {preload: ["conversation/meta", "conversation/summary"]},
+    handlers: {history: {shared: true}},
   },
 });
 ```
 
-- `conversation/meta` holds the message count and the latest summary. The
-  chunk keys (`conversation/0`, `conversation/1`, ...) follow from the
-  count, and every load, append and `page()` reads the metadata key first,
-  so always preload it. With a custom `stateKey`, the key is
-  `<stateKey>/meta`; with a custom `metaKey`, list that key.
+**Preload only small keys.** By default, Restate sends a snapshot of all of
+the object's state when each invocation starts, including invocations of
+shared handlers such as `history`. Compaction changes what the model reads,
+not what is stored: every chunk stays in state so `page()` can return the full
+history. Without a preload list, every invocation of the object receives the
+entire history, although a run loads only the chunks after the last summary.
+With the list, Restate sends only the listed keys and fetches every other key,
+including each chunk, when it is read. Add your own small keys to the list,
+such as the `active` key in
+[Steer and interrupt a running turn](#steer-and-interrupt-a-running-turn).
+
+- `conversation/meta` holds the message count. The chunk keys
+  (`conversation/0`, `conversation/1`, ...) follow from the count, and every
+  load, append and `page()` reads the metadata key first, so always preload
+  it. With a custom `stateKey`, the key is `<stateKey>/meta`; with a custom
+  `metaKey`, list that key.
+- `conversation/summary` holds the latest summary and how many messages it
+  replaces. Every load reads it to find the first message to load, so
+  preload it too. Saves do not rewrite it. With a custom `stateKey`, the key
+  is `<stateKey>/summary`; a custom `metaKey` does not change it.
 - Each key that is not preloaded costs a round trip to Restate when it is
-  read. Loading the conversation reads one chunk key per 32 messages since
+  read. Loading the conversation reads one chunk key per 8 messages since
   the last summary.
 - On AWS Lambda and other serverless platforms without bidirectional
   streaming, each lazy read adds a suspension: the invocation suspends and
-  replays once Restate sends the requested state.
+  replays once Restate sends the requested state. If your conversations stay
+  short there, preloading all state (the default) can cost less.
 - A list of keys requires Restate 1.8 or later: an older server rejects the
   deployment at registration because it does not support
   `eagerStateKeysWhitelist`. On older servers, use
-  `state: {preload: false}`; the metadata key is then read lazily as well.
+  `state: {preload: false}`; the metadata and summary keys are then read
+  lazily as well.
 - To set it for one handler only, put `state` in `options.handlers`. The
   deprecated `enableLazyState: true` equals `state: {preload: false}`.
 
@@ -112,7 +124,7 @@ returns the history as of the last save.
 
 Each save appends to the last one. The saved messages stay the full record:
 error notes and rejected answers never reach them. A run's summary is stored in
-`conversation/meta`, not as a message, so `page()` still returns every message.
+`conversation/summary`, not as a message, so `page()` still returns every message.
 
 Restate journals every state read with its value. Within one invocation,
 `LazyStateConversation` reads each state key at most once and keeps what it

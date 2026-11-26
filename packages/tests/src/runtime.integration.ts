@@ -1156,12 +1156,11 @@ void test(
     const transcript = await convo.history();
     assert.equal(transcript.messages.length, 8);
     assert.match(JSON.stringify(transcript.messages), /message 0/);
-    const meta = await env
-      .stateOf(session, "one")
-      .get<{count: number; summary: {through: number; text: string}}>("conversation/meta");
-    assert.equal(meta!.count, 8);
-    assert.equal(meta!.summary.through, 6);
-    assert.match(meta!.summary.text, /preserve outstanding work/);
+    const state = env.stateOf(session, "one");
+    assert.deepEqual(await state.get("conversation/meta"), {count: 8});
+    const summary = await state.get<{through: number; text: string}>("conversation/summary");
+    assert.equal(summary!.through, 6);
+    assert.match(summary!.text, /preserve outstanding work/);
   },
 );
 

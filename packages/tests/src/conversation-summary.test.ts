@@ -293,9 +293,8 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
       );
     }
     const loaded = yield* conversation.load();
-    const throughAtLoad =
-      (values.get("conversation/meta") as {summary?: {through: number}} | undefined)?.summary
-        ?.through ?? 0;
+    type Stored = {through: number; text: string} | undefined;
+    const throughAtLoad = (values.get("conversation/summary") as Stored)?.through ?? 0;
     let messages: Message[];
     try {
       const result = yield* a.run(`turn ${seed}.${turn}`, {
@@ -318,11 +317,9 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
       messages = messagesOf(error)!;
     }
     assert.deepEqual(violations, [], where(turn));
-    const meta = values.get("conversation/meta") as {
-      count: number;
-      summary?: {through: number; text: string};
-    };
-    const through = meta.summary?.through ?? 0;
+    const meta = values.get("conversation/meta") as {count: number};
+    const stored = values.get("conversation/summary") as Stored;
+    const through = stored?.through ?? 0;
     if (through > throughAtLoad) stats.stored++;
     const saved = (yield* conversation.page(0, 1000)).messages;
     assert.equal(saved.length, meta.count, where(turn));
@@ -339,7 +336,7 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
     const next = yield* conversation.load();
     assert.deepEqual(next.messages, saved.slice(through), where(turn));
     history(next.messages);
-    assert.equal(next.summary, meta.summary?.text, where(turn));
+    assert.equal(next.summary, stored?.text, where(turn));
     if (loaded.summary !== undefined) assert.ok(through >= throughAtLoad, where(turn));
   }
 }
@@ -350,43 +347,6 @@ const read = tool({
   *execute(_input, context) {
     return `page ${context.callId} ${"x".repeat(400)}`;
   },
-});
-
-void test("a summary written by an earlier version of the library loads as the run's note", async () => {
-  const {store, values} = memoryStore();
-  // Conversation compaction stored its summary in the same place, before this change.
-  values.set("conversation/0", [
-    {role: "user", content: "question 0"},
-    {role: "assistant", content: "answer 0"},
-    {role: "user", content: "question 1"},
-    {role: "assistant", content: "answer 1"},
-  ]);
-  values.set("conversation/meta", {count: 4, summary: {through: 2, text: "asked about zero"}});
-  let seen: Message[] = [];
-  const a = agent({
-    *model(request) {
-      seen = request.messages;
-      return {type: "final", text: "answer 2"};
-    },
-  });
-  const result = await r.execute(
-    testContext("legacy"),
-    a.run("question 2", {conversation: new LazyStateConversation({store})}),
-  );
-  const note = runtimeNote(seen[0]);
-  assert.equal(note.type, "context-compacted");
-  assert.equal(note.handoff, "asked about zero");
-  assert.deepEqual(seen.slice(1).map(key), [
-    "user|question 1|",
-    "assistant|answer 1|[]",
-    "user|question 2|",
-  ]);
-  // The returned messages are the ones the run loaded and added, without the note.
-  assert.equal(result.messages.length, 4);
-  assert.deepEqual(values.get("conversation/meta"), {
-    count: 6,
-    summary: {through: 2, text: "asked about zero"},
-  });
 });
 
 void test("a summary too long to store is logged, and the next run summarizes again", async () => {

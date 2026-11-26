@@ -28,8 +28,11 @@ export interface ConversationStore {
   get<T>(key: string): Operation<T | undefined>;
   set<T>(key: string, value: T): Operation<void>;
 }
-type Meta = {count: number; summary?: {through: number; text: string}};
-/** The longest summary `LazyStateConversation` stores. Every save rewrites it with the metadata. */
+type Meta = {count: number};
+/** The summary of the first `through` messages. It has its own key, so a save does
+ * not rewrite it, and storing a summary writes only this key. */
+type Summary = {through: number; text: string};
+/** The longest summary `LazyStateConversation` stores. Every run that loads the conversation reads it. */
 const MAX_SUMMARY_CHARS = 64000;
 /** Another writer changed the conversation since this run loaded it. */
 export class ConversationConflictError extends TerminalError {
@@ -38,7 +41,7 @@ export class ConversationConflictError extends TerminalError {
     this.name = "ConversationConflictError";
   }
 }
-const CHUNK_SIZE = 32;
+const CHUNK_SIZE = 8;
 /** The value of each key this invocation read or wrote, per store. */
 const known = contextLocal<WeakMap<ConversationStore, Map<string, unknown>>>();
 const restateStore: ConversationStore = {
@@ -53,8 +56,11 @@ const restateStore: ConversationStore = {
 /** Append-only chunks in an application-owned exclusive Virtual Object handler.
  * No constructor I/O. Use one writer per conversation.
  *
+ * Each chunk key (`<stateKey>/0`, `<stateKey>/1`, ...) holds 8 messages.
+ *
  * A run's summary (see `storeSummary`) replaces the older messages for later runs:
- * `load()` returns the summary and the messages after it. The chunks are never
+ * `load()` returns the summary and the messages after it. The summary and the number
+ * of messages it replaces are stored under `<stateKey>/summary`. The chunks are never
  * changed, so `page()` still returns every message.
  *
  * Within one invocation, each key is read from the store at most once. Restate
@@ -113,6 +119,10 @@ export class LazyStateConversation implements Conversation {
     return `${this.stateKey}/${index}`;
   }
 
+  private get summaryKey() {
+    return `${this.stateKey}/summary`;
+  }
+
   /** Messages in [from, through), read chunk by chunk. */
   private *range(from: number, through: number): Operation<Message[]> {
     const messages: Message[] = [];
@@ -127,10 +137,11 @@ export class LazyStateConversation implements Conversation {
 
   *load(): Operation<ConversationSnapshot> {
     const meta = yield* this.meta();
-    const range = yield* this.range(meta.summary?.through ?? 0, meta.count);
+    const summary = yield* this.read<Summary>(this.summaryKey);
+    const range = yield* this.range(summary?.through ?? 0, meta.count);
     // It may end with calls that are still running.
     const messages = history(range, {unfinished: true});
-    return {messages, version: meta.count, ...(meta.summary ? {summary: meta.summary.text} : {})};
+    return {messages, version: meta.count, ...(summary ? {summary: summary.text} : {})};
   }
 
   *append(messages: readonly Message[], expectedVersion: number): Operation<number> {
@@ -177,11 +188,12 @@ export class LazyStateConversation implements Conversation {
     const meta = yield* this.meta();
     if (meta.count !== expectedVersion) return false;
     const through = meta.count - keep;
-    if (through <= (meta.summary?.through ?? 0)) return false;
+    const stored = yield* this.read<Summary>(this.summaryKey);
+    if (through <= (stored?.through ?? 0)) return false;
     // The kept messages must be a valid history on their own. They may end with
     // calls that are still running.
     history(yield* this.range(through, meta.count), {unfinished: true});
-    yield* this.write(this.metaKey, {...meta, summary: {through, text: summary}});
+    yield* this.write(this.summaryKey, {through, text: summary} satisfies Summary);
     return true;
   }
 }

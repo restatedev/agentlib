@@ -100,12 +100,42 @@ void test("a conversation lazily persists chunks and supplies history across emb
       history(snapshot.messages);
     })(),
   );
-  assert.equal((values.get("convo/0") as Message[]).length, 32);
-  assert.equal((values.get("convo/1") as Message[]).length, 10);
+  // Eight messages per chunk by default.
+  const chunks = [0, 1, 2, 3, 4, 5].map((i) => (values.get(`convo/${i}`) as Message[]).length);
+  assert.deepEqual(chunks, [8, 8, 8, 8, 8, 2]);
+  assert.equal(values.has("convo/6"), false);
+});
+
+void test("the summary is stored under stateKey, not metaKey, so each conversation keeps its own", async () => {
+  const {store, values} = memoryStore();
+  const first = new LazyStateConversation({store, stateKey: "first", metaKey: "first-meta"});
+  const second = new LazyStateConversation({store, stateKey: "second"});
+  await r.execute(
+    context(),
+    (function* () {
+      yield* first.append(pairs(3), 0);
+      yield* second.append(pairs(3), 0);
+      assert.equal(yield* first.storeSummary("first summary", 2, 6), true);
+      assert.equal(yield* second.storeSummary("second summary", 2, 6), true);
+      assert.equal((yield* first.load()).summary, "first summary");
+      assert.equal((yield* second.load()).summary, "second summary");
+    })(),
+  );
+  assert.deepEqual([...values.keys()].sort(), [
+    "first-meta",
+    "first/0",
+    "first/summary",
+    "second/0",
+    "second/meta",
+    "second/summary",
+  ]);
+  assert.deepEqual(values.get("first-meta"), {count: 6});
+  assert.deepEqual(values.get("first/summary"), {through: 4, text: "first summary"});
+  assert.deepEqual(values.get("second/summary"), {through: 4, text: "second summary"});
 });
 
 void test("a stored summary replaces older messages for the next load, and page() keeps them", async () => {
-  const {store} = memoryStore();
+  const {store, values} = memoryStore();
   const convo = new LazyStateConversation({store});
   await r.execute(
     context(),
@@ -130,8 +160,15 @@ void test("a stored summary replaces older messages for the next load, and page(
       assert.equal(snapshot.version, 12);
       assert.deepEqual(snapshot.messages, pairs(2));
       assert.deepEqual((yield* convo.page()).messages, messages);
+      yield* convo.append(pairs(1), 12);
     })(),
   );
+  // The summary has its own key, so a save rewrites only the count.
+  assert.deepEqual(values.get("conversation/summary"), {
+    through: 8,
+    text: "earlier goals and results",
+  });
+  assert.deepEqual(values.get("conversation/meta"), {count: 14});
 });
 
 void test("a summary is stored only for the current version and a boundary that moves forward", async () => {
