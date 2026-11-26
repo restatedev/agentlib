@@ -191,14 +191,8 @@ applies, and `@ai-sdk/gateway` forwards the request for Vercel AI Gateway to
 decide. Set `maxOutputTokens` when you expect long replies.
 
 A reply cut off at the output token limit fails the run with an
-`AgentTerminalError`: either the reply needs a higher `maxOutputTokens`, or the
-model is looping. The run first records the reply in its history, marked
-`cutOff: true`: its reasoning, its text up to `maxOutputChars`, and each
-complete tool call with a failed result (code `cut_off`) instead of running it.
-A call whose arguments were cut off is dropped. Like any failed run, it saves
-this history to its conversation, and `messagesOf(error)` returns it, so a
-later run continues from the reply. The journal records the reply, so a replay
-fails the same way.
+`AgentTerminalError`, after the run records the reply in its history. See
+`error-handling.md` for what the run keeps.
 
 Model text over `maxOutputChars` goes back to the model with a note, and the
 model tries again in its next step. A tool's output over the limit fails the call with

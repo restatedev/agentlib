@@ -322,21 +322,12 @@ export type RunOptions<Context> = {
 export type AgentOptions<Context, Output = string> = {
   /** JSON-Schema-representable output validation; transforms are not supported. */
   output?: z.ZodType<Output>;
-  /** The most tokens a model reply may use. Unset, requests leave it out and
-   * each AI SDK provider picks the limit: `@ai-sdk/anthropic` uses the model's
-   * maximum from its own table (128,000 for recent Claude models), or 4,096
-   * for a model name it doesn't know; `@ai-sdk/openai`, `@ai-sdk/google`,
-   * `@ai-sdk/amazon-bedrock` and `@ai-sdk/openai-compatible` send no limit, so
-   * the provider's own default applies; `@ai-sdk/gateway` forwards the request
-   * and Vercel AI Gateway decides. Set it when you expect long replies.
-   *
-   * A reply cut off at the limit fails the run with an `AgentTerminalError`. A
-   * reply that uses the whole limit counts as cut off, whatever finish reason the
-   * provider reports: some report a tool call for a reply cut off inside one.
-   * Before it fails, the run records the reply's reasoning and text, up to
-   * `maxOutputChars`, marked `cutOff`, and each of its complete tool calls with
-   * a failed result, without running it. Like any failed run, it saves this
-   * history to its conversation, and `messagesOf(error)` returns it. */
+  /** The most tokens a model reply may use. Unset, requests leave it out and the
+   * model's AI SDK provider picks the limit, which differs per provider (see the
+   * README). Set it when you expect long replies. A reply cut off at the limit,
+   * including one that uses the whole limit whatever its finish reason, fails the
+   * run with an `AgentTerminalError` after the run records it in its history (see
+   * `ModelCutOffResponse`). */
   maxOutputTokens?: number;
   name?: string;
   model: Model;

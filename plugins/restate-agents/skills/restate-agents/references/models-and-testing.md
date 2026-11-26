@@ -133,14 +133,9 @@ as `stopped`. The journal records the failed call, so a replay repeats the step
 without calling the provider.
 
 A reply cut off at the output token limit fails the run with an
-`AgentTerminalError` instead. With `maxOutputTokens` set, a reply that uses the
-whole limit counts as cut off whatever finish reason the provider reports: some
-providers report a tool call for a reply cut off inside one, with its arguments
-closed early, and such a call must not run. `aiModel` returns it as a `cut_off` response,
-which the journal records; the run keeps the reply's reasoning and text in its
-history, marked `cutOff: true`, gives its complete tool calls a failed result
-without running them, and fails. See `error-handling.md` for what a failed run
-keeps and how these failures fit the run's other error rules.
+`AgentTerminalError` instead; `aiModel` returns it as a `cut_off` response. See
+`error-handling.md` for how the run records it and how these failures fit the
+run's other error rules.
 
 ### Stream model text with `onChunk`
 
