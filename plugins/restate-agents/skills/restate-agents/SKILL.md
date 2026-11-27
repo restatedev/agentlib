@@ -93,7 +93,7 @@ Restate journals. Move on only when the learner is ready.
 
 | Goal                                                           | Use                                                                                       |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Decide between a one-shot and a conversational agent           | a service with `run(input)`, or an object with a `Conversation`; see `references/conversations-and-controls.md` |
+| Continue a conversation across requests                        | `run(input, {conversation})` in a virtual object; see `references/conversations-and-controls.md` |
 | Call an API from a tool                                        | `asyncTool` with `retry`                                                                  |
 | Compose Restate operations inside a tool (RPC, sleep, signals) | `tool` with `*execute`                                                                    |
 | Let the model call one or all handlers of a Restate service    | `handlerTool` / `serviceTool`                                                             |
@@ -140,10 +140,9 @@ Restate journals. Move on only when the learner is ready.
       never from model-supplied tool arguments.
 - [ ] Approval requests and active-turn IDs stored in state are cleared in a
       `finally`.
-- [ ] A one-shot agent runs in a service without a conversation. A
-      conversational agent runs in an exclusive object handler with a
-      `Conversation`, and agents that share an object each have
-      their own `stateKey`.
+- [ ] An agent that continues a conversation across requests runs in an
+      exclusive object handler with a `Conversation`. Agents that share an
+      object each have their own `stateKey`.
 - [ ] An agent with a `Conversation` preloads only small keys on its
       object: `conversation/meta`, `conversation/summary`, and the app's own
       small keys, such as

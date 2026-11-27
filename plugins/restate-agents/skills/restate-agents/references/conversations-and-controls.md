@@ -5,27 +5,27 @@ Lessons:
 [09_support_session.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/09_support_session.ts),
 [16_progress_feed.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/16_progress_feed.ts)
 
-## Choose a one-shot service or a conversational object
+## Run an agent in a service or a virtual object
 
-Ask two questions: does a caller send follow-up requests to the same key, and
-does a later request need what an earlier one produced? If not, the agent is
-one-shot. If so, it is conversational.
+Run the agent in a service when each request is a self-contained task. Run it
+in a virtual object with a `Conversation` when a later request to the same key
+needs what an earlier one produced, such as in a chat or a support session.
 
-|         | One-shot agent                         | Conversational agent                                              |
+|         | Service                                | Virtual object                                                    |
 | ------- | -------------------------------------- | ----------------------------------------------------------------- |
 | Handler | a `restate.service` handler            | an exclusive `restate.object` handler                             |
-| Run     | `agent.run(input)`                     | `agent.run(input, {conversation: new Conversation()})`   |
+| Run     | `agent.run(input)`                     | `agent.run(input, {conversation: new Conversation()})`            |
 | History | each request starts a new conversation | requests to the same key continue one conversation                |
 | Caller  | calls without a key                    | calls with a key that identifies the session, customer, or thread |
 
-The object runs one exclusive handler per key at a time, so each conversation
-has one writer.
+The object runs one exclusive handler per key at a time, so only one run at a
+time changes a key's conversation.
 
-- One-shot examples: [04] classifies a ticket, [07] races two agents, [08]
+- In a service: [04] classifies a ticket, [07] races two agents, [08]
   writes a research report, [11] runs a coding task in a sandbox it creates
   for the request, [13] checks a booking against a budget, [16] runs an audit
   job, and [19] writes release notes.
-- Conversational examples: [03] remembers what the user said, [09] runs a
+- In a virtual object: [03] remembers what the user said, [09] runs a
   support session, [10] handles a refund chat, [12] routes each customer's
   questions, [14] answers follow-up research questions, [17] answers
   questions about the docs, [18] serves an AG-UI thread, [20] answers
@@ -34,11 +34,11 @@ has one writer.
 
 A conversation outlives the request that started it. If the agent uses a
 resource that the request creates and releases, such as the sandbox in [11],
-later turns read history about files and processes that no longer exist. Run
-such an agent as a one-shot service, or keep one resource per key for as long
-as the key's conversation.
+later requests read history about files and processes that no longer exist.
+Run such an agent in a service, or keep one resource per key for as long as
+the key's conversation.
 
-Compaction is on by default for both kinds. It summarizes the older
+Compaction is on by default in both cases. It summarizes the older
 messages of a single long run, such as the coding task in [11]. With a
 conversation, the run also stores the summary, and later runs start from the
 summary and the messages after it. `conversation.page(from, limit)`
@@ -63,7 +63,7 @@ In [15], `PeerAuthor.revise` sends only the reviews.
   runs on its own key, `<review key>/<focus>`, so the two reviews run in
   parallel.
 
-To test a conversational agent with a fixture model, see "Testing without paid
+To test an agent that uses a `Conversation` with a fixture model, see "Testing without paid
 model calls" in [models-and-testing.md](models-and-testing.md).
 
 [03]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/03_conversation.ts
@@ -226,8 +226,7 @@ A run also accepts the earlier messages as `messages` instead of a
 `result.messages` after the run returns. Nothing is saved while the run
 runs, and no summary is stored, so each run receives the whole history
 again. For a run that throws, `messagesOf(error)` returns its history up to
-the failure, with a note on why it failed. Prefer a `Conversation`
-for conversational agents.
+the failure, with a note on why it failed. Prefer a `Conversation`.
 
 ## Long runs: large results and compaction
 
