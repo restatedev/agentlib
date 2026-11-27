@@ -16,7 +16,7 @@ import {
   isAgentTerminal,
   journaledModel,
   serviceTool,
-  LazyStateConversation,
+  Conversation,
   sleepTool,
   tool,
   ToolError,
@@ -24,7 +24,7 @@ import {
   type JsonValue,
   type ModelResponse,
   type ToolCall,
-  type Conversation,
+  type ConversationBackend,
 } from "@restatedev/agentlib";
 import {programTool} from "@restatedev/agentlib/program";
 import {restateTools} from "@restatedev/agentlib/discovery";
@@ -630,10 +630,10 @@ const session = r.object({
   name: "SdkConversation",
   handlers: {
     *persistTurn(ending: TurnEnding) {
-      const stored = new LazyStateConversation();
+      const stored = new Conversation();
       let loads = 0;
       let appends = 0;
-      const conversation: Conversation = {
+      const conversation: ConversationBackend = {
         *load() {
           loads++;
           return yield* stored.load();
@@ -703,7 +703,7 @@ const session = r.object({
       };
     },
     *approveOutput() {
-      const conversation = new LazyStateConversation();
+      const conversation = new Conversation();
       const result = yield* agent({
         *model(): r.Operation<ModelResponse> {
           return {type: "final", text: "approved answer"};
@@ -718,7 +718,7 @@ const session = r.object({
       return {result, history: yield* conversation.page()};
     },
     *reasoningPolicy(redact: boolean) {
-      const conversation = new LazyStateConversation();
+      const conversation = new Conversation();
       const reasoning = {
         items: [{type: "reasoning", text: "private thought"}],
         text: [
@@ -747,7 +747,7 @@ const session = r.object({
       return {first, history: yield* conversation.page()};
     },
     *interruptGuard() {
-      const conversation = new LazyStateConversation();
+      const conversation = new Conversation();
       const result = yield* agent({
         finalize: false,
         *model(): r.Operation<ModelResponse> {
@@ -765,7 +765,7 @@ const session = r.object({
       return {result, history: yield* conversation.page()};
     },
     *turn(input: string) {
-      const conversation = new LazyStateConversation();
+      const conversation = new Conversation();
       const a = agent({
         // Small enough that the third turn summarizes the first two and stores the summary.
         compaction: {
@@ -791,11 +791,11 @@ const session = r.object({
       return yield* a.run(input, {conversation});
     },
     *history() {
-      return yield* new LazyStateConversation().page();
+      return yield* new Conversation().page();
     },
     /** A turn whose tool waits for `release`, so a shared handler can read it mid-run. */
     *waitingTurn() {
-      const conversation = new LazyStateConversation();
+      const conversation = new Conversation();
       const result = yield* agent({
         finalize: false,
         tools: {
@@ -815,7 +815,7 @@ const session = r.object({
       return {status: result.status, messages: result.messages};
     },
     *progress() {
-      return yield* new LazyStateConversation().page();
+      return yield* new Conversation().page();
     },
     *release(invocationId: string) {
       r.invocation(invocationId).signal("release").resolve("released");

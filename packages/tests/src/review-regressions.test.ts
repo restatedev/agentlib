@@ -2,13 +2,7 @@ import assert from "node:assert/strict";
 import {test} from "node:test";
 import * as r from "@restatedev/restate-sdk-gen";
 import {z} from "zod";
-import {
-  agent,
-  handoff,
-  LazyStateConversation,
-  tool,
-  type ModelResponse,
-} from "@restatedev/agentlib";
+import {agent, handoff, Conversation, tool, type ModelResponse} from "@restatedev/agentlib";
 import {testContext, memoryStore} from "./helpers.js";
 
 const context = () => testContext("review");
@@ -19,7 +13,7 @@ const toolCall: ModelResponse = {
 };
 
 function conversation() {
-  return new LazyStateConversation({store: memoryStore().store});
+  return new Conversation({store: memoryStore().store});
 }
 
 void test("steering rejects stale tool plans before they can cause effects", async () => {

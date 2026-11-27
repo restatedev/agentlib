@@ -13,10 +13,10 @@ import {
   agent,
   AgentTerminalError,
   ContextOverflowError,
-  LazyStateConversation,
+  Conversation,
   messagesOf,
   tool,
-  type Conversation,
+  type ConversationBackend,
   type Message,
   type ModelRequest,
   type ModelResponse,
@@ -141,7 +141,7 @@ function* scenario(seed: number, stats: Stats): r.Operation<void> {
   const random = prng(seed);
   const pick = (n: number) => Math.floor(random() * n);
   const {store, values} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   const covered = new Set<string>();
   const where = (turn: number) => `seed ${seed}, turn ${turn}`;
   let turn = 0;
@@ -376,7 +376,7 @@ void test("a summary too long to store is logged, and the next run summarizes ag
   const stored = await r.execute(
     recordingContext(warnings),
     (function* () {
-      const conversation = new LazyStateConversation({store: memoryStore().store});
+      const conversation = new Conversation({store: memoryStore().store});
       yield* conversation.append(
         Array.from({length: 6}, (_, i) => ({
           role: i % 2 ? ("assistant" as const) : ("user" as const),
@@ -395,8 +395,10 @@ void test("a summary too long to store is logged, and the next run summarizes ag
 });
 
 void test("a conversation whose store fails keeps the run going; an AgentTerminalError fails it", async () => {
-  const failingWith = (error: () => Error): {conversation: Conversation; stored: string[]} => {
-    const inner = new LazyStateConversation({store: memoryStore().store});
+  const failingWith = (
+    error: () => Error,
+  ): {conversation: ConversationBackend; stored: string[]} => {
+    const inner = new Conversation({store: memoryStore().store});
     const stored: string[] = [];
     return {
       stored,
@@ -475,7 +477,7 @@ void test("a summary made to recover from an overflow is stored", async () => {
   const stored = await r.execute(
     testContext("overflow"),
     (function* () {
-      const conversation = new LazyStateConversation({store: memoryStore().store});
+      const conversation = new Conversation({store: memoryStore().store});
       yield* conversation.append(
         [
           {role: "user", content: `old question ${"x".repeat(2000)}`},
@@ -530,7 +532,7 @@ void test("a ref from a summarized earlier turn cannot be read, and the model is
   await r.execute(
     testContext("refs"),
     (function* () {
-      const conversation = new LazyStateConversation({store: memoryStore().store});
+      const conversation = new Conversation({store: memoryStore().store});
       yield* conversation.append(
         [
           {role: "user", content: `old ${"x".repeat(600)}`},
@@ -578,7 +580,7 @@ for (const ownModel of [false, true])
     const {result, stored} = await r.execute(
       testContext("rejected"),
       (function* () {
-        const conversation = new LazyStateConversation({store: memoryStore().store});
+        const conversation = new Conversation({store: memoryStore().store});
         const result = yield* a.run("What is my code?", {conversation});
         return {result, stored: yield* conversation.load()};
       })(),

@@ -9,7 +9,7 @@ import {z} from "zod";
 import {
   agent,
   journaledModel,
-  LazyStateConversation,
+  Conversation,
   tool,
   type Message,
   type Model,
@@ -162,7 +162,7 @@ void test("reasoning is saved with the conversation and comes back next turn", a
       return {type: "final", text: `Answer ${n}`, reasoning: signed(`Thought ${n}`, `s${n}`)};
     },
   });
-  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const conversation = new Conversation({store: memoryStore().store});
   await r.execute(
     context(),
     (function* () {
@@ -410,7 +410,7 @@ for (const parts of [
       r.execute(
         ctx,
         (function* () {
-          const conversation = new LazyStateConversation({store: memoryStore().store});
+          const conversation = new Conversation({store: memoryStore().store});
           const first = yield* a.run("First", {conversation});
           yield* a.run("Next", {conversation});
           return first;
@@ -463,7 +463,7 @@ for (const redact of [false, true])
       r.execute(
         ctx,
         (function* () {
-          const conversation = new LazyStateConversation({store: memoryStore().store});
+          const conversation = new Conversation({store: memoryStore().store});
           const first = yield* a.run("First", {conversation});
           yield* a.run("Next", {conversation});
           return first;
@@ -565,7 +565,7 @@ for (const {name, parts, expected, structured} of [
       r.execute(
         ctx,
         (function* () {
-          const conversation = new LazyStateConversation({store: memoryStore().store});
+          const conversation = new Conversation({store: memoryStore().store});
           const first = yield* a.run("First", {conversation});
           yield* a.run("Next", {conversation});
           return first;

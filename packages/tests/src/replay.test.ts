@@ -5,7 +5,7 @@ import {z} from "zod";
 import {
   agent,
   journaledModel,
-  LazyStateConversation,
+  Conversation,
   tool,
   type ModelRequest,
   type ModelResponse,
@@ -121,7 +121,7 @@ void test("compaction and summary calls are journaled under their own names", as
       ctx,
       (function* () {
         const {store} = memoryStore();
-        const conversation = new LazyStateConversation({store});
+        const conversation = new Conversation({store});
         yield* conversation.append(earlier, 0);
         const a = agent({
           tools: {read},

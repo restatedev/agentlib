@@ -1,6 +1,6 @@
 // 09: Keep a conversation in a keyed object and control its running turn.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool, LazyStateConversation, type ApprovalRequest} from "@restatedev/agentlib";
+import {agent, asyncTool, Conversation, type ApprovalRequest} from "@restatedev/agentlib";
 import {z} from "zod";
 import {openai} from "@ai-sdk/openai";
 import {aiModel} from "@restatedev/agentlib/provider";
@@ -62,7 +62,7 @@ export const aiSession = restate.object({
         // The conversation lives in this object's state. The turn saves to it as it
         // runs, so the shared `history` handler shows a running turn, and a failed
         // turn stays in it with a note on the failure. The agent's compaction keeps it short.
-        const conversation = new LazyStateConversation();
+        const conversation = new Conversation();
         restate.state().set("active", {invocationId: restate.handlerRequest().id});
         try {
           const result = yield* support.run(message, {
@@ -89,7 +89,7 @@ export const aiSession = restate.object({
     },
     // The saved conversation, including the turn that is running now.
     *history() {
-      return yield* new LazyStateConversation().page();
+      return yield* new Conversation().page();
     },
     steer: restate.schemas(
       {

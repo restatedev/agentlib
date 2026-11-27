@@ -1,5 +1,5 @@
 import {logger, type Operation} from "@restatedev/restate-sdk-gen";
-import type {Conversation} from "./conversation.js";
+import type {ConversationBackend} from "./conversation.js";
 import type {Message} from "./types.js";
 import {mustPropagate, RunInputError} from "./errors.js";
 import {estimateTokens} from "./context-size.js";
@@ -7,7 +7,7 @@ import {summaryNote} from "./context-compaction.js";
 import {previewMessage, type PreviewSettings} from "./tool-result-preview.js";
 import {checkProtocol, history, parseMessages} from "./validation.js";
 
-type HistorySource = {conversation?: Conversation; messages?: readonly Message[]};
+type HistorySource = {conversation?: ConversationBackend; messages?: readonly Message[]};
 
 function withNote(note: NoteMessage | undefined, transcript: Message[]): Message[] {
   if (note) transcript.unshift(note);
@@ -113,7 +113,7 @@ export class RunHistory {
     private readonly messages: Message[],
     private version: number,
     private persisted: number,
-    private readonly conversation?: Conversation,
+    private readonly conversation?: ConversationBackend,
   ) {
     this.inputAt = messages.length;
   }

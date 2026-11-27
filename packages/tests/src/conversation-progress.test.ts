@@ -10,10 +10,10 @@ import {
   agent,
   AgentTerminalError,
   ConversationConflictError,
-  LazyStateConversation,
+  Conversation,
   messagesOf,
   tool,
-  type Conversation,
+  type ConversationBackend,
   type ConversationSnapshot,
   type ConversationStore,
   type Message,
@@ -73,9 +73,9 @@ function* failure(run: r.Operation<unknown>): r.Operation<unknown> {
 
 void test("a shared reader sees each model call while the run continues", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   // Another instance on the same store stands in for a shared handler.
-  const reader = new LazyStateConversation({store});
+  const reader = new Conversation({store});
   const seen: Message[][] = [];
   await execute(function* () {
     const a = agent({
@@ -104,8 +104,8 @@ void test("a shared reader sees each model call while the run continues", async 
 
 void test("background results are saved with the next save", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
-  const reader = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
+  const reader = new Conversation({store});
   await execute(function* () {
     const gate = r.channel<void>();
     let step = 0;
@@ -147,7 +147,7 @@ void test("background results are saved with the next save", async () => {
 
 void test("a run that fails mid-batch saves its finished results, closes the rest, and says why", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     const a = agent({
       tools: {
@@ -194,7 +194,7 @@ void test("a run that fails mid-batch saves its finished results, closes the res
 
 void test("a model error fails the run, and the next run reads why", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     const failing = agent({
       tools: {
@@ -234,7 +234,7 @@ void test("a model error fails the run, and the next run reads why", async () =>
 
 void test("a retryable error saves no failure note: Restate retries the invocation", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     const a = agent({
       tools: {
@@ -265,7 +265,7 @@ void test("a retryable error saves no failure note: Restate retries the invocati
 
 void test("a cancelled invocation saves its closed calls with a cancellation note", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     const a = agent({
       tools: {
@@ -296,8 +296,8 @@ void test("a cancelled invocation saves its closed calls with a cancellation not
 
 void test("steering is saved when it arrives, and during a batch with the next save", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
-  const reader = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
+  const reader = new Conversation({store});
   await execute(function* () {
     // Channels are one-shot: one per steering message.
     const first = r.channel<string>();
@@ -367,8 +367,8 @@ void test("steering is saved when it arrives, and during a batch with the next s
 
 void test("an interrupted run saves its calls as they start and closes them when it stops", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
-  const reader = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
+  const reader = new Conversation({store});
   await execute(function* () {
     const interrupt = r.channel<string>();
     const a = agent({
@@ -398,7 +398,7 @@ void test("an interrupted run saves its calls as they start and closes them when
 
 void test("the next run closes the calls a killed run left without results", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     // A run saved its calls and one result, then its invocation was killed.
     const left = [user("pay"), calls("charge", "email"), success("charge", "ok")];
@@ -422,7 +422,7 @@ void test("the next run closes the calls a killed run left without results", asy
 
 void test("compaction at the start of a run keeps the closing results", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   const long = (i: number) => [
     user(`question ${i} ${"x".repeat(1000)}`),
     answer(`answer ${i} ${"x".repeat(1000)}`),
@@ -465,7 +465,7 @@ void test("compaction at the start of a run keeps the closing results", async ()
 
 void test("a run still rejects other broken histories, and repairs only its conversation", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     const a = agent({
       *model() {
@@ -483,9 +483,9 @@ void test("a run still rejects other broken histories, and repairs only its conv
 
 void test("a summary made mid-run is stored at the next save, so a shared reader loads it", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   // Another instance on the same store stands in for a shared handler.
-  const reader = new LazyStateConversation({store});
+  const reader = new Conversation({store});
   let midRun: ConversationSnapshot | undefined;
   await execute(function* () {
     const a = agent({
@@ -536,8 +536,8 @@ void test("a summary made mid-run is stored at the next save, so a shared reader
 
 void test("another writer fails the run's next save, which then saves no failure note", async () => {
   const {store} = memoryStore();
-  const conversation = new LazyStateConversation({store});
-  const writer = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
+  const writer = new Conversation({store});
   await execute(function* () {
     const a = agent({
       tools: {
@@ -600,9 +600,9 @@ void test("a failed run with messages exposes its history for the next run", asy
 
 void test("a run saves after each tool-call step and at the end, not after a tool batch", async () => {
   const {store} = memoryStore();
-  const stored = new LazyStateConversation({store});
+  const stored = new Conversation({store});
   const appended: number[] = [];
-  const conversation: Conversation = {
+  const conversation: ConversationBackend = {
     load: () => stored.load(),
     *append(messages, version) {
       appended.push(messages.length);
@@ -665,10 +665,10 @@ void test("a run reads each conversation key once, through compaction and every 
   const summarize: Model = function* () {
     return {type: "final", text: "twenty earlier questions"};
   };
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   // Five chunks of history, written by an earlier invocation.
   await execute(function* () {
-    yield* new LazyStateConversation({store}).append(pairs(20), 0);
+    yield* new Conversation({store}).append(pairs(20), 0);
   });
   reads.clear();
   await execute(function* () {
@@ -715,12 +715,12 @@ void test("a run reads each conversation key once, through compaction and every 
 
 void test("the next invocation reads the store again, with the same instance", async () => {
   const {store, reads} = countingStore();
-  const conversation = new LazyStateConversation({store});
+  const conversation = new Conversation({store});
   await execute(function* () {
     yield* conversation.append([user("one")], 0);
   });
   await execute(function* () {
-    yield* new LazyStateConversation({store}).append([user("two")], 1);
+    yield* new Conversation({store}).append([user("two")], 1);
   });
   await execute(function* () {
     assert.deepEqual((yield* conversation.load()).messages, [user("one"), user("two")]);

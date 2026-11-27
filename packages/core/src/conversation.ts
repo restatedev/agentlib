@@ -9,7 +9,7 @@ export type ConversationSnapshot = {messages: Message[]; version: number; summar
 /** Where a run loads its history and saves its progress. A run saves a batch's
  * tool calls before they run, so a stored history can end with calls that have no
  * results yet, and the next `append` can start with their results. */
-export interface Conversation {
+export interface ConversationBackend {
   load(): Operation<ConversationSnapshot>;
   append(messages: readonly Message[], expectedVersion: number): Operation<number>;
   /** Stores a run's summary of its context in place of every saved message except
@@ -32,7 +32,7 @@ type Meta = {count: number};
 /** The summary of the first `through` messages. It has its own key, so a save does
  * not rewrite it, and storing a summary writes only this key. */
 type Summary = {through: number; text: string};
-/** The longest summary `LazyStateConversation` stores. Every run that loads the conversation reads it. */
+/** The longest summary `Conversation` stores. Every run that loads the conversation reads it. */
 const MAX_SUMMARY_CHARS = 64000;
 /** Another writer changed the conversation since this run loaded it. */
 export class ConversationConflictError extends TerminalError {
@@ -70,7 +70,7 @@ const restateStore: ConversationStore = {
  * same store sees the writes of the others, and a replay reads them from the
  * journal again. A handler that reads within one invocation does not see
  * writes from other invocations after its first read of a key. */
-export class LazyStateConversation implements Conversation {
+export class Conversation implements ConversationBackend {
   private readonly store: ConversationStore;
   private readonly metaKey: string;
   private readonly stateKey: string;
