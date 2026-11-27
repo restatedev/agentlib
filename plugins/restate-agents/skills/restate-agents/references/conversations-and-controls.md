@@ -45,7 +45,7 @@ conversation's metadata and summary keys on the object, and let Restate read
 the message chunks when a handler needs them:
 
 ```ts
-const support = agent({model, instructions, tools, compaction: {maxTokens: 64000}});
+const support = agent({model, instructions, tools});
 
 export const aiSession = restate.object({
   name: "AiSession",
@@ -184,8 +184,9 @@ const researcher = agent({
 `maxTokens`, the run summarizes its older messages. Each summary costs a model
 call. `compaction: false` turns it off, and the run then truncates instead.
 `maxTokens` defaults to 90% of what `contextWindow` leaves for input after the
-reply, or to 170,000 tokens without `contextWindow`, which fits a window of
-200,000 tokens or more. `retainTokens` defaults to a quarter of `maxTokens`:
+reply, or to 170,000 tokens without `contextWindow`, which leaves about 30,000
+tokens for the reply in a 200,000-token window. `retainTokens` defaults to a
+quarter of `maxTokens`:
 
 ```ts
 const researcher = agent({
@@ -228,8 +229,8 @@ const researcher = agent({
   `AgentTerminalError` from the compactor fails the run instead.
 
 **Set `contextWindow` to avoid overflows**, and always for a model with a
-window under 200,000 tokens: the default threshold of 170,000 tokens does not
-fit such a window. It sets the default `compaction.maxTokens`. Before
+window under 200,000 tokens: the default threshold of 170,000 tokens leaves
+such a model little or no room. It sets the default `compaction.maxTokens`. Before
 each model call, a view that would not fit the window with `maxOutputTokens`,
 or with 32,768 tokens for the reply when `maxOutputTokens` is unset, is shrunk
 first: summarized unless `compaction` is `false`, truncated otherwise, to

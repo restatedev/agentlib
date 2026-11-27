@@ -88,11 +88,13 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
 /** The view size that starts compaction when `compaction.maxTokens` is unset:
  * 90% of the room `contextWindow` leaves for input after the reply, or 170,000
  * tokens when the window is unknown. A model's window has to come from the app:
- * neither `Model` nor the AI SDK's language models carry one. 170,000 fits a
- * window of 200,000 tokens or more; a smaller model needs `contextWindow`.
- * Staying below the window check (view plus reply) lets the run ask its own
- * model for the summary at the end of its cached request, with room left for
- * the note and the summary. */
+ * neither `Model` nor the AI SDK's language models carry one. 170,000 leaves
+ * about 30,000 tokens for the reply in a 200,000-token window; a smaller model
+ * needs `contextWindow`. The 10% margin below the window check (view plus
+ * reply) usually leaves room to ask the run's own model for the summary at the
+ * end of its cached request. A step that grows the view to just below the
+ * check can still overflow that request; the compactor then counts as failed,
+ * and the run truncates. */
 function defaultCompactionTokens(
   contextWindow: number | undefined,
   maxOutputTokens: number | undefined,

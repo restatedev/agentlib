@@ -209,8 +209,9 @@ verbatim. With a `conversation`, the run stores the summary, and the next run
 starts from it.
 
 agentlib cannot read a model's context window. Without `contextWindow`,
-compaction starts at 170,000 tokens, which fits models with a window of 200,000
-tokens or more. A context that does not fit the model then shrinks only after an
+compaction starts at 170,000 tokens, which suits models with a window of 200,000
+tokens or more: in a 200,000-token window, it leaves about 30,000 tokens for the
+reply. A context that does not fit the model then shrinks only after an
 overflow error that the provider reports as such (`ContextOverflowError`). Set
 `contextWindow` for a model with a smaller window, or to make the threshold
 follow a larger one. The threshold is then 90% of what the window leaves for

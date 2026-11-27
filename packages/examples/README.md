@@ -134,7 +134,8 @@ curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '{"message":"What 
 
 Both requests use `bob`, so the second sees the first exchange. A different key gets
 its own history. This lesson stores the full history; the support-session lesson
-adds conversation compaction and lifecycle controls.
+stores it in a `Conversation`, which keeps compaction summaries, and adds
+lifecycle controls.
 
 ## 04 — Return structured data
 

@@ -405,9 +405,10 @@ export type AgentOptions<Context, Output = string> = {
    * Summarizes this run's older messages when the model's view outgrows
    * `maxTokens`. That defaults to 90% of what `contextWindow` leaves for input
    * after the reply (`maxOutputTokens`, or 32,768 tokens when it is unset), or
-   * to 170,000 without `contextWindow`, which fits a window of 200,000 tokens
-   * or more. The run cannot read a model's window, so set `contextWindow` for a
-   * smaller window, or for compaction to follow a larger one. The size is the
+   * to 170,000 without `contextWindow`, which leaves about 30,000 tokens for the
+   * reply in a 200,000-token window. The run cannot read a model's window, so
+   * set `contextWindow` for a smaller window, or for compaction to follow a
+   * larger one. The size is the
    * input tokens the model last reported plus an estimate for messages added
    * since, or an estimate of the messages, instructions and tools before any
    * report.
@@ -416,11 +417,12 @@ export type AgentOptions<Context, Output = string> = {
    * verbatim. With a `conversation`, the run stores the summary in it at the
    * next save, and the next run starts from the summary and the messages after
    * it instead of the whole history. The returned transcript keeps every
-   * message. `model` defaults to the agent's. When `model` is left out or is
-   * the agent's `Model` object itself, the run asks for the summary at the end
-   * of its last request, which the provider serves from its cache. Any other
-   * `model`, including a second `aiModel(...)` for the same provider model,
-   * gets a separate request that sends the older messages again.
+   * message. `model` defaults to the agent's. Past `maxTokens`, when `model` is
+   * left out or is the agent's `Model` object itself, the run asks for the
+   * summary at the end of its last request, which the provider serves from its
+   * cache. A view that would not fit `contextWindow`, an overflow, and any
+   * other `model`, including a second `aiModel(...)` for the same provider
+   * model, get a separate request that sends the older messages again.
    * `instructions` replaces the default guidance on what the summary covers
    * and how long it is; the run still says which messages the summary replaces
    * and asks for it. */

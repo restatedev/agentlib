@@ -791,6 +791,9 @@ void test("without maxOutputTokens, the window check leaves 32768 tokens for the
       },
       toolResults: false,
       contextWindow: 50000,
+      // Off, so only the window check acts: the default threshold would also
+      // fire past 15508 tokens.
+      compaction: false,
       ...(maxOutputTokens === undefined ? {} : {maxOutputTokens}),
       *model() {
         // About 20000 tokens in the next request: they fit beside 1000 tokens for the reply, not beside 32768.
@@ -882,6 +885,14 @@ void test("compaction is on by default and, without contextWindow, summarizes pa
     events: [],
     notes: 0,
   });
+  // The error names the resolved threshold: exactly 170000.
+  const model: Model = function* () {
+    return {type: "final", text: ""};
+  };
+  assert.throws(
+    () => agent({model, compaction: {retainTokens: 170000}}),
+    /compaction.retainTokens must be less than compaction.maxTokens \(170000\)/,
+  );
 });
 
 void test("with contextWindow, compaction starts at 90% of the room the reply leaves", async () => {
