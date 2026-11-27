@@ -39,9 +39,6 @@ const support = agent({
       },
     }),
   },
-  // Summarizes older messages once a turn's context passes 64,000 tokens. With a
-  // conversation, the summary is stored, and later turns start from it.
-  compaction: {maxTokens: 64000},
 });
 
 /** One session per key. Turns run one at a time; the shared handlers inspect and control them. */
@@ -61,7 +58,8 @@ export const aiSession = restate.object({
       function* ({message}) {
         // The conversation lives in this object's state. The turn saves to it as it
         // runs, so the shared `history` handler shows a running turn, and a failed
-        // turn stays in it with a note on the failure. The agent's compaction keeps it short.
+        // turn stays in it with a note on the failure. Compaction, on by default, keeps
+        // what the model reads short and stores its summaries in the conversation.
         const conversation = new Conversation();
         restate.state().set("active", {invocationId: restate.handlerRequest().id});
         try {

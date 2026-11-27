@@ -36,8 +36,8 @@ turns never interleave.
 ## Long conversations: the Conversation class
 
 For long histories, pass a `conversation` instead of `messages`. It stores
-messages in object state, 8 messages per state key. Set `compaction` on the
-agent to keep what the model reads short: when a run summarizes its context,
+messages in object state, 8 messages per state key. Compaction, on by
+default, keeps what the model reads short: when a run summarizes its context,
 it stores the summary in the conversation, and the next run starts from the
 summary and the messages after it (see
 [Long runs](#long-runs-large-results-and-compaction)). Preload the
@@ -45,7 +45,7 @@ conversation's metadata and summary keys on the object, and let Restate read
 the message chunks when a handler needs them:
 
 ```ts
-const support = agent({model, instructions, tools, compaction: {maxTokens: 64000}});
+const support = agent({model, instructions, tools});
 
 export const aiSession = restate.object({
   name: "AiSession",
@@ -180,16 +180,20 @@ const researcher = agent({
   the model gets an `unknown_ref` error.
 - `read_tool_result` is a reserved name while previews are on.
 
-**Compaction is opt-in**, because it costs a model call. Set `compaction` to
-summarize the run's older messages before a model call once the view passes
-`maxTokens`:
+**Compaction is on by default.** Before a model call, once the view passes
+`maxTokens`, the run summarizes its older messages. Each summary costs a model
+call. `compaction: false` turns it off, and the run then truncates instead.
+`maxTokens` defaults to 90% of what `contextWindow` leaves for input after the
+reply, or to 170,000 tokens without `contextWindow`, which leaves about 30,000
+tokens for the reply in a 200,000-token window. `retainTokens` defaults to a
+quarter of `maxTokens`:
 
 ```ts
 const researcher = agent({
   model,
   tools: {search, fetchPage},
   maxSteps: 40,
-  compaction: {maxTokens: 100000, retainTokens: 25000}, // the defaults; `model` defaults to the agent's
+  compaction: {maxTokens: 170000, retainTokens: 42500}, // the defaults without contextWindow; `model` defaults to the agent's
 });
 ```
 
@@ -224,16 +228,18 @@ const researcher = agent({
   calls. A truncation is never stored, so the next run summarizes again. An
   `AgentTerminalError` from the compactor fails the run instead.
 
-**Set `contextWindow` to avoid overflows.** Before each model call, a view
-that would not fit the window with `maxOutputTokens`, or with 32,768 tokens for
-the reply when `maxOutputTokens` is unset, is shrunk first: summarized when
-`compaction` is set, truncated otherwise, to `compaction.retainTokens` or a
-quarter of the window, whichever is smaller, and at most half of what
-instructions, tools and the reply leave. A window of 32,768 tokens or less
-needs `maxOutputTokens`.
+**Set `contextWindow` to avoid overflows**, and always for a model with a
+window under 200,000 tokens: the default threshold of 170,000 tokens leaves
+such a model little or no room. It sets the default `compaction.maxTokens`. Before
+each model call, a view that would not fit the window with `maxOutputTokens`,
+or with 32,768 tokens for the reply when `maxOutputTokens` is unset, is shrunk
+first: summarized unless `compaction` is `false`, truncated otherwise, to
+`compaction.retainTokens` or a quarter of the window, whichever is smaller,
+and at most half of what instructions, tools and the reply leave. A window of
+32,768 tokens or less needs `maxOutputTokens`.
 
 ```ts
-const researcher = agent({model, tools: {search, fetchPage}, contextWindow: 200000});
+const researcher = agent({model, tools: {search, fetchPage}, contextWindow: 128000});
 ```
 
 **Overflow recovery is always on, for overflows the model reports as such.**

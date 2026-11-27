@@ -382,10 +382,10 @@ class AgentRun<C, O> {
     }
   }
 
-  /** Shrinks the model's view: past `compaction.maxTokens`, when the next
-   * request would not fit `contextWindow`, or always after an overflow, which
-   * keeps at most half of the view. A summary comes first when compaction is
-   * set; truncation needs no model, so it is the fallback.
+  /** Shrinks the model's view: when the next request would not fit
+   * `contextWindow`, past `compaction.maxTokens`, or always after an overflow,
+   * which keeps at most half of the view. A summary comes first unless
+   * compaction is off; truncation needs no model, so it is the fallback.
    * Not raced against controls: steering and interrupts are handled once the
    * smaller view is in place, so a stopped run still has room to finalize. */
   private *compactContext(overflow = false): Operation<boolean> {
@@ -407,32 +407,37 @@ class AgentRun<C, O> {
       retainTokens = retain(Math.floor(estimateTokens(this.history.snapshot()) / 2));
     } else {
       const tokens = this.history.viewTokens(overhead);
-      if (settings && tokens > settings.maxTokens) {
-        reason = "threshold";
-        retainTokens = Math.min(settings.retainTokens, room(settings.maxTokens));
-      } else if (contextWindow && tokens + reply > contextWindow) {
+      // The window comes first: a step can grow the view past both limits at
+      // once, and a summary asked for at the end of a view that no longer fits
+      // would overflow too.
+      if (contextWindow && tokens + reply > contextWindow) {
         reason = "window";
         retainTokens = retain(Math.min(Math.floor(contextWindow / 4), room(contextWindow - reply)));
+      } else if (settings && tokens > settings.maxTokens) {
+        reason = "threshold";
+        retainTokens = Math.min(settings.retainTokens, room(settings.maxTokens));
       } else return false;
     }
     const pending = this.tools.pendingCalls();
     if (settings && !this.compactionFailed) {
-      const model = this.root.compaction?.model ?? this.root.model;
+      const configured = this.root.compaction;
+      const model = (configured ? configured.model : undefined) ?? this.root.model;
+      const own = model === this.active.model;
       // The note can reuse the cached prefix of the last request when the same
       // model writes it. Models are compared by identity, so a second object for
       // the same provider model gets the separate request. A window or overflow
       // cut means that prefix no longer fits.
-      // Its reply limit is the run's, and like the run's, left out when unset.
-      const prefix =
-        reason === "threshold" && model === this.active.model && this.lastRequest
-          ? {...this.lastRequest, ...(maxOutputTokens === undefined ? {} : {maxOutputTokens})}
-          : undefined;
+      const prefix = reason === "threshold" && own ? this.lastRequest : undefined;
+      // Both summary requests take the run's reply limit when the run's own model
+      // writes them, and leave it out when it is unset, as the run does. Another
+      // compaction model gets no limit: the run's may exceed what it allows.
+      const limit = own && maxOutputTokens !== undefined ? {maxOutputTokens} : {};
       try {
         const counted = this.usage.count(model);
         if (
           yield* summarizeContext(
             this.history,
-            {model: counted, retainTokens, instructions: settings.instructions, prefix},
+            {model: counted, retainTokens, instructions: settings.instructions, prefix, ...limit},
             pending,
           )
         ) {

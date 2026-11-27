@@ -401,34 +401,46 @@ export type AgentOptions<Context, Output = string> = {
   onHumanApproval?(request: ApprovalRequest, context: ToolContext<Context>): Operation<boolean>;
   /** Tool-free model call that summarizes an interrupted or step-limited run. Default: model; false skips it. */
   finalize?: Model | false;
-  /** Summarizes this run's older messages when the model's view outgrows
-   * `maxTokens` (default 100000). The size is the input tokens the model last
-   * reported plus an estimate for messages added since, or an estimate of the
-   * messages, instructions and tools before any report. The newest messages
-   * that fit `retainTokens` (default a quarter of maxTokens, and at most half
-   * of what instructions and tools leave) stay verbatim. With a `conversation`,
-   * the run stores the summary in it at the next save, and the next run starts
-   * from the summary and the messages after it instead of the whole history. The
-   * returned transcript keeps every message. `model` defaults to the agent's.
-   * When `model` is left out or is the agent's `Model` object itself, the run
-   * asks for the summary at the end of its last request, which the provider
-   * serves from its cache. Any other `model`, including a second `aiModel(...)`
-   * for the same provider model, gets a separate request that sends the older
-   * messages again. `instructions` replaces the default guidance on what the
-   * summary covers and how long it is; the run still says which messages the
-   * summary replaces and asks for it. */
-  compaction?: {
-    model?: Model;
-    maxTokens?: number;
-    retainTokens?: number;
-    instructions?: string;
-  };
-  /** The model's context window in tokens. Before each model call, a view that
-   * would not fit with `maxOutputTokens`, or with 32,768 tokens for the reply
-   * when it is unset, is shrunk first: summarized when `compaction` is set,
-   * truncated otherwise, to `compaction.retainTokens` or a quarter of the
-   * window, whichever is smaller. A window of 32,768 tokens or less needs
-   * `maxOutputTokens`. Without `contextWindow`, only an
+  /** On by default; `false` turns it off, and the run then truncates instead.
+   * Summarizes this run's older messages when the model's view outgrows
+   * `maxTokens`. That defaults to 90% of what `contextWindow` leaves for input
+   * after the reply (`maxOutputTokens`, or 32,768 tokens when it is unset), or
+   * to 170,000 without `contextWindow`, which leaves about 30,000 tokens for the
+   * reply in a 200,000-token window. The run cannot read a model's window, so
+   * set `contextWindow` for a smaller window, or for compaction to follow a
+   * larger one. The size is the
+   * input tokens the model last reported plus an estimate for messages added
+   * since, or an estimate of the messages, instructions and tools before any
+   * report.
+   * The newest messages that fit `retainTokens` (default a quarter of
+   * maxTokens, and at most half of what instructions and tools leave) stay
+   * verbatim. With a `conversation`, the run stores the summary in it at the
+   * next save, and the next run starts from the summary and the messages after
+   * it instead of the whole history. The returned transcript keeps every
+   * message. `model` defaults to the agent's. Past `maxTokens`, when `model` is
+   * left out or is the agent's `Model` object itself, the run asks for the
+   * summary at the end of its last request, which the provider serves from its
+   * cache. A view that would not fit `contextWindow`, an overflow, and any
+   * other `model`, including a second `aiModel(...)` for the same provider
+   * model, get a separate request that sends the older messages again.
+   * `instructions` replaces the default guidance on what the summary covers
+   * and how long it is; the run still says which messages the summary replaces
+   * and asks for it. */
+  compaction?:
+    | false
+    | {
+        model?: Model;
+        maxTokens?: number;
+        retainTokens?: number;
+        instructions?: string;
+      };
+  /** The model's context window in tokens; the run cannot read it from the
+   * model. It sets the default `compaction.maxTokens`. Before each model call,
+   * a view that would not fit with `maxOutputTokens`, or with 32,768 tokens
+   * for the reply when it is unset, is shrunk first: summarized unless
+   * `compaction` is `false`, truncated otherwise, to `compaction.retainTokens`
+   * or a quarter of the window, whichever is smaller. A window of 32,768
+   * tokens or less needs `maxOutputTokens`. Without `contextWindow`, only an
    * overflow error the model reports as such (a `ContextOverflowError`) is
    * recovered from; some providers give an overflow no distinct code. */
   contextWindow?: number;

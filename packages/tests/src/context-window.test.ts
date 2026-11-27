@@ -466,10 +466,10 @@ function windowed(limit: number, steps: number) {
   return {model, requests, overflows: () => overflows};
 }
 
-void test("an overflow truncates the view and asks again", async () => {
+void test("with compaction off, an overflow truncates the view and asks again", async () => {
   const fixture = windowed(6, 5);
   const events: ProgressEvent[] = [];
-  const a = agent({tools: {small}, model: fixture.model});
+  const a = agent({tools: {small}, model: fixture.model, compaction: false});
   const result = await r.execute(
     context(),
     a.run("Go", {
@@ -494,7 +494,7 @@ void test("an overflow truncates the view and asks again", async () => {
   assert.equal(result.messages.filter((m) => m.role === "tool").length, 5);
 });
 
-void test("with compaction set, an overflow summarizes below the threshold", async () => {
+void test("an overflow summarizes below the threshold", async () => {
   const fixture = windowed(6, 5);
   const events: ProgressEvent[] = [];
   const a = agent({
@@ -530,7 +530,8 @@ void test("with compaction set, an overflow summarizes below the threshold", asy
 void test("an overflow that shrinking cannot fix fails the run", async () => {
   // Even the input alone overflows.
   const fixture = windowed(0, 1);
-  const a = agent({tools: {small}, model: fixture.model});
+  // With compaction off, so the counts are the truncation's alone.
+  const a = agent({tools: {small}, model: fixture.model, compaction: false});
   await assert.rejects(r.execute(context(), a.run("Go")), (error) => isContextOverflow(error));
   // One recovery: the input gives way to a note restating it, which still overflows.
   assert.equal(fixture.overflows(), 2);
@@ -539,6 +540,7 @@ void test("an overflow that shrinking cannot fix fails the run", async () => {
   let asked = 0;
   const always = agent({
     tools: {small},
+    compaction: false,
     *model() {
       if (++asked > 1) throw new ContextOverflowError("prompt is too long");
       return call("s1", "small");
@@ -652,7 +654,7 @@ void test("AI SDK classifies overflow codes and HTTP 413, never matching error m
 });
 
 void test("contextWindow shrinks a view that would not fit before asking", async () => {
-  const run = async (compaction?: {retainTokens: number}) => {
+  const run = async (compaction: false | {retainTokens: number}) => {
     const requests: ModelRequest[] = [];
     const events: ProgressEvent[] = [];
     let step = 0;
@@ -669,16 +671,12 @@ void test("contextWindow shrinks a view that would not fit before asking", async
       },
       contextWindow: 10000,
       maxOutputTokens: 1000,
-      ...(compaction
-        ? {
-            compaction: {
-              ...compaction,
-              *model() {
-                return {type: "final" as const, text: "note"};
-              },
-            },
-          }
-        : {}),
+      compaction: compaction && {
+        ...compaction,
+        *model() {
+          return {type: "final" as const, text: "note"};
+        },
+      },
       *model(request) {
         requests.push(structuredClone(request));
         step++;
@@ -699,7 +697,7 @@ void test("contextWindow shrinks a view that would not fit before asking", async
     assert.equal(result.status, "completed");
     return {requests, events};
   };
-  const truncated = await run();
+  const truncated = await run(false);
   assert.deepEqual(truncated.events, [
     {type: "compaction", mode: "truncate", status: "applied", reason: "window"},
   ]);
@@ -729,6 +727,8 @@ void test("contextWindow counts instructions and tools before any usage report",
     },
     contextWindow: 6000,
     maxOutputTokens: 1000,
+    // Off, so the compaction threshold, 90% of the window's input room, does not act first.
+    compaction: false,
     *model() {
       // No usage: the estimate alone must see that the view no longer fits.
       return ++step <= 6 ? call(`m${step}`, "medium") : {type: "final", text: "Done"};
@@ -791,6 +791,9 @@ void test("without maxOutputTokens, the window check leaves 32768 tokens for the
       },
       toolResults: false,
       contextWindow: 50000,
+      // Off, so only the window check acts: the default threshold would also
+      // fire past 15508 tokens.
+      compaction: false,
       ...(maxOutputTokens === undefined ? {} : {maxOutputTokens}),
       *model() {
         // About 20000 tokens in the next request: they fit beside 1000 tokens for the reply, not beside 32768.
@@ -815,14 +818,115 @@ void test("without maxOutputTokens, the window check leaves 32768 tokens for the
   assert.equal(await compactions(), 1);
 });
 
-void test("compaction is off by default, and once set summarizes past 100000 tokens", async () => {
-  const run = async (compaction?: {}) => {
-    const events: ProgressEvent[] = [];
-    let notes = 0;
+/** Runs one tool call whose result takes about `resultChars / 2` tokens (30000
+ * by default), after a step that reports `inputTokens`, and counts the
+ * compaction events and the summaries the agent's own model writes. A summary
+ * needs a result larger than `retainTokens`, or nothing older is left to replace. */
+async function compactions(options: {
+  inputTokens: number;
+  compaction?: false | {maxTokens?: number};
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  resultChars?: number;
+}) {
+  const {inputTokens, resultChars = 60000, ...settings} = options;
+  const events: ProgressEvent[] = [];
+  let notes = 0;
+  let step = 0;
+  const a = agent({
+    tools: {
+      large: tool({
+        description: "A large result",
+        input: z.object({}),
+        *execute() {
+          return "x".repeat(resultChars);
+        },
+      }),
+    },
+    toolResults: false,
+    ...settings,
+    *model(request) {
+      // The agent's own model writes the summary: asked at the end of its view
+      // past the threshold, or in a separate request when the view does not fit.
+      if (request.name === "Compact context") {
+        notes++;
+        return {type: "final", text: "note"};
+      }
+      // The next request takes about inputTokens plus the result's tokens.
+      const usage = {inputTokens, outputTokens: 10};
+      return ++step === 1 ? {...call("m1", "large"), usage} : {type: "final", text: "Done", usage};
+    },
+  });
+  const result = await r.execute(
+    context(),
+    a.run("Go", {
+      *onProgress(event) {
+        if (event.type === "compaction") events.push(event);
+      },
+    }),
+  );
+  assert.equal(result.status, "completed");
+  return {events, notes};
+}
+
+const summarized = {
+  events: [{type: "compaction", mode: "summary", status: "applied", reason: "threshold"}],
+  notes: 1,
+};
+
+void test("compaction is on by default and, without contextWindow, summarizes past 170000 tokens", async () => {
+  // A result of about 60000 tokens outgrows the default retainTokens (42500),
+  // so the run has older messages to summarize.
+  const resultChars = 120000;
+  // About 200000 tokens in the next request, then about 160000.
+  assert.deepEqual(await compactions({resultChars, inputTokens: 140000}), summarized);
+  assert.deepEqual(await compactions({resultChars, inputTokens: 100000}), {events: [], notes: 0});
+  assert.deepEqual(await compactions({resultChars, inputTokens: 140000, compaction: false}), {
+    events: [],
+    notes: 0,
+  });
+  // The error names the resolved threshold: exactly 170000.
+  const model: Model = function* () {
+    return {type: "final", text: ""};
+  };
+  assert.throws(
+    () => agent({model, compaction: {retainTokens: 170000}}),
+    /compaction.retainTokens must be less than compaction.maxTokens \(170000\)/,
+  );
+});
+
+void test("with contextWindow, compaction starts at 90% of the room the reply leaves", async () => {
+  // 90% of 100000 - 10000 is 81000.
+  const window = {contextWindow: 100000, maxOutputTokens: 10000};
+  assert.deepEqual(await compactions({...window, inputTokens: 45000}), {events: [], notes: 0});
+  assert.deepEqual(await compactions({...window, inputTokens: 55000}), summarized);
+  // An explicit maxTokens replaces it.
+  assert.deepEqual(
+    await compactions({...window, inputTokens: 55000, compaction: {maxTokens: 89000}}),
+    {events: [], notes: 0},
+  );
+  const model: Model = function* () {
+    return {type: "final", text: ""};
+  };
+  assert.throws(
+    () => agent({model, ...window, compaction: {retainTokens: 81000}}),
+    /compaction.retainTokens must be less than compaction.maxTokens \(81000\)/,
+  );
+});
+
+void test("summary requests keep the run's maxOutputTokens, unless another model writes them", async () => {
+  // Records why the run compacted and the reply limit of each summary request.
+  const summaries = async (inputTokens: number, otherModel = false) => {
+    const reasons: string[] = [];
+    const limits: (number | undefined)[] = [];
+    const note: Model = function* (request) {
+      limits.push(request.maxOutputTokens);
+      return {type: "final", text: "note"};
+    };
     let step = 0;
     const a = agent({
       tools: {
-        // About 30000 tokens, more than the default retainTokens of 25000.
+        // About 30000 tokens.
         large: tool({
           description: "A large result",
           input: z.object({}),
@@ -832,15 +936,12 @@ void test("compaction is off by default, and once set summarizes past 100000 tok
         }),
       },
       toolResults: false,
-      ...(compaction === undefined ? {} : {compaction}),
+      contextWindow: 100000,
+      maxOutputTokens: 1000,
+      ...(otherModel ? {compaction: {model: note}} : {}),
       *model(request) {
-        // The agent's own model writes the note, asked for at the end of its view.
-        if (JSON.stringify(request.messages.at(-1)).includes("handoff-note-request")) {
-          notes++;
-          return {type: "final", text: "note"};
-        }
-        // About 120000 tokens in the next request.
-        const usage = {inputTokens: 90000, outputTokens: 10};
+        if (request.name === "Compact context") return yield* note(request);
+        const usage = {inputTokens, outputTokens: 10};
         return ++step === 1
           ? {...call("m1", "large"), usage}
           : {type: "final", text: "Done", usage};
@@ -850,16 +951,29 @@ void test("compaction is off by default, and once set summarizes past 100000 tok
       context(),
       a.run("Go", {
         *onProgress(event) {
-          if (event.type === "compaction") events.push(event);
+          if (event.type === "compaction") reasons.push(event.reason);
         },
       }),
     );
     assert.equal(result.status, "completed");
-    return {events, notes};
+    return {reasons, limits};
   };
-  assert.deepEqual(await run(), {events: [], notes: 0});
-  assert.deepEqual(await run({}), {
-    events: [{type: "compaction", mode: "summary", status: "applied", reason: "threshold"}],
-    notes: 1,
-  });
+  // 90% of 100000 - 1000 is 89100; past 99000 tokens, the view and the reply do not fit.
+  // About 95000 tokens: the cached request.
+  assert.deepEqual(await summaries(65000), {reasons: ["threshold"], limits: [1000]});
+  // About 105000 tokens: the separate request.
+  assert.deepEqual(await summaries(75000), {reasons: ["window"], limits: [1000]});
+  // Another compaction model may not allow the run's limit.
+  assert.deepEqual(await summaries(75000, true), {reasons: ["window"], limits: [undefined]});
+});
+
+void test("a view past both the threshold and the window takes the window's separate request", async () => {
+  // 90% of 100000 - 10000 is 81000, and 95000 tokens plus the reply do not fit.
+  assert.deepEqual(
+    await compactions({contextWindow: 100000, maxOutputTokens: 10000, inputTokens: 65000}),
+    {
+      events: [{type: "compaction", mode: "summary", status: "applied", reason: "window"}],
+      notes: 1,
+    },
+  );
 });

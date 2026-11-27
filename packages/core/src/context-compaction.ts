@@ -1,22 +1,25 @@
-// Compacting a run's context. Before each model call, a run with `compaction`
-// set measures the tokens the model's view takes. Past `maxTokens`, or when the
-// next request would not fit `contextWindow`, it keeps the newest messages that
-// fit `retainTokens` verbatim and replaces the older ones with a summary written
-// by the compactor model. When that is the run's own model (the agent's `Model`
-// object itself), it reads the view as the last request did and is asked for the
-// summary at the end, so the provider serves the view from its cache:
+// Compacting a run's context, on unless the agent sets `compaction: false`.
+// Before each model call, a run measures the tokens the model's view takes. When
+// the next request would not fit `contextWindow`, or past `maxTokens` (by default
+// 90% of what the window leaves after the reply), it keeps the newest messages
+// that fit `retainTokens` verbatim and replaces the older ones with a summary
+// written by the compactor model. Past `maxTokens`, when that is the run's own
+// model (the agent's `Model` object itself), it reads the view as the last
+// request did and is asked for the summary at the end, so the provider serves
+// the view from its cache:
 //
 //   [older messages .................] [recent messages]
 //   [summary, request, pending calls ] [recent messages]
 //
-// Any other compactor model gets a separate request: the older messages and the
-// earlier summary as data, then a message that asks for the summary.
+// Any other compactor model, and a view that no longer fits the window, gets a
+// separate request: the older messages and the earlier summary as data, then a
+// message that asks for the summary.
 //
 // With a conversation, the run stores the summary at its next save, and the next
 // run starts from it instead of the whole history (see RunHistory.save). The
 // returned transcript keeps every message, and so does the conversation's `page()`.
 //
-// Without `compaction`, or once the compactor fails, the run truncates instead:
+// With `compaction: false`, or once the compactor fails, the run truncates instead:
 // the older messages give way to a short runtime note that restates the request
 // and lists pending calls, with no new summary. It keeps an earlier summary and
 // any steering it drops, which can change the task. A truncation is never stored.
@@ -38,7 +41,10 @@ export type SummarySettings = {
   /** The run's last request without its messages. When set, the compactor
    * first reads the model's view as that request did, with the note asked for
    * at the end, so the provider serves the view from its cache. */
-  prefix?: Pick<ModelRequest, "instructions" | "tools" | "maxOutputTokens">;
+  prefix?: Pick<ModelRequest, "instructions" | "tools">;
+  /** The reply limit of every summary request, cached or separate; left out
+   * when unset. */
+  maxOutputTokens?: number;
 };
 export type PendingCall = {operationId: string; name: string};
 
@@ -116,6 +122,8 @@ export function* summarizeContext(
   // messages, such as a rejected answer: the conversation never stores them either.
   const recorded = (message: Message) => !history.isProvisional(message);
   const guidance = settings.instructions ?? GUIDANCE;
+  const {maxOutputTokens} = settings;
+  const limit = maxOutputTokens === undefined ? {} : {maxOutputTokens};
   let text: string | undefined;
   if (settings.prefix) {
     // Tools stay listed, since changing them would miss the cache; a model
@@ -126,6 +134,7 @@ export function* summarizeContext(
     const response = modelResponse(
       yield* settings.model({
         ...settings.prefix,
+        ...limit,
         messages: [...history.finalContext(), noteRequest(kept, guidance)],
         name: JOURNAL_NAME,
       }),
@@ -155,6 +164,7 @@ export function* summarizeContext(
           {role: "user", content: SUMMARY_TASK},
         ],
         tools: [],
+        ...limit,
         name: JOURNAL_NAME,
       }),
     );
