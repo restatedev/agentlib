@@ -73,5 +73,5 @@ export {sleepTool, humanApprovalTool, cancelOperationTool, searchToolsTool} from
 export {forkAgentTool} from "./fork.js";
 export type {BuiltinToolOptions} from "./builtins.js";
 
-export {LazyStateConversation, ConversationConflictError} from "./conversation.js";
-export type {Conversation, ConversationStore, ConversationSnapshot} from "./conversation.js";
+export {Conversation, ConversationConflictError} from "./conversation.js";
+export type {ConversationBackend, ConversationStore, ConversationSnapshot} from "./conversation.js";

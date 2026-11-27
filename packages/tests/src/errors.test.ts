@@ -19,7 +19,7 @@ import {
   isAgentTerminal,
   isContextOverflow,
   journaledModel,
-  LazyStateConversation,
+  Conversation,
   messagesOf,
   RunFailedError,
   RunInputError,
@@ -655,7 +655,7 @@ void test("an AgentTerminalError fails the run from anywhere, and the conversati
   };
   for (const [site, options] of Object.entries(sites)) {
     const {store} = memoryStore();
-    const conversation = new LazyStateConversation({store});
+    const conversation = new Conversation({store});
     const a = agent<undefined>({
       *model(request) {
         return request.step === 1 && options.tools ? batch("work") : done;
@@ -1119,7 +1119,7 @@ void test("a failed summary lets a conversation's run continue, and stores no su
   const {result, stored} = await r.execute(
     ctx(),
     (function* () {
-      const conversation = new LazyStateConversation({store: memoryStore().store});
+      const conversation = new Conversation({store: memoryStore().store});
       yield* conversation.append(history, 0);
       const result = yield* compactingWith(fail).run("third", {conversation});
       return {result, stored: yield* conversation.load()};
@@ -1137,7 +1137,7 @@ void test("a failed summary lets a conversation's run continue, and stores no su
     r.execute(
       ctx(),
       (function* () {
-        const conversation = new LazyStateConversation({store: memoryStore().store});
+        const conversation = new Conversation({store: memoryStore().store});
         yield* conversation.append(history, 0);
         return yield* compactingWith(stop).run("third", {conversation});
       })(),

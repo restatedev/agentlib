@@ -10,7 +10,7 @@ import {z} from "zod";
 import {
   agent,
   agentTool,
-  LazyStateConversation,
+  Conversation,
   skills,
   tool,
   type Message,
@@ -158,7 +158,7 @@ void test("a fork of a structured-output agent replies in plain text", async () 
 });
 
 void test("a fork saves nothing to the parent's conversation", async () => {
-  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const conversation = new Conversation({store: memoryStore().store});
   let secondTurn: ModelRequest | undefined;
   let turn = 1;
   const lead = forkingAgent({

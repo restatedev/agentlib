@@ -10,7 +10,7 @@ import {
   AgentTerminalError,
   handoff,
   isAgentTerminal,
-  LazyStateConversation,
+  Conversation,
   tool,
   usageOf,
   messagesOf,
@@ -417,7 +417,7 @@ for (const streaming of [false, true]) {
       r.execute(
         context,
         (function* () {
-          const conversation = new LazyStateConversation({store: memoryStore().store});
+          const conversation = new Conversation({store: memoryStore().store});
           try {
             yield* a.run("write", {conversation});
             return {failed: false};
@@ -468,7 +468,7 @@ for (const streaming of [false, true]) {
 }
 
 void test("a later run continues from a cut-off reply's saved history", async () => {
-  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const conversation = new Conversation({store: memoryStore().store});
   const requests: ModelRequest[] = [];
   let step = 0;
   const a = agent({
@@ -512,7 +512,7 @@ void test("a later run continues from a cut-off reply's saved history", async ()
 });
 
 void test("a cut-off reply with nothing in it saves no assistant message", async () => {
-  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const conversation = new Conversation({store: memoryStore().store});
   const a = agent({
     *model() {
       return {type: "cut_off", text: ""};
@@ -526,7 +526,7 @@ void test("a cut-off reply with nothing in it saves no assistant message", async
 });
 
 void test("cut-off text longer than maxOutputChars is clipped as recorded", async () => {
-  const conversation = new LazyStateConversation({store: memoryStore().store});
+  const conversation = new Conversation({store: memoryStore().store});
   const a = agent({
     maxOutputChars: 10,
     *model() {

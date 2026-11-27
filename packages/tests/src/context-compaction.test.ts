@@ -4,7 +4,7 @@ import type {Context} from "@restatedev/restate-sdk";
 import * as r from "@restatedev/restate-sdk-gen";
 import {
   agent,
-  LazyStateConversation,
+  Conversation,
   tool,
   type Message,
   type Model,
@@ -146,7 +146,7 @@ for (const ownModel of [false, true])
     const stored = await r.execute(
       context(),
       (function* () {
-        const conversation = new LazyStateConversation({store: memoryStore().store});
+        const conversation = new Conversation({store: memoryStore().store});
         const result = yield* a.run("Go", {conversation});
         assert.equal(result.status, "completed");
         return yield* conversation.load();

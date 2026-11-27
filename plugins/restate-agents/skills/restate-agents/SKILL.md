@@ -73,7 +73,7 @@ Follow the same order when teaching or when growing an agent step by step.
 | 06  | Human approval before a tool         | `needsApproval`, `onApproval`                                | `references/approvals-and-guardrails.md`   |
 | 07  | Race two agents                      | `restate.spawn`, `restate.any`                               | `references/multi-agent.md`                |
 | 08  | Parallel workers over RPC            | `restate.all` of `restate.client` calls                      | `references/multi-agent.md`                |
-| 09  | Steer and interrupt a running turn   | `LazyStateConversation`, `steeringSignal`, `interruptSignal` | `references/conversations-and-controls.md` |
+| 09  | Steer and interrupt a running turn   | `Conversation`, `steeringSignal`, `interruptSignal`          | `references/conversations-and-controls.md` |
 | 10  | A Restate service as a tool          | `serviceTool`                                                | `references/tools.md`                      |
 | 11  | Tools backed by a sandbox            | run `context`, `asyncTool`                                   | `references/tools.md`                      |
 | 12  | Route to a specialist                | structured-output router                                     | `references/multi-agent.md`                |
@@ -139,7 +139,7 @@ Restate journals. Move on only when the learner is ready.
       never from model-supplied tool arguments.
 - [ ] Approval requests and active-turn IDs stored in state are cleared in a
       `finally`.
-- [ ] An agent with a `LazyStateConversation` preloads only small keys on its
+- [ ] An agent with a `Conversation` preloads only small keys on its
       object: `conversation/meta`, `conversation/summary`, and the app's own
       small keys, such as
       `options.state: {preload: ["conversation/meta", "conversation/summary", "active"]}`.

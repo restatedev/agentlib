@@ -309,7 +309,7 @@ export type RunOptions<Context> = {
    * run loads the conversation's summary and the messages after it, and stores its
    * own summary when it summarizes its context (see the agent's `compaction`). Use
    * either this or `messages`. */
-  conversation?: import("./conversation.js").Conversation;
+  conversation?: import("./conversation.js").ConversationBackend;
   name?: string;
   onApproval?: ApprovalHandler<Context>;
   onProgress?: ProgressHandler<Context>;

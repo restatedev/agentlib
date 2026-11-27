@@ -11,7 +11,7 @@ import {z} from "zod";
 import {
   agent,
   journaledModel,
-  LazyStateConversation,
+  Conversation,
   tool,
   type ConversationStore,
   type ModelResponse,
@@ -96,7 +96,7 @@ void test("replay makes a run's saves again in the same order", {timeout: 20000}
     r.execute(
       ctx,
       (function* () {
-        const conversation = new LazyStateConversation({store: journaledStore(state)});
+        const conversation = new Conversation({store: journaledStore(state)});
         const result = yield* a.run("Where is my order?", {conversation});
         return {status: result.status, saved: (yield* conversation.page()).messages};
       })(),
@@ -123,7 +123,7 @@ void test(
       r.execute(
         ctx,
         (function* () {
-          const conversation = new LazyStateConversation({store: journaledStore(state)});
+          const conversation = new Conversation({store: journaledStore(state)});
           let error: string | undefined;
           try {
             yield* a.run("Where is my order?", {conversation});
@@ -186,7 +186,7 @@ void test(
       r.execute(
         ctx,
         (function* () {
-          const conversation = new LazyStateConversation({store: journaledStore(state)});
+          const conversation = new Conversation({store: journaledStore(state)});
           const first = yield* a.run("Where is order 1?", {conversation});
           const second = yield* a.run("And order 2?", {conversation});
           const loaded = yield* conversation.load();

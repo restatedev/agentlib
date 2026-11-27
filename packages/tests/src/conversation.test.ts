@@ -6,8 +6,8 @@ import {
   agent,
   AgentTerminalError,
   ConversationConflictError,
-  LazyStateConversation,
-  type Conversation,
+  Conversation,
+  type ConversationBackend,
   type Message,
   type Model,
   type ModelResponse,
@@ -24,7 +24,7 @@ const pairs = (n: number): Message[] =>
   ]).flat();
 
 void test("output policies replace the answer in persisted and returned conversation history", async () => {
-  const convo = new LazyStateConversation({store: memoryStore().store});
+  const convo = new Conversation({store: memoryStore().store});
   const a = agent({
     *model() {
       return {type: "final", text: "private candidate"};
@@ -47,7 +47,7 @@ void test("output policies replace the answer in persisted and returned conversa
 });
 
 void test("a rejected structured answer reaches the retry but is never persisted or returned", async () => {
-  const convo = new LazyStateConversation({store: memoryStore().store});
+  const convo = new Conversation({store: memoryStore().store});
   let requests = 0;
   const a = agent({
     output: z.object({answer: z.string()}),
@@ -74,7 +74,7 @@ void test("a rejected structured answer reaches the retry but is never persisted
 
 void test("a conversation lazily persists chunks and supplies history across embedded runs", async () => {
   const {store, values} = memoryStore();
-  const convo = new LazyStateConversation({store, metaKey: "meta", stateKey: "convo"});
+  const convo = new Conversation({store, metaKey: "meta", stateKey: "convo"});
   assert.equal(values.size, 0);
   await r.execute(
     context(),
@@ -108,8 +108,8 @@ void test("a conversation lazily persists chunks and supplies history across emb
 
 void test("the summary is stored under stateKey, not metaKey, so each conversation keeps its own", async () => {
   const {store, values} = memoryStore();
-  const first = new LazyStateConversation({store, stateKey: "first", metaKey: "first-meta"});
-  const second = new LazyStateConversation({store, stateKey: "second"});
+  const first = new Conversation({store, stateKey: "first", metaKey: "first-meta"});
+  const second = new Conversation({store, stateKey: "second"});
   await r.execute(
     context(),
     (function* () {
@@ -136,7 +136,7 @@ void test("the summary is stored under stateKey, not metaKey, so each conversati
 
 void test("a stored summary replaces older messages for the next load, and page() keeps them", async () => {
   const {store, values} = memoryStore();
-  const convo = new LazyStateConversation({store});
+  const convo = new Conversation({store});
   await r.execute(
     context(),
     (function* () {
@@ -173,7 +173,7 @@ void test("a stored summary replaces older messages for the next load, and page(
 
 void test("a summary is stored only for the current version and a boundary that moves forward", async () => {
   const {store} = memoryStore();
-  const convo = new LazyStateConversation({store});
+  const convo = new Conversation({store});
   await r.execute(
     context(),
     (function* () {
@@ -228,7 +228,7 @@ void test("a run stores its summary, the next run starts from it, and both repla
       ctx,
       (function* () {
         const {store} = memoryStore();
-        const convo = new LazyStateConversation({store});
+        const convo = new Conversation({store});
         yield* convo.append(pairs(30), 0);
         const requests: Message[][] = [];
         // The loaded history outgrows maxTokens; after the summary, the next run fits.
@@ -264,7 +264,7 @@ void test("a run stores its summary, the next run starts from it, and both repla
 /** A conversation long enough that a run compacts it before its first step, with
  * an agent whose input and one note fit retainTokens. */
 function* compactingConversation() {
-  const convo = new LazyStateConversation({store: memoryStore().store});
+  const convo = new Conversation({store: memoryStore().store});
   const long = (role: "user" | "assistant", i: number): Message => ({
     role,
     content: `${role} ${i} ${"x".repeat(400)}`,
@@ -363,7 +363,7 @@ void test("a truncation keeps the stored summary, and stores nothing", async () 
   const stored = await r.execute(
     context(),
     (function* () {
-      const convo = new LazyStateConversation({store: memoryStore().store});
+      const convo = new Conversation({store: memoryStore().store});
       // The two messages the summary keeps are too long to survive the truncation.
       yield* convo.append(
         [
@@ -404,8 +404,8 @@ void test("a conversation without storeSummary keeps working, and each run summa
   const loaded = await r.execute(
     context(),
     (function* () {
-      const inner = new LazyStateConversation({store: memoryStore().store});
-      const plain: Conversation = {
+      const inner = new Conversation({store: memoryStore().store});
+      const plain: ConversationBackend = {
         load: () => inner.load(),
         append: (messages, version) => inner.append(messages, version),
       };

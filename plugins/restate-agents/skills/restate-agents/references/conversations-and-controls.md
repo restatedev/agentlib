@@ -33,7 +33,7 @@ export const chatSession = restate.object({
 histories. Because the object runs one exclusive call per key at a time,
 turns never interleave.
 
-## Long conversations: LazyStateConversation
+## Long conversations: the Conversation class
 
 For long histories, pass a `conversation` instead of `messages`. It stores
 messages in object state, 8 messages per state key. Set `compaction` on the
@@ -51,14 +51,14 @@ export const aiSession = restate.object({
   name: "AiSession",
   handlers: {
     *doTurn(message: string) {
-      const conversation = new LazyStateConversation();
+      const conversation = new Conversation();
       const result = yield* support.run(message, {conversation});
       if (result.status !== "completed") return result.output ?? result.reason;
       return result.output;
     },
     // The saved conversation, including a turn that is still running.
     *history() {
-      return yield* new LazyStateConversation().page();
+      return yield* new Conversation().page();
     },
   },
   options: {
@@ -127,7 +127,7 @@ error notes and rejected answers never reach them. A run's summary is stored in
 `conversation/summary`, not as a message, so `page()` still returns every message.
 
 Restate journals every state read with its value. Within one invocation,
-`LazyStateConversation` reads each state key at most once and keeps what it
+`Conversation` reads each state key at most once and keeps what it
 read and wrote, so the load, the saves, and storing a summary don't journal
 the same messages again. A shared handler that calls `page()` twice in one
 invocation gets the values from its first read; call it once per invocation.
