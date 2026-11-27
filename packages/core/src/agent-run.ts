@@ -420,23 +420,24 @@ class AgentRun<C, O> {
     }
     const pending = this.tools.pendingCalls();
     if (settings && !this.compactionFailed) {
-      const own = this.root.compaction;
-      const model = (own ? own.model : undefined) ?? this.root.model;
+      const configured = this.root.compaction;
+      const model = (configured ? configured.model : undefined) ?? this.root.model;
+      const own = model === this.active.model;
       // The note can reuse the cached prefix of the last request when the same
       // model writes it. Models are compared by identity, so a second object for
       // the same provider model gets the separate request. A window or overflow
       // cut means that prefix no longer fits.
-      // Its reply limit is the run's, and like the run's, left out when unset.
-      const prefix =
-        reason === "threshold" && model === this.active.model && this.lastRequest
-          ? {...this.lastRequest, ...(maxOutputTokens === undefined ? {} : {maxOutputTokens})}
-          : undefined;
+      const prefix = reason === "threshold" && own ? this.lastRequest : undefined;
+      // Both summary requests take the run's reply limit when the run's own model
+      // writes them, and leave it out when it is unset, as the run does. Another
+      // compaction model gets no limit: the run's may exceed what it allows.
+      const limit = own && maxOutputTokens !== undefined ? {maxOutputTokens} : {};
       try {
         const counted = this.usage.count(model);
         if (
           yield* summarizeContext(
             this.history,
-            {model: counted, retainTokens, instructions: settings.instructions, prefix},
+            {model: counted, retainTokens, instructions: settings.instructions, prefix, ...limit},
             pending,
           )
         ) {

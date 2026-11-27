@@ -41,7 +41,10 @@ export type SummarySettings = {
   /** The run's last request without its messages. When set, the compactor
    * first reads the model's view as that request did, with the note asked for
    * at the end, so the provider serves the view from its cache. */
-  prefix?: Pick<ModelRequest, "instructions" | "tools" | "maxOutputTokens">;
+  prefix?: Pick<ModelRequest, "instructions" | "tools">;
+  /** The reply limit of every summary request, cached or separate; left out
+   * when unset. */
+  maxOutputTokens?: number;
 };
 export type PendingCall = {operationId: string; name: string};
 
@@ -119,6 +122,8 @@ export function* summarizeContext(
   // messages, such as a rejected answer: the conversation never stores them either.
   const recorded = (message: Message) => !history.isProvisional(message);
   const guidance = settings.instructions ?? GUIDANCE;
+  const {maxOutputTokens} = settings;
+  const limit = maxOutputTokens === undefined ? {} : {maxOutputTokens};
   let text: string | undefined;
   if (settings.prefix) {
     // Tools stay listed, since changing them would miss the cache; a model
@@ -129,6 +134,7 @@ export function* summarizeContext(
     const response = modelResponse(
       yield* settings.model({
         ...settings.prefix,
+        ...limit,
         messages: [...history.finalContext(), noteRequest(kept, guidance)],
         name: JOURNAL_NAME,
       }),
@@ -158,6 +164,7 @@ export function* summarizeContext(
           {role: "user", content: SUMMARY_TASK},
         ],
         tools: [],
+        ...limit,
         name: JOURNAL_NAME,
       }),
     );

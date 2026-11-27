@@ -914,6 +914,59 @@ void test("with contextWindow, compaction starts at 90% of the room the reply le
   );
 });
 
+void test("summary requests keep the run's maxOutputTokens, unless another model writes them", async () => {
+  // Records why the run compacted and the reply limit of each summary request.
+  const summaries = async (inputTokens: number, otherModel = false) => {
+    const reasons: string[] = [];
+    const limits: (number | undefined)[] = [];
+    const note: Model = function* (request) {
+      limits.push(request.maxOutputTokens);
+      return {type: "final", text: "note"};
+    };
+    let step = 0;
+    const a = agent({
+      tools: {
+        // About 30000 tokens.
+        large: tool({
+          description: "A large result",
+          input: z.object({}),
+          *execute() {
+            return "x".repeat(60000);
+          },
+        }),
+      },
+      toolResults: false,
+      contextWindow: 100000,
+      maxOutputTokens: 1000,
+      ...(otherModel ? {compaction: {model: note}} : {}),
+      *model(request) {
+        if (request.name === "Compact context") return yield* note(request);
+        const usage = {inputTokens, outputTokens: 10};
+        return ++step === 1
+          ? {...call("m1", "large"), usage}
+          : {type: "final", text: "Done", usage};
+      },
+    });
+    const result = await r.execute(
+      context(),
+      a.run("Go", {
+        *onProgress(event) {
+          if (event.type === "compaction") reasons.push(event.reason);
+        },
+      }),
+    );
+    assert.equal(result.status, "completed");
+    return {reasons, limits};
+  };
+  // 90% of 100000 - 1000 is 89100; past 99000 tokens, the view and the reply do not fit.
+  // About 95000 tokens: the cached request.
+  assert.deepEqual(await summaries(65000), {reasons: ["threshold"], limits: [1000]});
+  // About 105000 tokens: the separate request.
+  assert.deepEqual(await summaries(75000), {reasons: ["window"], limits: [1000]});
+  // Another compaction model may not allow the run's limit.
+  assert.deepEqual(await summaries(75000, true), {reasons: ["window"], limits: [undefined]});
+});
+
 void test("a view past both the threshold and the window takes the window's separate request", async () => {
   // 90% of 100000 - 10000 is 81000, and 95000 tokens plus the reply do not fit.
   assert.deepEqual(
