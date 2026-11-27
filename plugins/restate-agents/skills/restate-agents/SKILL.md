@@ -67,7 +67,7 @@ Follow the same order when teaching or when growing an agent step by step.
 | --- | ------------------------------------ | ------------------------------------------------------------ | ------------------------------------------ |
 | 01  | One agent in one handler             | `agent({model})`, `run`, `RunResult`                         | `references/agent-basics.md`               |
 | 02  | A tool with validated arguments      | `asyncTool`, `tool`                                          | `references/tools.md`                      |
-| 03  | Conversation history in an object    | `run(input, {messages})`                                     | `references/conversations-and-controls.md` |
+| 03  | Conversation history in an object    | `run(input, {conversation})`, `Conversation`        | `references/conversations-and-controls.md` |
 | 04  | Typed output                         | `agent({output})`                                            | `references/agent-basics.md`               |
 | 05  | A bounded draft-and-review loop      | two agents, distinct run `name`s                             | `references/multi-agent.md`                |
 | 06  | Human approval before a tool         | `needsApproval`, `onApproval`                                | `references/approvals-and-guardrails.md`   |
@@ -93,6 +93,7 @@ Restate journals. Move on only when the learner is ready.
 
 | Goal                                                           | Use                                                                                       |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Continue a conversation across requests                        | `run(input, {conversation})` in a virtual object; see `references/conversations-and-controls.md` |
 | Call an API from a tool                                        | `asyncTool` with `retry`                                                                  |
 | Compose Restate operations inside a tool (RPC, sleep, signals) | `tool` with `*execute`                                                                    |
 | Let the model call one or all handlers of a Restate service    | `handlerTool` / `serviceTool`                                                             |
@@ -139,6 +140,9 @@ Restate journals. Move on only when the learner is ready.
       never from model-supplied tool arguments.
 - [ ] Approval requests and active-turn IDs stored in state are cleared in a
       `finally`.
+- [ ] An agent that continues a conversation across requests runs in an
+      exclusive object handler with a `Conversation`. Agents that share an
+      object each have their own `stateKey`.
 - [ ] An agent with a `Conversation` preloads only small keys on its
       object: `conversation/meta`, `conversation/summary`, and the app's own
       small keys, such as

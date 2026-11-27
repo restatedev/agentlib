@@ -1,7 +1,7 @@
 // 12: Use a structured decision to route a request to one specialist.
 import {TerminalError} from "@restatedev/restate-sdk";
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent} from "@restatedev/agentlib";
+import {agent, Conversation} from "@restatedev/agentlib";
 import {z} from "zod";
 import {openai} from "@ai-sdk/openai";
 import {aiModel} from "@restatedev/agentlib/provider";
@@ -40,7 +40,8 @@ const specialists = {
   }),
 };
 
-export const supportRouter = restate.service({
+/** One object per customer. The router and each specialist keep their own conversation. */
+export const supportRouter = restate.object({
   name: "SupportRouter",
   handlers: {
     answer: restate.schemas(
@@ -54,14 +55,34 @@ export const supportRouter = restate.service({
         output: z.string(),
       },
       function* ({question}) {
-        const routed = yield* route.run(question);
+        const routed = yield* route.run(question, {
+          conversation: new Conversation({stateKey: "router"}),
+        });
         if (routed.status !== "completed")
           throw new TerminalError(`Router ${routed.status}: ${routed.reason}`);
         const {specialist} = routed.output;
-        const result = yield* specialists[specialist].run(question);
+        // The state key is the specialist's name, so a follow-up question to the same
+        // specialist continues its conversation with this customer.
+        const result = yield* specialists[specialist].run(question, {
+          conversation: new Conversation({stateKey: specialist}),
+        });
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;
       },
     ),
+  },
+  options: {
+    state: {
+      preload: [
+        "router/meta",
+        "router/summary",
+        "billing/meta",
+        "billing/summary",
+        "account/meta",
+        "account/summary",
+        "product/meta",
+        "product/summary",
+      ],
+    },
   },
 });

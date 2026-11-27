@@ -5,44 +5,94 @@ Lessons:
 [09_support_session.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/09_support_session.ts),
 [16_progress_feed.ts](https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/16_progress_feed.ts)
 
-## Remember earlier requests
+## Run an agent in a service or a virtual object
 
-A conversation belongs to a key, so keep it in a virtual object. Load the
-messages, pass them in, and save `result.messages`. A run that throws returns
-no result; `messagesOf(error)` returns its history up to the failure, with a
-note on why it failed:
+Run the agent in a service when each request is a self-contained task. Run it
+in a virtual object with a `Conversation` when a later request to the same key
+needs what an earlier one produced, such as in a chat or a support session.
 
-```ts
-import {agent, type Message} from "@restatedev/agentlib";
+|         | Service                                | Virtual object                                                    |
+| ------- | -------------------------------------- | ----------------------------------------------------------------- |
+| Handler | a `restate.service` handler            | an exclusive `restate.object` handler                             |
+| Run     | `agent.run(input)`                     | `agent.run(input, {conversation: new Conversation()})`            |
+| History | each request starts a new conversation | requests to the same key continue one conversation                |
+| Caller  | calls without a key                    | calls with a key that identifies the session, customer, or thread |
 
-export const chatSession = restate.object({
-  name: "ChatSession",
-  handlers: {
-    *ask(message: string) {
-      const messages = (yield* restate.state().get<Message[]>("messages")) ?? [];
-      const result = yield* assistant.run(message, {messages});
-      restate.state().set("messages", result.messages);
-      if (result.status !== "completed") return result.output ?? result.reason;
-      return result.output;
-    },
-  },
-});
-```
+The object runs one exclusive handler per key at a time, so only one run at a
+time changes a key's conversation.
 
-`curl .../ChatSession/bob/ask` and `.../ChatSession/alice/ask` have separate
-histories. Because the object runs one exclusive call per key at a time,
-turns never interleave.
+- In a service: [04] classifies a ticket, [07] races two agents, [08]
+  writes a research report, [11] runs a coding task in a sandbox it creates
+  for the request, [13] checks a booking against a budget, [16] runs an audit
+  job, and [19] writes release notes.
+- In a virtual object: [03] remembers what the user said, [09] runs a
+  support session, [10] handles a refund chat, [12] routes each customer's
+  questions, [14] answers follow-up research questions, [17] answers
+  questions about the docs, [18] serves an AG-UI thread, [20] answers
+  follow-up questions about an incident, and the
+  [project template][template] answers weather questions.
 
-## Long conversations: the Conversation class
+A conversation outlives the request that started it. If the agent uses a
+resource that the request creates and releases, such as the sandbox in [11],
+later requests read history about files and processes that no longer exist.
+Run such an agent in a service, or keep one resource per key for as long as
+the key's conversation.
 
-For long histories, pass a `conversation` instead of `messages`. It stores
-messages in object state, 8 messages per state key. Compaction, on by
-default, keeps what the model reads short: when a run summarizes its context,
-it stores the summary in the conversation, and the next run starts from the
-summary and the messages after it (see
-[Long runs](#long-runs-large-results-and-compaction)). Preload the
-conversation's metadata and summary keys on the object, and let Restate read
-the message chunks when a handler needs them:
+Compaction is on by default in both cases. It summarizes the older
+messages of a single long run, such as the coding task in [11]. With a
+conversation, the run also stores the summary, and later runs start from the
+summary and the messages after it. `conversation.page(from, limit)`
+still returns every message, including the ones the summary replaced. See
+[Long runs](#long-runs-large-results-and-compaction).
+
+### Run the same agent several times in one request
+
+A workflow that runs an agent more than once in one request can keep that
+agent's conversation in a virtual object, so each later run sends only what is
+new.
+In [05], the writer's revision request contains only the reviewer's feedback.
+In [15], `PeerAuthor.revise` sends only the reviews.
+
+- When several agents share one object, give each its own `stateKey`, such
+  as `new Conversation({stateKey: "writer"})`, and preload each
+  one's `<stateKey>/meta` and `<stateKey>/summary`. [05] and [12] do this.
+- The object key identifies the task. A later request to the same key
+  continues the same conversations, so use a new key for each new task.
+- Agents that must run in parallel need separate object keys, because an
+  object runs one exclusive handler per key at a time. In [15], each reviewer
+  runs on its own key, `<review key>/<focus>`, so the two reviews run in
+  parallel.
+
+To test an agent that uses a `Conversation` with a fixture model, see "Testing without paid
+model calls" in [models-and-testing.md](models-and-testing.md).
+
+[03]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/03_conversation.ts
+[04]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/04_structured_output.ts
+[05]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/05_evaluator_optimizer.ts
+[07]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/07_racing_agents.ts
+[08]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/08_research_report.ts
+[09]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/09_support_session.ts
+[10]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/10_service_tool.ts
+[11]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/11_coding_agent.ts
+[12]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/12_routing.ts
+[13]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/13_tool_guardrail.ts
+[14]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/14_web_search.ts
+[15]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/15_peer_review_rpc.ts
+[16]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/16_progress_feed.ts
+[17]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/17_mcp_tools.ts
+[18]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/18_ag_ui.ts
+[19]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/19_skills.ts
+[20]: https://github.com/restatedev/agentlib/blob/main/packages/examples/src/lessons/20_forked_agents.ts
+[template]: https://github.com/restatedev/ai-examples/blob/main/agentlib/template/src/agent.ts
+
+## Store the conversation with the `Conversation` class
+
+`Conversation` keeps the conversation in the object's state, under
+keys that start with its `stateKey` (`conversation` by default): the messages
+in chunks of 8 under `conversation/0`, `conversation/1`, and so on, the
+message count under `conversation/meta`, and the summary under
+`conversation/summary`. Preload the metadata and summary keys on the object,
+and let Restate read the message chunks when a handler needs them:
 
 ```ts
 const support = agent({model, instructions, tools});
@@ -92,6 +142,9 @@ such as the `active` key in
 - Each key that is not preloaded costs a round trip to Restate when it is
   read. Loading the conversation reads one chunk key per 8 messages since
   the last summary.
+- Restate does not check the names in the list. A misspelled key causes no
+  error: Restate reads the key you meant on demand, like any key that is not
+  listed.
 - On AWS Lambda and other serverless platforms without bidirectional
   streaming, each lazy read adds a suspension: the invocation suspends and
   replays once Restate sends the requested state. If your conversations stay
@@ -103,6 +156,22 @@ such as the `active` key in
   lazily as well.
 - To set it for one handler only, put `state` in `options.handlers`. The
   deprecated `enableLazyState: true` equals `state: {preload: false}`.
+
+### Read related keys in a shared handler
+
+With a preload list, the state reads in one shared handler can return values
+from different moments. When a shared handler reads keys that must agree, read
+them in an order that keeps them consistent, or store them in one key. [18]
+does both:
+
+- `read` reads `count` before `pending`. A turn adds a call to `pending`
+  before it appends the call's wait entry and increments `count`, so every
+  wait entry below the `count` that `read` got, whose call still waits, is in
+  `pending`.
+- `locate` reads `count` before `start-<messageId>`. A turn that starts after
+  the first read starts at or after that count.
+- `connect` reads the number of finished messages and the running turn from
+  one key, `turns`.
 
 ### When a run saves
 
@@ -149,6 +218,15 @@ If storing a summary fails with an error, the run logs a warning and continues.
 The next run then loads every message after the last stored summary and
 summarizes again. A conversation that another writer changed, or that already
 holds a summary covering as many messages, stores nothing, without a warning.
+
+## Pass the history as `messages`
+
+A run also accepts the earlier messages as `messages` instead of a
+`conversation`. The handler loads them, passes them in, and saves
+`result.messages` after the run returns. Nothing is saved while the run
+runs, and no summary is stored, so each run receives the whole history
+again. For a run that throws, `messagesOf(error)` returns its history up to
+the failure, with a note on why it failed. Prefer a `Conversation`.
 
 ## Long runs: large results and compaction
 
