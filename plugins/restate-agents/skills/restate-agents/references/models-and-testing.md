@@ -228,6 +228,13 @@ const fixtureModel = journaledModel(async (request): Promise<ModelResponse> => {
   through `@restatedev/restate-sdk-clients`.
 - Assert on observable effects: tools that must run once really run once,
   approvals block until resolved, and a race loser is cleaned up.
+- Against a conversation, give each turn's tool calls unique IDs, or use a
+  new object key per test. A run rejects a model response that reuses a
+  tool-call ID from an earlier turn on the same key: none of its calls run,
+  and the model receives an `invalid_response` error note instead. A fixture
+  that returns fixed IDs, such as `t1` above, works only for the first turn on
+  a key. The request also holds the earlier turns, so a fixture that reads the
+  first user message gets an earlier turn's message: read the newest one.
 
 The repository's
 [examples.integration.ts](https://github.com/restatedev/agentlib/blob/main/packages/tests/src/examples.integration.ts)

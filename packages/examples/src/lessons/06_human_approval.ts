@@ -1,6 +1,6 @@
 // 06: Pause a tool for a human decision, then resume the same agent run.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool, type ApprovalRequest} from "@restatedev/agentlib";
+import {agent, asyncTool, Conversation, type ApprovalRequest} from "@restatedev/agentlib";
 import {z} from "zod";
 import {openai} from "@ai-sdk/openai";
 import {aiModel} from "@restatedev/agentlib/provider";
@@ -45,6 +45,7 @@ export const ticketApproval = restate.object({
       function* ({message}) {
         try {
           const result = yield* support.run(message, {
+            conversation: new Conversation(),
             *onApproval(request) {
               restate.state().set("approval", request);
             },
@@ -76,6 +77,7 @@ export const ticketApproval = restate.object({
     ),
   },
   options: {
+    state: {preload: ["conversation/meta", "conversation/summary", "approval"]},
     // Shared handlers can read state and signal the waiting exclusive ask handler.
     handlers: {status: {shared: true}, approve: {shared: true}},
   },

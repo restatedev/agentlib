@@ -1,6 +1,6 @@
 // 14: Call a web search API from an ordinary async tool.
 import * as restate from "@restatedev/restate-sdk-gen";
-import {agent, asyncTool, ToolError} from "@restatedev/agentlib";
+import {agent, asyncTool, Conversation, ToolError} from "@restatedev/agentlib";
 import {z} from "zod";
 import {openai} from "@ai-sdk/openai";
 import {aiModel} from "@restatedev/agentlib/provider";
@@ -58,24 +58,22 @@ const researcher = agent({
   tools: {searchWeb},
 });
 
-export const webResearch = restate.service({
+export const webResearch = restate.object({
   name: "WebResearch",
   handlers: {
     answer: restate.schemas(
       {
         input: z.object({
-          question: z
-            .string()
-
-            .default("Find the Restate TypeScript SDK docs and cite their URLs."),
+          question: z.string().default("Find the Restate TypeScript SDK docs and cite their URLs."),
         }),
         output: z.string(),
       },
       function* ({question}) {
-        const result = yield* researcher.run(question);
+        const result = yield* researcher.run(question, {conversation: new Conversation()});
         if (result.status !== "completed") return result.output ?? result.reason;
         return result.output;
       },
     ),
   },
+  options: {state: {preload: ["conversation/meta", "conversation/summary"]}},
 });

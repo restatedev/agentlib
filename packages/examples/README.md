@@ -80,6 +80,33 @@ If your server uses a scoped call prefix, use that instead, for example:
 RESTATE_CALL_URL='http://[fd07:b51a:cc66::2]:8080/restate/call'
 ```
 
+## Conversations in virtual objects
+
+Lessons 01, 02, 04, 07, 08, 11, 13, 16, and 19 handle one self-contained task
+per request, so they are Restate services and each request starts a new
+conversation. The other lessons run their agents in a Restate virtual object and
+pass a `Conversation` to each run. The run loads the conversation from
+the object's state before its first model call and saves its progress as it
+runs, so the next request to the same object key continues the conversation.
+Put the key in the URL: `$RESTATE_CALL_URL/<Object>/<key>/<handler>`.
+
+A conversation stores its messages in chunks of 8 under `<stateKey>/0`,
+`<stateKey>/1`, and so on, the message count under `<stateKey>/meta`, and the
+summary under `<stateKey>/summary`. The default state key is `conversation`.
+When several agents run in one object, as in lessons 05 and 12, each agent uses
+its own state key, such as `writer` and `reviewer`.
+
+Each object preloads the `meta` and `summary` keys of its conversations with
+`options: {state: {preload: [...]}}`. Restate sends these keys with every
+request, and the run reads the message chunks on demand. Reads of several keys
+in one handler can return values from different moments, so a shared handler
+that reads related keys must read them in an order that keeps them consistent,
+or store them in one key. Lesson 18 does both.
+
+Compaction is on by default. Once the model's view passes `maxTokens`, the run
+summarizes the older messages. With a conversation, the run also stores the
+summary, and later runs start from the summary and the messages after it.
+
 ## 01 — Run your first agent
 
 Start with `agent({model})` and a single handler. The handler passes the request
@@ -123,9 +150,10 @@ Use `tool` when execution needs to compose SDK operations in a generator with
 
 ## 03 — Remember earlier requests
 
-Change the service to a keyed Restate object. Before the run, load its saved
-messages. Pass them to the agent, then save `result.messages` afterward. Return
-only the reply; the history stays in object state.
+Change the service to a keyed Restate object and pass a
+`Conversation` to the run. The run loads the history from the object's
+state and saves the new messages. Return only the reply; the history stays in
+object state.
 
 ```sh
 curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '{"message":"My name is Bob."}'
@@ -133,9 +161,16 @@ curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/ask" --json '{"message":"What 
 ```
 
 Both requests use `bob`, so the second sees the first exchange. A different key gets
-its own history. This lesson stores the full history; the support-session lesson
-stores it in a `Conversation`, which keeps compaction summaries, and adds
-lifecycle controls.
+its own history. The shared `history` handler returns up to 100 saved messages
+from the index in the request body, including messages that a summary replaced:
+
+```sh
+curl --globoff "$RESTATE_CALL_URL/ChatSession/bob/history" --json '0'
+```
+
+See [Conversations in virtual objects](#conversations-in-virtual-objects) for how
+the conversation is stored, preloaded, and compacted. The support-session lesson
+adds steering and interruption.
 
 ## 04 — Return structured data
 
@@ -157,8 +192,13 @@ One agent returns `{code}`; another returns `{approved, feedback}`. The handler
 passes the draft and feedback into the next iteration, stopping at acceptance
 or after three attempts. Each stage has a distinct run name.
 
+The writer and the reviewer save their conversations in the same object under
+the state keys `writer` and `reviewer`. The writer's conversation contains its
+earlier drafts, so each revision request contains only the reviewer's feedback.
+The object key identifies the task; use a new key for each new task.
+
 ```sh
-curl --globoff "$RESTATE_CALL_URL/CodeReview/generate" \
+curl --globoff "$RESTATE_CALL_URL/CodeReview/first-item/generate" \
   --json '{"task":"Read the first item of an array safely, returning undefined when it is empty."}'
 ```
 
@@ -169,7 +209,8 @@ returned as text and never executed. A stopped or interrupted run throws a
 `TerminalError`, so it fails the stage instead of advancing the workflow.
 
 A **run** completes one task; a **step** is one planning model call inside that
-run. This loop starts fresh runs for successive drafts. See the
+run. This loop starts a new run for each draft, and the writer's runs share one
+conversation. See the
 [glossary](../../CONTEXT.md) for the lifecycle terms.
 
 ## 06 — Wait for human approval
@@ -295,7 +336,7 @@ extra wiring is needed. Pass `{iface, handler: "issueRefund"}` to scope a tool
 to one handler instead. Virtual objects and workflows also take a `key`.
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/RefundAgent/ask" \
+curl --globoff "$RESTATE_CALL_URL/RefundAgent/bob/ask" \
   --json '{"message":"Refund order O-99 for $12.50 and tell me the refund policy."}'
 ```
 
@@ -340,25 +381,34 @@ curl --globoff "$RESTATE_CALL_URL/CodingAgent/ask" \
 ## 12 — Route a request to a specialist
 
 Use a small structured-output agent to choose `billing`, `account`, or `product`,
-then let the chosen specialist answer. The application owns the branch:
+then let the chosen specialist answer. The application owns the branch. The
+object key identifies the customer:
 
 ```ts
-function* (question) {
-  const routed = yield* route.run(question);
+function* ({question}) {
+  const routed = yield* route.run(question, {
+    conversation: new Conversation({stateKey: "router"}),
+  });
   if (routed.status !== "completed") throw new TerminalError(`Router ${routed.status}`);
-  const result = yield* specialists[routed.output.specialist].run(question);
+  const {specialist} = routed.output;
+  const result = yield* specialists[specialist].run(question, {
+    conversation: new Conversation({stateKey: specialist}),
+  });
   if (result.status !== "completed") return result.output ?? result.reason;
   return result.output;
 }
 ```
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/SupportRouter/answer" \
+curl --globoff "$RESTATE_CALL_URL/SupportRouter/bob/answer" \
   --json '{"question":"I cannot log into my account. How can I regain access?"}'
 ```
 
-The specialist starts a fresh run with only the question. Use `handoff` when
-the specialist should take over the **same** run and history.
+The router and each specialist save their conversations under their own state
+keys: `router`, `billing`, `account`, and `product`. A specialist receives only
+the question and its own earlier conversation with the customer, not the
+router's. Use `handoff` when the specialist should take over the **same** run
+and history.
 
 ## 13 — Enforce a policy before an action
 
@@ -398,16 +448,16 @@ Keep private data out of queries; the agent treats snippets as untrusted evidenc
 and cites the returned URLs.
 
 ```sh
-curl --globoff "$RESTATE_CALL_URL/WebResearch/answer" \
+curl --globoff "$RESTATE_CALL_URL/WebResearch/bob/answer" \
   --json '{"question":"Find the Restate TypeScript SDK docs and cite their URLs."}'
 ```
 
 ## 15 — Let agents exchange feedback over RPC
 
 `PeerReview` asks `PeerAuthor` for a draft, sends that draft to two
-`PeerReviewer` invocations in parallel, and sends their labeled feedback back
-to the author for one revision. Each role is a normal Restate service. The
-conversation between them is explicit in typed request and response bodies:
+`PeerReviewer` objects in parallel, and sends their labeled feedback back to
+the author for one revision. Each role is a Restate virtual object, and the
+roles exchange typed request and response bodies:
 
 ```mermaid
 sequenceDiagram
@@ -423,12 +473,17 @@ sequenceDiagram
     Lead->>Reviewer: review(brief, draft, clarity)
     Reviewer-->>Lead: feedback
   end
-  Lead->>Author: write(brief, draft, both reviews)
+  Lead->>Author: revise(both reviews)
   Author-->>Lead: revised answer
 ```
 
+The `PeerReview` key also names the review's author, and each reviewer uses the
+key `<review key>/<focus>`, so the two reviews run in parallel. The author's
+conversation contains the brief and the first draft, so `revise` sends only the
+feedback.
+
 ```sh
-curl --globoff "$RESTATE_CALL_URL/PeerReview/answer" \
+curl --globoff "$RESTATE_CALL_URL/PeerReview/release-note/answer" \
   --json '{"brief":"Write a two-sentence release note for a feature that retries transient failures and resumes completed steps from a journal."}'
 ```
 
@@ -453,14 +508,15 @@ each tool into a journaled step. The lesson gives an agent the tools of the
 Restate docs server at `https://docs.restate.dev/mcp`.
 
 ```sh
-curl "$RESTATE_CALL_URL/DocsGuide/ask" --json '{"question":"What is a virtual object?"}'
+curl "$RESTATE_CALL_URL/DocsGuide/bob/ask" --json '{"question":"What is a virtual object?"}'
 ```
 
 ## 18 — Serve an AG-UI client
 
 [AG-UI](https://docs.ag-ui.com) is an open protocol between agents and user
 interfaces; CopilotKit is one client. An `AgUiThread` object, one per AG-UI
-thread, runs each turn and appends the AG-UI events of its work to its state.
+thread, runs each turn, keeps the thread's conversation in its state, and
+appends the AG-UI events of its work to its state.
 `agUiHandler` is AG-UI's HTTP transport: it takes a `RunAgentInput` and streams
 the turn's events as server-sent events. [app.ts](src/app.ts) serves it on port 9081
 and calls the Restate ingress at `RESTATE_CALL_URL` (default
@@ -614,11 +670,11 @@ The advanced workflow lessons adapt patterns from
 [`restatedev/ai-examples`](https://github.com/restatedev/ai-examples), inspected at
 commit `60d1eda2e5f3aae96db2efeba498e52367a01648`:
 
-| Local example   | Upstream pattern                                                                                                                                                                                      | Changes in this implementation                                                                         |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Research report | [workflow-orchestrator.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-orchestrator.ts)               | Typed bounded plan, supplied evidence, source tools and guards, cancellation bridge                    |
-| Code review     | [workflow-evaluator-optimizer.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-evaluator-optimizer.ts) | Structured decisions, previous draft carried forward, explicit exhaustion with the last draft retained |
-| Racing agents   | [racing-agents.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/racing-agents.ts)                               | Embedded operations, first completed success, cancellation with joined cleanup                         |
+| Local example   | Upstream pattern                                                                                                                                                                                      | Changes in this implementation                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Research report | [workflow-orchestrator.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-orchestrator.ts)               | Typed bounded plan, supplied evidence, source tools and guards, cancellation bridge                                  |
+| Code review     | [workflow-evaluator-optimizer.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/workflow-evaluator-optimizer.ts) | Structured decisions, each agent's conversation kept in the object, explicit exhaustion with the last draft retained |
+| Racing agents   | [racing-agents.ts](https://github.com/restatedev/ai-examples/blob/60d1eda2e5f3aae96db2efeba498e52367a01648/typescript-restate-only/tour-of-agents/src/racing-agents.ts)                               | Embedded operations, first completed success, cancellation with joined cleanup                                       |
 
 The later goal-based lessons draw on the same patterns described by
 [Anthropic's workflow guide](https://www.anthropic.com/engineering/building-effective-agents)

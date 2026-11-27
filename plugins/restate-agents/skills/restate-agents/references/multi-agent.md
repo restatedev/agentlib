@@ -40,22 +40,34 @@ function* (question) {
 }
 ```
 
+Lesson 12 runs this in a virtual object keyed by customer and gives each agent
+its own conversation, `new Conversation({stateKey: "router"})` for the
+router and the specialist's name for each specialist, so a follow-up question
+continues that specialist's conversation with the customer.
+
 ## Draft and review, bounded
 
-Loop over two structured agents. Give each run a distinct `name` so their
-approval signals and idempotency keys stay apart.
+Loop over two structured agents in a virtual object. Give each run a distinct
+`name` so their approval signals and idempotency keys stay apart. Each agent
+keeps its own conversation in the object, so a revision request carries only
+the feedback; see
+[Run the same agent several times in one request](conversations-and-controls.md#run-the-same-agent-several-times-in-one-request).
 
 ```ts
+const writerConversation = new Conversation({stateKey: "writer"});
+const reviewerConversation = new Conversation({stateKey: "reviewer"});
+let request = task;
 for (let i = 1; i <= 3; i++) {
-  const draft = yield* writer.run(JSON.stringify({task, previousCode: code, feedback}), {
-    name: `write-${i}`,
-  });
+  const draft = yield* writer.run(request, {name: `write-${i}`, conversation: writerConversation});
   if (draft.status !== "completed") throw new TerminalError(`Writer ${draft.status}`);
   code = draft.output.code;
-  const review = yield* reviewer.run(JSON.stringify({task, code}), {name: `review-${i}`});
+  const review = yield* reviewer.run(JSON.stringify({task, code}), {
+    name: `review-${i}`,
+    conversation: reviewerConversation,
+  });
   if (review.status !== "completed") throw new TerminalError(`Reviewer ${review.status}`);
   if (review.output.approved) return code;
-  feedback = review.output.feedback;
+  request = `Revise your code to address this review feedback: ${review.output.feedback}`;
 }
 ```
 
@@ -114,10 +126,13 @@ return report.output;
 
 ## Agents exchanging messages
 
-Lesson 15 has an author service and a reviewer service, plus a lead that
+Lesson 15 has an author object and a reviewer object, plus a lead that
 passes drafts and feedback between them as typed request and response
-bodies. No mailbox or agent-to-agent protocol is needed: durable RPC is the
-channel, and a replay never repeats a completed exchange.
+bodies. The author uses the lead's key, and each reviewer uses
+`<review key>/<focus>`, so the two reviews run in parallel. The author's
+conversation holds the first draft, so `revise` sends only the reviews. No
+mailbox or agent-to-agent protocol is needed: durable RPC is the channel, and
+a replay never repeats a completed exchange.
 
 ## Sub-agents and handoffs inside one run
 
