@@ -164,7 +164,7 @@ repeat a completed model call.
 | Web search                   | Example-local `asyncTool` calling Tavily                                   | [14](packages/examples/src/lessons/14_web_search.ts)        |
 | Skills                       | `agent({skills})` with any `SkillSource`, `skills([...])`                  | [19](packages/examples/src/lessons/19_skills.ts)            |
 | Large tool results           | `agent({toolResults})`: previews, read on with `read_tool_result`          | —                                                           |
-| Long runs                    | `agent({compaction, contextWindow})`, `ContextOverflowError`               | [09](packages/examples/src/lessons/09_support_session.ts)   |
+| Long runs                    | `agent({compaction, contextWindow})`; see [Compaction](#compaction)        | [09](packages/examples/src/lessons/09_support_session.ts)   |
 | Limits                       | `maxSteps`, `maxToolCalls`, `maxToolDepth`, `maxOutputChars`, `finalize`   | —                                                           |
 | Reply limit                  | `maxOutputTokens`; see [Reply limit](#reply-limit)                         | —                                                           |
 | Usage totals                 | `result.usage`, and `usageOf(error)` for a failed run                      | —                                                           |
@@ -199,6 +199,28 @@ the invocation ends the same way. When you set `maxOutputTokens`, a reply that
 uses the whole limit counts as cut off, whatever finish reason the provider
 reports: some providers report a tool call for a reply cut off inside one, with
 its arguments closed early.
+
+### Compaction
+
+Compaction is on by default. Before each model call, the run estimates the
+tokens of the model's context. Past a threshold, it replaces the older messages
+with a summary that the agent's model writes, and keeps the newest messages
+verbatim. With a `conversation`, the run stores the summary, and the next run
+starts from it.
+
+agentlib cannot read a model's context window. Without `contextWindow`,
+compaction starts at 170,000 tokens, which fits models with a window of 200,000
+tokens or more. A context that does not fit the model then shrinks only after an
+overflow error that the provider reports as such (`ContextOverflowError`). Set
+`contextWindow` for a model with a smaller window, or to make the threshold
+follow a larger one. The threshold is then 90% of what the window leaves for
+input after the reply: `maxOutputTokens`, or 32,768 tokens when it is unset. For
+a 1,000,000-token window without `maxOutputTokens`, compaction starts at about
+870,000 tokens.
+
+Set `compaction.maxTokens` to choose the threshold yourself. Set
+`compaction: false` to turn compaction off: the run then drops older messages
+without a summary when the context does not fit.
 
 ## Skills for coding agents
 

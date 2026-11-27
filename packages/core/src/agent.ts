@@ -21,19 +21,30 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
   // Requiring a representable output schema rejects transforms that would run twice.
   const outputSchema = options.output ? z.toJSONSchema(options.output) : undefined;
   const maxOutputChars = positiveInteger(options.maxOutputChars ?? 128000, "maxOutputChars");
+  const contextWindow =
+    options.contextWindow === undefined
+      ? undefined
+      : positiveInteger(options.contextWindow, "contextWindow");
+  if (contextWindow !== undefined && contextWindow <= (maxOutputTokens ?? REPLY_RESERVE))
+    throw new TypeError(
+      `contextWindow must be greater than maxOutputTokens, or ${REPLY_RESERVE} when it is unset; set maxOutputTokens for a smaller window`,
+    );
   let compaction: RunConfiguration["compaction"];
-  if (options.compaction) {
+  if (options.compaction !== false) {
+    const settings = options.compaction ?? {};
     const maxTokens = positiveInteger(
-      options.compaction.maxTokens ?? 100000,
+      settings.maxTokens ?? defaultCompactionTokens(contextWindow, maxOutputTokens),
       "compaction.maxTokens",
     );
     const retainTokens = positiveInteger(
-      options.compaction.retainTokens ?? Math.floor(maxTokens / 4),
+      settings.retainTokens ?? Math.max(1, Math.floor(maxTokens / 4)),
       "compaction.retainTokens",
     );
     if (retainTokens >= maxTokens)
-      throw new TypeError("compaction.retainTokens must be less than compaction.maxTokens");
-    const {instructions} = options.compaction;
+      throw new TypeError(
+        `compaction.retainTokens must be less than compaction.maxTokens (${maxTokens})`,
+      );
+    const {instructions} = settings;
     if (instructions !== undefined && (typeof instructions !== "string" || !instructions.trim()))
       throw new TypeError("compaction.instructions must be a nonempty string");
     compaction = {maxTokens, retainTokens, ...(instructions === undefined ? {} : {instructions})};
@@ -52,15 +63,6 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
       throw new TypeError("toolResults.previewTokens must be less than toolResults.maxTokens");
     toolResults = {maxTokens, previewTokens};
   }
-
-  const contextWindow =
-    options.contextWindow === undefined
-      ? undefined
-      : positiveInteger(options.contextWindow, "contextWindow");
-  if (contextWindow !== undefined && contextWindow <= (maxOutputTokens ?? REPLY_RESERVE))
-    throw new TypeError(
-      `contextWindow must be greater than maxOutputTokens, or ${REPLY_RESERVE} when it is unset; set maxOutputTokens for a smaller window`,
-    );
 
   const config = {
     maxSteps,
@@ -81,4 +83,21 @@ export function agent<C = undefined, O = string>(options: AgentOptions<C, O>): A
     definition: options,
     run,
   };
+}
+
+/** The view size that starts compaction when `compaction.maxTokens` is unset:
+ * 90% of the room `contextWindow` leaves for input after the reply, or 170,000
+ * tokens when the window is unknown. A model's window has to come from the app:
+ * neither `Model` nor the AI SDK's language models carry one. 170,000 fits a
+ * window of 200,000 tokens or more; a smaller model needs `contextWindow`.
+ * Staying below the window check (view plus reply) lets the run ask its own
+ * model for the summary at the end of its cached request, with room left for
+ * the note and the summary. */
+function defaultCompactionTokens(
+  contextWindow: number | undefined,
+  maxOutputTokens: number | undefined,
+): number {
+  if (contextWindow === undefined) return 170000;
+  // At least 2, so the default retainTokens stays below it even for a tiny window.
+  return Math.max(2, Math.floor((contextWindow - (maxOutputTokens ?? REPLY_RESERVE)) * 0.9));
 }

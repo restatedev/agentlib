@@ -38,10 +38,7 @@ const support = agent({
         return {ticket, status: "closed"};
       },
     }),
-  },
-  // Summarizes older messages once a turn's context passes 64,000 tokens. With a
-  // conversation, the summary is stored, and later turns start from it.
-  compaction: {maxTokens: 64000},
+  }
 });
 
 /** One session per key. Turns run one at a time; the shared handlers inspect and control them. */
